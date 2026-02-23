@@ -13,9 +13,8 @@ function usage() {
 wmdev — Dev dashboard for managing Git worktrees
 
 Usage:
-  wmdev              Start in production mode (single port, serves built frontend)
-  wmdev --dev        Start in dev mode (backend + Vite HMR on port+1)
-  wmdev --port N     Set backend port (default: 5111)
+  wmdev              Start the dashboard
+  wmdev --port N     Set port (default: 5111)
   wmdev --help       Show this help message
 
 Environment:
@@ -26,14 +25,10 @@ Environment:
 // ── Parse args ───────────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
-let devMode = false;
 let port = parseInt(process.env.DASHBOARD_PORT || "5111");
 
 for (let i = 0; i < args.length; i++) {
   switch (args[i]) {
-    case "--dev":
-      devMode = true;
-      break;
     case "--port":
       port = parseInt(args[++i]);
       if (Number.isNaN(port)) {
@@ -124,56 +119,24 @@ process.on("SIGTERM", cleanup);
 // ── Start ────────────────────────────────────────────────────────────────────
 
 const backendEntry = join(PKG_ROOT, "backend", "src", "server.ts");
+const staticDir = join(PKG_ROOT, "frontend", "dist");
 
-if (devMode) {
-  // Dev mode: backend with --watch + Vite dev server
-  console.log(`Starting dev mode (backend :${port}, frontend :${port + 1})...`);
-
-  const be = Bun.spawn(["bun", "--watch", backendEntry], {
-    env: baseEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  children.push(be);
-  pipeWithPrefix(be.stdout, "[BE]");
-  pipeWithPrefix(be.stderr, "[BE]");
-
-  const viteConfig = join(PKG_ROOT, "frontend", "vite.config.ts");
-  const fe = Bun.spawn(
-    ["bun", "x", "vite", "--host", "0.0.0.0", "--port", String(port + 1), "--config", viteConfig],
-    {
-      cwd: join(PKG_ROOT, "frontend"),
-      env: baseEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    },
+if (!existsSync(staticDir)) {
+  console.error(
+    `Error: frontend/dist/ not found. Run 'bun run build' first.`,
   );
-  children.push(fe);
-  pipeWithPrefix(fe.stdout, "[FE]");
-  pipeWithPrefix(fe.stderr, "[FE]");
-
-  await Promise.all([be.exited, fe.exited]);
-} else {
-  // Production mode: backend serves API + static frontend
-  const staticDir = join(PKG_ROOT, "frontend", "dist");
-
-  if (!existsSync(staticDir)) {
-    console.error(
-      `Error: frontend/dist/ not found. Run 'bun run build' first, or use --dev for development mode.`,
-    );
-    process.exit(1);
-  }
-
-  console.log(`Starting production mode on port ${port}...`);
-
-  const be = Bun.spawn(["bun", backendEntry], {
-    env: { ...baseEnv, WMDEV_STATIC_DIR: staticDir },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  children.push(be);
-  pipeWithPrefix(be.stdout, "[BE]");
-  pipeWithPrefix(be.stderr, "[BE]");
-
-  await be.exited;
+  process.exit(1);
 }
+
+console.log(`Starting wmdev on port ${port}...`);
+
+const be = Bun.spawn(["bun", backendEntry], {
+  env: { ...baseEnv, WMDEV_STATIC_DIR: staticDir },
+  stdout: "pipe",
+  stderr: "pipe",
+});
+children.push(be);
+pipeWithPrefix(be.stdout, "[BE]");
+pipeWithPrefix(be.stderr, "[BE]");
+
+await be.exited;
