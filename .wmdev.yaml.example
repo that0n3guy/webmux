@@ -1,0 +1,21 @@
+services:
+  - name: BE
+    portEnv: BACKEND_PORT
+  - name: FE
+    portEnv: FRONTEND_PORT
+
+profiles:
+  default:
+    name: full
+
+  sandbox:
+    name: sandbox
+    image: my-sandbox
+    envPassthrough:
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+    extraMounts:
+      - hostPath: ~/.codex
+        guestPath: /root/.codex
+    systemPrompt: >
+      You are running inside a sandboxed container with full permissions.
