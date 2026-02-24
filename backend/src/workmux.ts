@@ -118,6 +118,24 @@ function buildEnvPrefix(keys: string[]): string {
   return parts.length > 0 ? parts.join(" ") + " " : "";
 }
 
+/** Find the on-disk path for a worktree branch via `git worktree list`. */
+function findWorktreeDir(branch: string): string {
+  const result = Bun.spawnSync(["git", "worktree", "list", "--porcelain"], { stdout: "pipe" });
+  const output = new TextDecoder().decode(result.stdout);
+  let currentPath = "";
+  for (const line of output.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      currentPath = line.slice("worktree ".length);
+    } else if (line.startsWith("branch ")) {
+      const name = line.slice("branch ".length).replace("refs/heads/", "");
+      if (name === branch || currentPath.endsWith(`/${branch}`)) {
+        return currentPath;
+      }
+    }
+  }
+  return "";
+}
+
 function ensureTmux(): void {
   const check = Bun.spawnSync(["tmux", "list-sessions"], { stdout: "pipe", stderr: "pipe" });
   if (check.exitCode !== 0) {
@@ -165,12 +183,8 @@ export async function addWorktree(
 
   const windowTarget = `wm-${branch}`;
 
-  // Read worktree dir and log assigned ports
-  const wtDirResult = Bun.spawnSync(
-    ["tmux", "display-message", "-t", `${windowTarget}.0`, "-p", "#{pane_current_path}"],
-    { stdout: "pipe" }
-  );
-  const wtDir = new TextDecoder().decode(wtDirResult.stdout).trim();
+  // Read worktree dir from git (tmux pane may not have cd'd yet with -C)
+  const wtDir = findWorktreeDir(branch);
   const env = readEnvLocal(wtDir);
   console.log(`[workmux:add] branch=${branch} dir=${wtDir} env=${JSON.stringify(env)}`);
 
