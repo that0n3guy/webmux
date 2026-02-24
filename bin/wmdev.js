@@ -47,11 +47,11 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
-// ── Load .env from CWD ──────────────────────────────────────────────────────
+// ── Load env files from CWD (.env.local overrides .env) ─────────────────────
 
-const envPath = resolve(process.cwd(), ".env");
-if (existsSync(envPath)) {
-  const lines = (await Bun.file(envPath).text()).split("\n");
+async function loadEnvFile(path) {
+  if (!existsSync(path)) return;
+  const lines = (await Bun.file(path).text()).split("\n");
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
@@ -64,6 +64,9 @@ if (existsSync(envPath)) {
     }
   }
 }
+
+await loadEnvFile(resolve(process.cwd(), ".env.local"));
+await loadEnvFile(resolve(process.cwd(), ".env"));
 
 // ── Shared env for child processes ───────────────────────────────────────────
 
