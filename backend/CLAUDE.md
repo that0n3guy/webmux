@@ -10,7 +10,7 @@ backend/
     ├── server.ts      # Bun.serve() HTTP/WebSocket entry point, REST routing
     ├── workmux.ts     # Git worktree lifecycle, workmux CLI wrapper
     ├── terminal.ts    # tmux session management, scrollback buffers, terminal I/O
-    ├── socat.ts       # Docker container port forwarding via socat
+    ├── docker.ts      # Docker container lifecycle (launch, remove, find)
     └── env.ts         # .env.local file parser for worktree environments
 ```
 
@@ -30,7 +30,7 @@ backend/
 
 - **Process spawning**: `Bun.spawn()` / `Bun.spawnSync()` / `Bun.$` shell template literals
 - **Terminal**: wraps `tmux` + `script` for session capture
-- **Containers**: `docker inspect` for IPs, `socat` for port forwarding
+- **Containers**: `docker run/exec/rm` for sandbox lifecycle, published ports via `-p`
 - **Git**: `git worktree` commands for branch isolation
 
 ## Dev workflow

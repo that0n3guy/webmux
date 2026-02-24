@@ -8,7 +8,6 @@ import {
   mergeWorktree,
   readEnvLocal,
 } from "./workmux";
-import { reconcileForwarding, stopAll } from "./socat";
 import {
   attach,
   detach,
@@ -252,7 +251,16 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       const profileConfig = isSandbox ? config.profiles.sandbox! : config.profiles.default;
       const agent = body.agent ?? "claude";
       console.log(`[worktree:add] branch=${body.branch} agent=${agent} profile=${profileName}${body.prompt ? ` prompt="${body.prompt.slice(0, 80)}"` : ""}`);
-      const result = await addWorktree(body.branch, { prompt: body.prompt, profile: profileName, agent, profileConfig, isSandbox });
+      const result = await addWorktree(body.branch, {
+        prompt: body.prompt,
+        profile: profileName,
+        agent,
+        profileConfig,
+        isSandbox,
+        sandboxConfig: isSandbox ? config.sandbox : undefined,
+        services: config.services,
+        mainRepoDir: PROJECT_DIR,
+      });
       console.log(`[worktree:add] done branch=${body.branch}: ${result}`);
       return jsonResponse({ message: result }, 201);
     }
@@ -306,13 +314,5 @@ if (tmuxCheck.exitCode !== 0) {
 }
 
 cleanupStaleSessions();
-
-// Re-establish socat forwarding for any sandbox containers still running
-const wtPathsForReconcile = getWorktreePaths();
-reconcileForwarding((branch) => wtPathsForReconcile.get(branch));
-
-// Clean shutdown: kill socat processes
-process.on("SIGINT", () => { stopAll(); process.exit(0); });
-process.on("SIGTERM", () => { stopAll(); process.exit(0); });
 
 console.log(`Dev Dashboard API running at http://localhost:${PORT}`);

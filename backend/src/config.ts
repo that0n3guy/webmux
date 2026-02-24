@@ -12,12 +12,19 @@ export interface ProfileConfig {
   envPassthrough?: string[];
 }
 
+export interface SandboxDockerConfig {
+  image: string;
+  envPassthrough?: string[];
+  extraMounts?: { hostPath: string; guestPath?: string; writable?: boolean }[];
+}
+
 export interface WmdevConfig {
   services: ServiceConfig[];
   profiles: {
     default: ProfileConfig;
     sandbox?: ProfileConfig;
   };
+  sandbox?: SandboxDockerConfig;
 }
 
 const DEFAULT_CONFIG: WmdevConfig = {
@@ -36,12 +43,14 @@ export function loadConfig(dir: string): WmdevConfig {
     const profiles = parsed.profiles as Record<string, unknown> | undefined;
     const defaultProfile = profiles?.default as ProfileConfig | undefined;
     const sandboxProfile = profiles?.sandbox as ProfileConfig | undefined;
+    const sandboxDocker = parsed.sandbox as SandboxDockerConfig | undefined;
     return {
       services: Array.isArray(parsed.services) ? parsed.services as ServiceConfig[] : DEFAULT_CONFIG.services,
       profiles: {
         default: defaultProfile?.name ? defaultProfile : DEFAULT_CONFIG.profiles.default,
         ...(sandboxProfile?.name ? { sandbox: sandboxProfile } : {}),
       },
+      ...(sandboxDocker?.image ? { sandbox: sandboxDocker } : {}),
     };
   } catch {
     return DEFAULT_CONFIG;

@@ -1,7 +1,7 @@
 import { $ } from "bun";
-import { startForwarding, stopForwarding } from "./socat";
 import { readEnvLocal } from "./env";
-import { expandTemplate, type ProfileConfig } from "./config";
+import { expandTemplate, type ProfileConfig, type SandboxDockerConfig, type ServiceConfig } from "./config";
+import { launchContainer, removeContainer } from "./docker";
 
 export interface Worktree {
   branch: string;
@@ -82,6 +82,29 @@ async function runChecked(args: string[]): Promise<string> {
 
 export { readEnvLocal } from "./env";
 
+function buildAgentCmd(env: Record<string, string>, agent: string, profileConfig: ProfileConfig, isSandbox: boolean): string {
+  const systemPrompt = profileConfig.systemPrompt
+    ? expandTemplate(profileConfig.systemPrompt, env)
+    : "";
+  const innerEscaped = systemPrompt.replace(/["\\$`]/g, "\\$&");
+
+  // For sandbox, env is passed via Docker -e flags, no inline prefix needed.
+  // For non-sandbox, build inline env prefix for passthrough vars.
+  const envPrefix = !isSandbox && profileConfig.envPassthrough?.length
+    ? buildEnvPrefix(profileConfig.envPassthrough)
+    : "";
+
+  if (agent === "codex") {
+    return systemPrompt
+      ? `${envPrefix}codex --yolo -c '"developer_instructions=${innerEscaped}"'`
+      : `${envPrefix}codex --yolo`;
+  }
+  const skipPerms = isSandbox ? " --dangerously-skip-permissions" : "";
+  return systemPrompt
+    ? `${envPrefix}claude${skipPerms} --append-system-prompt '"${innerEscaped}"'`
+    : `${envPrefix}claude${skipPerms}`;
+}
+
 /** Build an inline env prefix (e.g. "KEY=val KEY2=val2 ") for vars listed in envPassthrough. */
 function buildEnvPrefix(keys: string[]): string {
   const parts: string[] = [];
@@ -95,27 +118,6 @@ function buildEnvPrefix(keys: string[]): string {
   return parts.length > 0 ? parts.join(" ") + " " : "";
 }
 
-function buildAgentCmd(env: Record<string, string>, agent: string, profileConfig: ProfileConfig, isSandbox: boolean): string {
-  const systemPrompt = profileConfig.systemPrompt
-    ? expandTemplate(profileConfig.systemPrompt, env)
-    : "";
-  const innerEscaped = systemPrompt.replace(/["\\$`]/g, "\\$&");
-  const envPrefix = profileConfig.envPassthrough?.length
-    ? buildEnvPrefix(profileConfig.envPassthrough)
-    : "";
-  const prefix = isSandbox ? `${envPrefix}workmux sandbox agent -- ` : envPrefix;
-
-  if (agent === "codex") {
-    return systemPrompt
-      ? `${prefix}codex --yolo -c '"developer_instructions=${innerEscaped}"'`
-      : `${prefix}codex --yolo`;
-  }
-  const skipPerms = isSandbox ? " --dangerously-skip-permissions" : "";
-  return systemPrompt
-    ? `${prefix}claude${skipPerms} --append-system-prompt '"${innerEscaped}"'`
-    : `${prefix}claude${skipPerms}`;
-}
-
 function ensureTmux(): void {
   const check = Bun.spawnSync(["tmux", "list-sessions"], { stdout: "pipe", stderr: "pipe" });
   if (check.exitCode !== 0) {
@@ -124,9 +126,20 @@ function ensureTmux(): void {
   }
 }
 
+export interface AddWorktreeOpts {
+  prompt?: string;
+  profile?: string;
+  agent?: string;
+  profileConfig?: ProfileConfig;
+  isSandbox?: boolean;
+  sandboxConfig?: SandboxDockerConfig;
+  services?: ServiceConfig[];
+  mainRepoDir?: string;
+}
+
 export async function addWorktree(
   branch: string,
-  opts?: { prompt?: string; profile?: string; agent?: string; profileConfig?: ProfileConfig; isSandbox?: boolean }
+  opts?: AddWorktreeOpts
 ): Promise<string> {
   ensureTmux();
   const profile = opts?.profile ?? "default";
@@ -141,10 +154,7 @@ export async function addWorktree(
     args.push("-C"); // --no-pane-cmds
   }
 
-  // Enable sandbox if profile says so
-  if (isSandbox) {
-    args.push("-S"); // --sandbox
-  }
+  // No -S flag — we manage Docker ourselves
 
   if (opts?.prompt) args.push("-p", opts.prompt);
   args.push(branch);
@@ -185,27 +195,44 @@ export async function addWorktree(
     for (let i = paneIds.length - 1; i >= 1; i--) {
       Bun.spawnSync(["tmux", "kill-pane", "-t", `${windowTarget}.${paneIds[i]}`]);
     }
+
+    // Launch Docker container for sandbox worktrees
+    let containerName: string | undefined;
+    if (isSandbox && opts?.sandboxConfig && wtDir) {
+      const mainRepoDir = opts.mainRepoDir ?? process.cwd();
+      containerName = await launchContainer({
+        branch,
+        wtDir,
+        mainRepoDir,
+        sandboxConfig: opts.sandboxConfig,
+        services: opts.services ?? [],
+        env,
+      });
+    }
+
     // Build and send agent command
     const agentCmd = buildAgentCmd(env, agent, profileConfig, isSandbox);
-    console.log(`[workmux] sending command to ${windowTarget}.0:\n${agentCmd}`);
-    Bun.spawnSync(["tmux", "send-keys", "-t", `${windowTarget}.0`, agentCmd, "Enter"]);
-    // Open a shell pane on the right (1/3 width) in the worktree dir
-    Bun.spawnSync(["tmux", "split-window", "-h", "-t", `${windowTarget}.0`, "-l", "25%", "-c", wtDir]);
+
+    if (containerName) {
+      // Sandbox: enter container, run entrypoint visibly, then start agent
+      const dockerExec = `docker exec -it -w ${wtDir} ${containerName} bash`;
+      Bun.spawnSync(["tmux", "send-keys", "-t", `${windowTarget}.0`, dockerExec, "Enter"]);
+      // Wait for shell to be ready, then chain entrypoint → agent
+      Bun.spawnSync(["sleep", "0.5"]);
+      const entrypointThenAgent = `/usr/local/bin/entrypoint.sh && ${agentCmd}`;
+      console.log(`[workmux] sending to ${windowTarget}.0:\n${entrypointThenAgent}`);
+      Bun.spawnSync(["tmux", "send-keys", "-t", `${windowTarget}.0`, entrypointThenAgent, "Enter"]);
+      // Shell pane: host shell in worktree dir
+      Bun.spawnSync(["tmux", "split-window", "-h", "-t", `${windowTarget}.0`, "-l", "25%", "-c", wtDir]);
+    } else {
+      // Non-sandbox: run agent directly in pane 0
+      console.log(`[workmux] sending command to ${windowTarget}.0:\n${agentCmd}`);
+      Bun.spawnSync(["tmux", "send-keys", "-t", `${windowTarget}.0`, agentCmd, "Enter"]);
+      // Open a shell pane on the right (1/3 width) in the worktree dir
+      Bun.spawnSync(["tmux", "split-window", "-h", "-t", `${windowTarget}.0`, "-l", "25%", "-c", wtDir]);
+    }
     // Keep focus on the agent pane (left)
     Bun.spawnSync(["tmux", "select-pane", "-t", `${windowTarget}.0`]);
-
-    // Start socat port forwarding for sandbox containers (non-blocking).
-    if (isSandbox && wtDir) {
-      (async () => {
-        console.log(`[socat] waiting for container to start for ${branch}...`);
-        for (let i = 1; i <= 15; i++) {
-          await new Promise(r => setTimeout(r, 2000));
-          if (await startForwarding(branch, wtDir)) return;
-          console.log(`[socat] container not ready for ${branch}, retrying (${i}/15)...`);
-        }
-        console.error(`[socat] gave up waiting for container for ${branch} after 30s`);
-      })();
-    }
   }
 
   return result;
@@ -213,7 +240,7 @@ export async function addWorktree(
 
 export async function removeWorktree(name: string): Promise<string> {
   console.log(`[workmux:rm] running: workmux rm --force ${name}`);
-  stopForwarding(name);
+  await removeContainer(name);
   const result = await runChecked(["workmux", "rm", "--force", name]);
   console.log(`[workmux:rm] result: ${result}`);
   return result;
@@ -225,7 +252,7 @@ export async function openWorktree(name: string): Promise<string> {
 
 export async function mergeWorktree(name: string): Promise<string> {
   console.log(`[workmux:merge] running: workmux merge ${name}`);
-  stopForwarding(name);
+  await removeContainer(name);
   const result = await runChecked(["workmux", "merge", name]);
   console.log(`[workmux:merge] result: ${result}`);
   return result;
