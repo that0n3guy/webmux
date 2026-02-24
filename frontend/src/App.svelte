@@ -197,7 +197,7 @@
   });
 </script>
 
-<div class="flex h-screen bg-surface text-primary">
+<div class="flex h-dvh bg-surface text-primary">
   <!-- Sidebar: fixed overlay on mobile, static on desktop -->
   {#if !isMobile || sidebarOpen}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
