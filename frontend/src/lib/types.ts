@@ -16,6 +16,7 @@ export interface WorktreeInfo {
   profile: string | null;
   agentName: string | null;
   services: ServiceStatus[];
+  paneCount: number;
 }
 
 export interface ServiceConfig {
@@ -25,12 +26,13 @@ export interface ServiceConfig {
 
 export interface ProfileConfig {
   name: string;
-  panes: string[];
-  sandbox?: boolean;
   systemPrompt?: string;
 }
 
 export interface AppConfig {
   services: ServiceConfig[];
-  profiles: ProfileConfig[];
+  profiles: {
+    default: ProfileConfig;
+    sandbox?: ProfileConfig;
+  };
 }

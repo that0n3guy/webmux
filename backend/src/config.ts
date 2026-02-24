@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
 
 export interface ServiceConfig {
   name: string;
@@ -7,36 +8,40 @@ export interface ServiceConfig {
 
 export interface ProfileConfig {
   name: string;
-  panes: string[];
-  sandbox?: boolean;
   systemPrompt?: string;
+  envPassthrough?: string[];
 }
 
 export interface WmdevConfig {
   services: ServiceConfig[];
-  profiles: ProfileConfig[];
+  profiles: {
+    default: ProfileConfig;
+    sandbox?: ProfileConfig;
+  };
 }
 
 const DEFAULT_CONFIG: WmdevConfig = {
   services: [],
-  profiles: [{ name: "Full", panes: [] }],
+  profiles: { default: { name: "default" } },
 };
 
-/** Load .wmdev.json from a directory, merging with defaults. */
+/** Load .wmdev.yaml from a directory, merging with defaults. */
 export function loadConfig(dir: string): WmdevConfig {
   try {
-    const filePath = join(dir, ".wmdev.json");
-    const file = Bun.file(filePath);
-    // Bun.file().json() is async; use spawnSync + JSON.parse for sync loading at startup
+    const filePath = join(dir, ".wmdev.yaml");
     const result = Bun.spawnSync(["cat", filePath], { stdout: "pipe" });
     const text = new TextDecoder().decode(result.stdout).trim();
     if (!text) return DEFAULT_CONFIG;
-    const parsed = JSON.parse(text) as Partial<WmdevConfig>;
+    const parsed = parseYaml(text) as Record<string, unknown>;
+    const profiles = parsed.profiles as Record<string, unknown> | undefined;
+    const defaultProfile = profiles?.default as ProfileConfig | undefined;
+    const sandboxProfile = profiles?.sandbox as ProfileConfig | undefined;
     return {
-      services: Array.isArray(parsed.services) ? parsed.services : DEFAULT_CONFIG.services,
-      profiles: Array.isArray(parsed.profiles) && parsed.profiles.length > 0
-        ? parsed.profiles
-        : DEFAULT_CONFIG.profiles,
+      services: Array.isArray(parsed.services) ? parsed.services as ServiceConfig[] : DEFAULT_CONFIG.services,
+      profiles: {
+        default: defaultProfile?.name ? defaultProfile : DEFAULT_CONFIG.profiles.default,
+        ...(sandboxProfile?.name ? { sandbox: sandboxProfile } : {}),
+      },
     };
   } catch {
     return DEFAULT_CONFIG;

@@ -52,6 +52,16 @@ function getWorktreePaths(): Map<string, string> {
   return paths;
 }
 
+/** Count tmux panes for a worktree window. */
+function getTmuxPaneCount(branch: string): number {
+  const result = Bun.spawnSync(
+    ["tmux", "list-panes", "-t", `wm-${branch}`, "-F", "#{pane_index}"],
+    { stdout: "pipe", stderr: "pipe" }
+  );
+  if (result.exitCode !== 0) return 0;
+  return new TextDecoder().decode(result.stdout).trim().split("\n").filter(Boolean).length;
+}
+
 /** Check if a port has a service responding (not just a TCP handshake). */
 function isPortListening(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -225,6 +235,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
           profile: env.PROFILE || null,
           agentName: env.AGENT || null,
           services,
+          paneCount: wt.mux === "✓" ? getTmuxPaneCount(wt.branch) : 0,
         };
       }));
       return jsonResponse(merged);
@@ -236,14 +247,12 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       if (!body.branch) {
         return errorResponse("branch is required", 400);
       }
-      const profileName = body.profile ?? config.profiles[0]?.name ?? "Full";
-      const profileConfig = config.profiles.find(p => p.name === profileName);
-      if (!profileConfig) {
-        return errorResponse(`Unknown profile: ${profileName}`, 400);
-      }
+      const profileName = body.profile ?? config.profiles.default.name;
+      const isSandbox = config.profiles.sandbox !== undefined && profileName === config.profiles.sandbox.name;
+      const profileConfig = isSandbox ? config.profiles.sandbox! : config.profiles.default;
       const agent = body.agent ?? "claude";
       console.log(`[worktree:add] branch=${body.branch} agent=${agent} profile=${profileName}${body.prompt ? ` prompt="${body.prompt.slice(0, 80)}"` : ""}`);
-      const result = await addWorktree(body.branch, { prompt: body.prompt, profile: profileName, agent, profileConfig });
+      const result = await addWorktree(body.branch, { prompt: body.prompt, profile: profileName, agent, profileConfig, isSandbox });
       console.log(`[worktree:add] done branch=${body.branch}: ${result}`);
       return jsonResponse({ message: result }, 201);
     }

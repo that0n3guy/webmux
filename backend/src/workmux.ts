@@ -82,13 +82,28 @@ async function runChecked(args: string[]): Promise<string> {
 
 export { readEnvLocal } from "./env";
 
-function buildAgentCmd(env: Record<string, string>, agent: string, profileConfig: ProfileConfig): string {
+/** Build an inline env prefix (e.g. "KEY=val KEY2=val2 ") for vars listed in envPassthrough. */
+function buildEnvPrefix(keys: string[]): string {
+  const parts: string[] = [];
+  for (const key of keys) {
+    const val = process.env[key];
+    if (val) {
+      const escaped = val.replace(/'/g, "'\\''");
+      parts.push(`${key}='${escaped}'`);
+    }
+  }
+  return parts.length > 0 ? parts.join(" ") + " " : "";
+}
+
+function buildAgentCmd(env: Record<string, string>, agent: string, profileConfig: ProfileConfig, isSandbox: boolean): string {
   const systemPrompt = profileConfig.systemPrompt
     ? expandTemplate(profileConfig.systemPrompt, env)
     : "";
   const innerEscaped = systemPrompt.replace(/["\\$`]/g, "\\$&");
-  const isSandbox = profileConfig.sandbox === true;
-  const prefix = isSandbox ? "workmux sandbox agent -- " : "";
+  const envPrefix = profileConfig.envPassthrough?.length
+    ? buildEnvPrefix(profileConfig.envPassthrough)
+    : "";
+  const prefix = isSandbox ? `${envPrefix}workmux sandbox agent -- ` : envPrefix;
 
   if (agent === "codex") {
     return systemPrompt
@@ -111,13 +126,13 @@ function ensureTmux(): void {
 
 export async function addWorktree(
   branch: string,
-  opts?: { prompt?: string; profile?: string; agent?: string; profileConfig?: ProfileConfig }
+  opts?: { prompt?: string; profile?: string; agent?: string; profileConfig?: ProfileConfig; isSandbox?: boolean }
 ): Promise<string> {
   ensureTmux();
-  const profile = opts?.profile ?? "Full";
+  const profile = opts?.profile ?? "default";
   const agent = opts?.agent ?? "claude";
   const profileConfig = opts?.profileConfig;
-  const isSandbox = profileConfig?.sandbox === true;
+  const isSandbox = opts?.isSandbox === true;
   const hasSystemPrompt = !!profileConfig?.systemPrompt;
   const args: string[] = ["workmux", "add", "-b"]; // -b = background (don't switch tmux)
 
@@ -171,7 +186,7 @@ export async function addWorktree(
       Bun.spawnSync(["tmux", "kill-pane", "-t", `${windowTarget}.${paneIds[i]}`]);
     }
     // Build and send agent command
-    const agentCmd = buildAgentCmd(env, agent, profileConfig);
+    const agentCmd = buildAgentCmd(env, agent, profileConfig, isSandbox);
     console.log(`[workmux] sending command to ${windowTarget}.0:\n${agentCmd}`);
     Bun.spawnSync(["tmux", "send-keys", "-t", `${windowTarget}.0`, agentCmd, "Enter"]);
     // Open a shell pane on the right (1/3 width) in the worktree dir

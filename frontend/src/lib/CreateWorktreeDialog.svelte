@@ -13,6 +13,11 @@
     oncancel: () => void;
   } = $props();
 
+  const AGENTS = [
+    { value: "claude", label: "Claude" },
+    { value: "codex", label: "Codex" },
+  ];
+
   const STORAGE_KEY = "wt-default-profile";
   const AGENT_STORAGE_KEY = "wt-default-agent";
   const savedProfile = localStorage.getItem(STORAGE_KEY);
@@ -85,15 +90,25 @@
         bind:value={name}
       />
     </div>
-    <div class="mb-4">
-      <label class="block text-xs text-muted mb-1.5" for="wt-agent">Agent</label>
-      <input
-        id="wt-agent"
-        type="text"
-        class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] placeholder:text-muted/50 outline-none focus:border-accent"
-        placeholder="claude"
-        bind:value={agent}
-      />
+    <div class="flex gap-2 mb-4">
+      {#each AGENTS as a}
+        <label
+          class="flex-1 flex items-center justify-center gap-2 p-2.5 rounded-lg border cursor-pointer text-[13px] transition-colors
+            {agent === a.value
+            ? 'border-accent bg-accent/10'
+            : 'border-edge hover:bg-hover'}"
+        >
+          <input
+            type="radio"
+            name="agent"
+            value={a.value}
+            checked={agent === a.value}
+            onchange={() => (agent = a.value)}
+            class="accent-[var(--accent)]"
+          />
+          {a.label}
+        </label>
+      {/each}
     </div>
     {#if profiles.length > 1}
       <div class="flex flex-col gap-2 mb-6">

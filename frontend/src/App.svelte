@@ -10,7 +10,7 @@
   import type { WorktreeInfo, AppConfig } from "./lib/types";
   import * as api from "./lib/api";
 
-  let config = $state<AppConfig>({ services: [], profiles: [{ name: "Full", panes: [] }] });
+  let config = $state<AppConfig>({ services: [], profiles: { default: { name: "default" } } });
   let worktrees = $state<WorktreeInfo[]>([]);
   let selectedBranch = $state<string | null>(null);
   let removeBranch = $state<string | null>(null);
@@ -38,11 +38,9 @@
   let canConnect = $derived(!!selectedBranch && !isMain);
 
   let paneBarPanes = $derived.by(() => {
-    const profileName = selectedWorktree?.profile;
-    if (!profileName) return [];
-    const pc = config.profiles.find(p => p.name === profileName);
-    if (!pc || pc.panes.length === 0) return [];
-    return pc.panes.map((label, index) => ({ index, label }));
+    const count = selectedWorktree?.paneCount ?? 0;
+    if (count < 2) return [];
+    return Array.from({ length: count }, (_, i) => ({ index: i, label: String(i + 1) }));
   });
   let showPaneBar = $derived(isMobile && canConnect && paneBarPanes.length > 0);
 
@@ -289,7 +287,7 @@
 {#if showCreateDialog}
   <CreateWorktreeDialog
     loading={creating}
-    profiles={config.profiles}
+    profiles={[config.profiles.default, ...(config.profiles.sandbox ? [config.profiles.sandbox] : [])]}
     oncreate={handleCreate}
     oncancel={() => (showCreateDialog = false)}
   />
