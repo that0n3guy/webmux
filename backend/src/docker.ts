@@ -6,7 +6,13 @@
  */
 
 import { $ } from "bun";
+import { stat } from "node:fs/promises";
 import { type SandboxProfileConfig, type ServiceConfig } from "./config";
+
+/** Check if a path (file or directory) exists on the host. */
+async function pathExists(p: string): Promise<boolean> {
+  try { await stat(p); return true; } catch { return false; }
+}
 
 /** Container naming: wm-{branch}-{timestamp} */
 function containerName(branch: string): string {
@@ -74,10 +80,23 @@ export async function launchContainer(opts: LaunchContainerOpts): Promise<string
   args.push("-v", `${mainRepoDir}/.git:${mainRepoDir}/.git`);
   args.push("-v", `${mainRepoDir}:${mainRepoDir}:ro`);
 
-  // Claude config mounts
   const home = process.env.HOME ?? "/root";
+
+  // Claude config mounts
   args.push("-v", `${home}/.claude:/root/.claude`);
   args.push("-v", `${home}/.claude.json:/root/.claude.json`);
+
+  // Git/GitHub credential mounts (read-only, only if they exist on host)
+  const credentialMounts = [
+    { hostPath: `${home}/.gitconfig`, guestPath: "/root/.gitconfig" },
+    { hostPath: `${home}/.ssh`, guestPath: "/root/.ssh" },
+    { hostPath: `${home}/.config/gh`, guestPath: "/root/.config/gh" },
+  ];
+  for (const { hostPath, guestPath } of credentialMounts) {
+    if (await pathExists(hostPath)) {
+      args.push("-v", `${hostPath}:${guestPath}:ro`);
+    }
+  }
 
   // Extra mounts from config
   if (sandboxConfig.extraMounts) {
