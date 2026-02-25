@@ -314,17 +314,18 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     if (parts[0] === "ci-logs" && parts.length === 2 && method === "GET") {
       const runId = parts[1];
       if (!/^\d+$/.test(runId)) return errorResponse("Invalid run ID", 400);
-      const result = Bun.spawnSync(["gh", "run", "view", runId, "--log-failed"], {
+      const proc = Bun.spawn(["gh", "run", "view", runId, "--log-failed"], {
         stdout: "pipe",
         stderr: "pipe",
       });
+      const exitCode = await proc.exited;
 
-      if (result.exitCode === 0) {
-        const logs = new TextDecoder().decode(result.stdout);
+      if (exitCode === 0) {
+        const logs = await new Response(proc.stdout).text();
         return jsonResponse({ logs });
       }
 
-      const stderr = new TextDecoder().decode(result.stderr).trim();
+      const stderr = (await new Response(proc.stderr).text()).trim();
       return errorResponse(`Failed to fetch logs: ${stderr || "unknown error"}`, 502);
     }
 
