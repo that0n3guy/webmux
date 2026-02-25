@@ -20,6 +20,7 @@ import {
   cleanupStaleSessions,
 } from "./terminal";
 import { loadConfig, type WmdevConfig } from "./config";
+import { startPrMonitor } from "./pr";
 
 const PORT = parseInt(process.env.DASHBOARD_PORT || "5111");
 const STATIC_DIR = process.env.WMDEV_STATIC_DIR || "";
@@ -235,6 +236,10 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
           agentName: env.AGENT || null,
           services,
           paneCount: wt.mux === "✓" ? getTmuxPaneCount(wt.branch) : 0,
+          prNumber: env.PR_NUMBER ? parseInt(env.PR_NUMBER) : null,
+          prStatus: env.PR_STATUS || null,
+          prUrl: env.PR_URL || null,
+          ciChecks: env.CI_CHECKS || null,
         };
       }));
       return jsonResponse(merged);
@@ -315,5 +320,6 @@ if (tmuxCheck.exitCode !== 0) {
 }
 
 cleanupStaleSessions();
+startPrMonitor(getWorktreePaths);
 
 console.log(`Dev Dashboard API running at http://localhost:${PORT}`);

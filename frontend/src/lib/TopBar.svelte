@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { WorktreeInfo } from "./types";
+  import PrBadge from "./PrBadge.svelte";
 
   let {
     name,
@@ -67,6 +68,9 @@
     <span class="text-sm font-semibold truncate"
       >{name ?? "Select a worktree"}</span
     >
+    {#if worktree?.prNumber}
+      <PrBadge prNumber={worktree.prNumber} prStatus={worktree.prStatus} prUrl={worktree.prUrl} clickable />
+    {/if}
     {#if !isMobile}
       {#each worktree?.services ?? [] as svc}
         {#if svc.port}

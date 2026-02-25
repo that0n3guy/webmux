@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { WorktreeInfo } from "./types";
+  import PrBadge from "./PrBadge.svelte";
 
   let { worktrees, selected, removing, onselect, onremove }: {
     worktrees: WorktreeInfo[];
@@ -15,6 +16,7 @@
     if (agent === "error") return "bg-danger";
     return "bg-muted";
   }
+
 </script>
 
 <ul class="list-none overflow-y-auto flex-1 p-2">
@@ -27,7 +29,12 @@
         class="w-full py-2.5 px-3 rounded-md border cursor-pointer flex flex-col gap-1 text-left text-inherit text-sm bg-transparent hover:bg-hover {isActive ? 'bg-active border-accent' : 'border-transparent'}"
         onclick={() => onselect(wt.branch)}
       >
-        <span class="font-medium truncate pr-5">{wt.branch}</span>
+        <span class="flex items-center gap-1.5 pr-5">
+          <span class="font-medium truncate">{wt.branch}</span>
+          {#if wt.prNumber}
+            <PrBadge prNumber={wt.prNumber} prStatus={wt.prStatus} prUrl={wt.prUrl} />
+          {/if}
+        </span>
         <span class="flex gap-2 text-[11px] text-muted items-center flex-wrap">
           <span><span class="inline-block w-2 h-2 rounded-full mr-1 align-middle {dotColor(wt.agent)}"></span>{wt.agent || "none"}</span>
           {#if wt.agentName}

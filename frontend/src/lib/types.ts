@@ -17,6 +17,10 @@ export interface WorktreeInfo {
   agentName: string | null;
   services: ServiceStatus[];
   paneCount: number;
+  prNumber: number | null;
+  prStatus: string | null;
+  prUrl: string | null;
+  ciChecks: string | null;
 }
 
 export interface ServiceConfig {
