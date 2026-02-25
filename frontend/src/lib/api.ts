@@ -19,13 +19,19 @@ export function fetchWorktrees(): Promise<WorktreeInfo[]> {
 }
 
 export function createWorktree(
-  branch: string,
+  branch: string | undefined,
   profile: string,
   agent: string,
-): Promise<unknown> {
-  return api("worktrees", {
+  prompt?: string,
+): Promise<{ branch: string }> {
+  return api<{ branch: string }>("worktrees", {
     method: "POST",
-    body: JSON.stringify({ branch, profile, agent }),
+    body: JSON.stringify({
+      ...(branch ? { branch } : {}),
+      profile,
+      agent,
+      ...(prompt ? { prompt } : {}),
+    }),
   });
 }
 

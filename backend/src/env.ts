@@ -14,6 +14,7 @@ export function readEnvLocal(wtDir: string): Record<string, string> {
   }
 }
 
+
 /** Upsert a key=value pair in a worktree's .env.local file. */
 export function upsertEnvLocal(wtDir: string, key: string, value: string): void {
   const filePath = `${wtDir}/.env.local`;

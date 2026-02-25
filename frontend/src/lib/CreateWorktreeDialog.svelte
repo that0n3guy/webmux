@@ -9,7 +9,7 @@
   }: {
     loading?: boolean;
     profiles: ProfileConfig[];
-    oncreate: (name: string, profile: string, agent: string) => void;
+    oncreate: (name: string, profile: string, agent: string, prompt: string) => void;
     oncancel: () => void;
   } = $props();
 
@@ -25,6 +25,7 @@
 
   let defaultProfile = $derived(savedProfile ?? profiles[0]?.name ?? "Full");
   let name = $state("");
+  let prompt = $state("");
   let agent = $state(savedAgent ?? "claude");
   let profile = $state(savedProfile ?? "Full");
   let saveDefault = $state(false);
@@ -74,7 +75,7 @@
         localStorage.removeItem(STORAGE_KEY);
         localStorage.removeItem(AGENT_STORAGE_KEY);
       }
-      oncreate(name.trim(), profile, agent);
+      oncreate(name.trim(), profile, agent, prompt.trim());
     }}
   >
     <h2 class="text-base mb-4">New Worktree</h2>
@@ -89,6 +90,19 @@
         placeholder="auto-generated if empty"
         bind:value={name}
       />
+    </div>
+    <div class="mb-4">
+      <label class="block text-xs text-muted mb-1.5" for="wt-prompt"
+        >Prompt <span class="opacity-60">(optional)</span></label
+      >
+      <textarea
+        id="wt-prompt"
+        rows="3"
+        class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] placeholder:text-muted/50 outline-none focus:border-accent resize-y"
+        placeholder="Describe the task for the agent..."
+        bind:value={prompt}
+        onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }}
+      ></textarea>
     </div>
     <div class="flex gap-2 mb-4">
       {#each AGENTS as a}

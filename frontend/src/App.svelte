@@ -10,7 +10,7 @@
   import type { WorktreeInfo, AppConfig } from "./lib/types";
   import * as api from "./lib/api";
 
-  let config = $state<AppConfig>({ services: [], profiles: { default: { name: "default" } } });
+  let config = $state<AppConfig>({ services: [], profiles: { default: { name: "default" } }, autoName: false });
   let worktrees = $state<WorktreeInfo[]>([]);
   let selectedBranch = $state<string | null>(null);
   let removeBranch = $state<string | null>(null);
@@ -57,37 +57,14 @@
     }
   }
 
-  function randomName(len: number): string {
-    const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-    let result = "";
-    for (let i = 0; i < len; i++) {
-      result += chars[Math.floor(Math.random() * chars.length)];
-    }
-    return result;
-  }
-
-  /** Sanitize user input into a valid git branch name */
-  function sanitizeBranchName(raw: string): string {
-    return raw
-      .toLowerCase()                     // workmux expects lowercase
-      .replace(/\s+/g, "-")              // spaces → dashes
-      .replace(/[~^:?*\[\]\\]+/g, "")    // remove git-invalid chars
-      .replace(/\.{2,}/g, ".")            // collapse ".." → "."
-      .replace(/\/{2,}/g, "/")            // collapse consecutive slashes
-      .replace(/-{2,}/g, "-")             // collapse consecutive dashes
-      .replace(/^[.\-/]+|[.\-/]+$/g, "") // no leading/trailing . - /
-      .replace(/\.lock$/i, "");           // no trailing .lock
-  }
-
-  async function handleCreate(name: string, profile: string, agent: string) {
-    const branch = (name && sanitizeBranchName(name)) || randomName(8);
+  async function handleCreate(name: string, profile: string, agent: string, prompt: string) {
     creating = true;
     try {
-      await api.createWorktree(branch, profile, agent);
-      await api.openWorktree(branch);
+      const result = await api.createWorktree(name || undefined, profile, agent, prompt || undefined);
+      await api.openWorktree(result.branch);
       showCreateDialog = false;
       await refresh();
-      selectedBranch = branch;
+      selectedBranch = result.branch;
       if (isMobile) sidebarOpen = false;
     } catch (err) {
       alert(`Failed to create: ${err instanceof Error ? err.message : err}`);

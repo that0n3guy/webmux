@@ -20,7 +20,7 @@ import {
   cleanupStaleSessions,
 } from "./terminal";
 import { loadConfig, type WmdevConfig } from "./config";
-import { startPrMonitor } from "./pr";
+import { startPrMonitor, type PrEntry } from "./pr";
 
 const PORT = parseInt(process.env.DASHBOARD_PORT || "5111");
 const STATIC_DIR = process.env.WMDEV_STATIC_DIR || "";
@@ -236,10 +236,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
           agentName: env.AGENT || null,
           services,
           paneCount: wt.mux === "✓" ? getTmuxPaneCount(wt.branch) : 0,
-          prNumber: env.PR_NUMBER ? parseInt(env.PR_NUMBER) : null,
-          prStatus: env.PR_STATUS || null,
-          prUrl: env.PR_URL || null,
-          ciChecks: env.CI_CHECKS || null,
+          prs: env.PR_DATA ? (JSON.parse(env.PR_DATA) as PrEntry[]) : [],
         };
       }));
       return jsonResponse(merged);
@@ -248,27 +245,24 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     // POST /api/worktrees
     if (parts[0] === "worktrees" && parts.length === 1 && method === "POST") {
       const body = await req.json() as { branch?: string; prompt?: string; profile?: string; agent?: string };
-      if (!body.branch) {
-        return errorResponse("branch is required", 400);
-      }
-      const branch = body.branch.toLowerCase();
       const profileName = body.profile ?? config.profiles.default.name;
       const isSandbox = config.profiles.sandbox !== undefined && profileName === config.profiles.sandbox.name;
       const profileConfig = isSandbox ? config.profiles.sandbox! : config.profiles.default;
       const agent = body.agent ?? "claude";
-      console.log(`[worktree:add] branch=${branch} agent=${agent} profile=${profileName}${body.prompt ? ` prompt="${body.prompt.slice(0, 80)}"` : ""}`);
-      const result = await addWorktree(branch, {
+      console.log(`[worktree:add] agent=${agent} profile=${profileName}${body.branch ? ` branch=${body.branch}` : ""}${body.prompt ? ` prompt="${body.prompt.slice(0, 80)}"` : ""}`);
+      const result = await addWorktree(body.branch, {
         prompt: body.prompt,
         profile: profileName,
         agent,
+        autoName: config.autoName,
         profileConfig,
         isSandbox,
         sandboxConfig: isSandbox ? config.profiles.sandbox : undefined,
         services: config.services,
         mainRepoDir: PROJECT_DIR,
       });
-      console.log(`[worktree:add] done branch=${branch}: ${result}`);
-      return jsonResponse({ message: result }, 201);
+      console.log(`[worktree:add] done branch=${result.branch}: ${result.output}`);
+      return jsonResponse({ branch: result.branch }, 201);
     }
 
     // DELETE /api/worktrees/:name
@@ -320,6 +314,6 @@ if (tmuxCheck.exitCode !== 0) {
 }
 
 cleanupStaleSessions();
-startPrMonitor(getWorktreePaths);
+startPrMonitor(getWorktreePaths, config.linkedRepos);
 
 console.log(`Dev Dashboard API running at http://localhost:${PORT}`);

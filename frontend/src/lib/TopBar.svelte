@@ -68,9 +68,9 @@
     <span class="text-sm font-semibold truncate"
       >{name ?? "Select a worktree"}</span
     >
-    {#if worktree?.prNumber}
-      <PrBadge prNumber={worktree.prNumber} prStatus={worktree.prStatus} prUrl={worktree.prUrl} clickable />
-    {/if}
+    {#each worktree?.prs ?? [] as pr (pr.repo)}
+      <PrBadge {pr} showRepo={(worktree?.prs.length ?? 0) > 1} clickable />
+    {/each}
     {#if !isMobile}
       {#each worktree?.services ?? [] as svc}
         {#if svc.port}

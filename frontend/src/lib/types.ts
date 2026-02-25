@@ -4,6 +4,14 @@ export interface ServiceStatus {
   running: boolean;
 }
 
+export interface PrEntry {
+  repo: string;
+  number: number;
+  state: string;
+  url: string;
+  ciChecks: string;
+}
+
 export interface WorktreeInfo {
   branch: string;
   agent: string;
@@ -17,10 +25,7 @@ export interface WorktreeInfo {
   agentName: string | null;
   services: ServiceStatus[];
   paneCount: number;
-  prNumber: number | null;
-  prStatus: string | null;
-  prUrl: string | null;
-  ciChecks: string | null;
+  prs: PrEntry[];
 }
 
 export interface ServiceConfig {
@@ -39,4 +44,5 @@ export interface AppConfig {
     default: ProfileConfig;
     sandbox?: ProfileConfig;
   };
+  autoName: boolean;
 }

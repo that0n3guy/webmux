@@ -144,10 +144,39 @@ function ensureTmux(): void {
   }
 }
 
+/** Sanitize user input into a valid git branch name. */
+function sanitizeBranchName(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[~^:?*\[\]\\]+/g, "")
+    .replace(/\.{2,}/g, ".")
+    .replace(/\/{2,}/g, "/")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[.\-/]+|[.\-/]+$/g, "")
+    .replace(/\.lock$/i, "");
+}
+
+function randomName(len: number): string {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "";
+  for (let i = 0; i < len; i++) {
+    result += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return result;
+}
+
+/** Parse "Branch: <name>" from workmux add output. */
+function parseBranchFromOutput(output: string): string | null {
+  const match = output.match(/Branch:\s*(\S+)/);
+  return match?.[1] ?? null;
+}
+
 export interface AddWorktreeOpts {
   prompt?: string;
   profile?: string;
   agent?: string;
+  autoName?: boolean;
   profileConfig?: ProfileConfig;
   isSandbox?: boolean;
   sandboxConfig?: SandboxProfileConfig;
@@ -155,10 +184,15 @@ export interface AddWorktreeOpts {
   mainRepoDir?: string;
 }
 
+export interface AddWorktreeResult {
+  branch: string;
+  output: string;
+}
+
 export async function addWorktree(
-  branch: string,
+  rawBranch: string | undefined,
   opts?: AddWorktreeOpts
-): Promise<string> {
+): Promise<AddWorktreeResult> {
   ensureTmux();
   const profile = opts?.profile ?? "default";
   const agent = opts?.agent ?? "claude";
@@ -175,11 +209,34 @@ export async function addWorktree(
   // No -S flag — we manage Docker ourselves
 
   if (opts?.prompt) args.push("-p", opts.prompt);
-  args.push(branch);
+
+  // Branch name resolution:
+  // 1. User provided a name → sanitize and use it
+  // 2. No name + prompt + autoName → let workmux generate via -A
+  // 3. No name + (no prompt or no autoName) → random
+  const useAutoName = !rawBranch && !!opts?.prompt && !!opts?.autoName;
+  let branch: string;
+
+  if (rawBranch) {
+    branch = sanitizeBranchName(rawBranch);
+    args.push(branch);
+  } else if (useAutoName) {
+    args.push("-A");
+  } else {
+    branch = randomName(8);
+    args.push(branch);
+  }
 
   console.log(`[workmux:add] running: ${args.join(" ")}`);
   const result = await runChecked(args);
   console.log(`[workmux:add] result: ${result}`);
+
+  // When using -A, extract the branch name from workmux output
+  if (useAutoName) {
+    const parsed = parseBranchFromOutput(result);
+    if (!parsed) throw new Error("Failed to parse branch name from workmux output");
+    branch = parsed;
+  }
 
   const windowTarget = `wm-${branch}`;
 
@@ -249,7 +306,7 @@ export async function addWorktree(
     Bun.spawnSync(["tmux", "select-pane", "-t", `${windowTarget}.0`]);
   }
 
-  return result;
+  return { branch, output: result };
 }
 
 export async function removeWorktree(name: string): Promise<string> {

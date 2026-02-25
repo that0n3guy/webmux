@@ -31,9 +31,9 @@
       >
         <span class="flex items-center gap-1.5 pr-5">
           <span class="font-medium truncate">{wt.branch}</span>
-          {#if wt.prNumber}
-            <PrBadge prNumber={wt.prNumber} prStatus={wt.prStatus} prUrl={wt.prUrl} />
-          {/if}
+          {#each wt.prs as pr (pr.repo)}
+            <PrBadge {pr} showRepo={wt.prs.length > 1} />
+          {/each}
         </span>
         <span class="flex gap-2 text-[11px] text-muted items-center flex-wrap">
           <span><span class="inline-block w-2 h-2 rounded-full mr-1 align-middle {dotColor(wt.agent)}"></span>{wt.agent || "none"}</span>
