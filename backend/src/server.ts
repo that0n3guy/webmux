@@ -227,7 +227,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
           s.worktree.includes(wt.branch) || s.worktree.startsWith(wt.branch)
         );
         const wtDir = wtPaths.get(wt.branch);
-        const env = wtDir ? readEnvLocal(wtDir) : {};
+        const env = wtDir ? await readEnvLocal(wtDir) : {};
         const services = await Promise.all(
           config.services.map(async (svc) => {
             const port = env[svc.portEnv] ? parseInt(env[svc.portEnv]) : null;

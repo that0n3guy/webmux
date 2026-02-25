@@ -136,7 +136,7 @@ export async function syncPrStatus(
     if (!wtDir || seen.has(wtDir)) continue;
     seen.add(wtDir);
 
-    upsertEnvLocal(wtDir, "PR_DATA", JSON.stringify(entries));
+    await upsertEnvLocal(wtDir, "PR_DATA", JSON.stringify(entries));
   }
 
   console.log(`[pr] synced ${seen.size} worktree(s) with PR data from ${allRepoResults.length} repo(s)`);

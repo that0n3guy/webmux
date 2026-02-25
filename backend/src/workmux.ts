@@ -250,7 +250,7 @@ export async function addWorktree(
 
   // Read worktree dir from git (tmux pane may not have cd'd yet with -C)
   const wtDir = findWorktreeDir(branch);
-  const env = readEnvLocal(wtDir);
+  const env = await readEnvLocal(wtDir);
   console.log(`[workmux:add] branch=${branch} dir=${wtDir} env=${JSON.stringify(env)}`);
 
   // Append profile to .env.local (worktree-env creates it, we just add to it)
