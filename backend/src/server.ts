@@ -296,7 +296,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       const body = await req.json() as { text?: string; preamble?: string };
       if (!body.text) return errorResponse("Missing 'text' field", 400);
       console.log(`[worktree:send] name=${name} text="${body.text.slice(0, 80)}"`);
-      const result = sendPrompt(name, body.text, 0, body.preamble);
+      const result = await sendPrompt(name, body.text, 0, body.preamble);
       if (!result.ok) return errorResponse(result.error, 404);
       return jsonResponse({ ok: true });
     }
