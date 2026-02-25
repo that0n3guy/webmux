@@ -32,16 +32,24 @@ function ts(): string {
   return new Date().toISOString().slice(11, 23);
 }
 
-/** Map branch name → worktree directory using git worktree list. */
+/** Map branch name → worktree directory using git worktree list.
+ *  Skips the main working tree (always the first entry) since it's not
+ *  a workmux-managed worktree and shouldn't have PR_DATA written to it. */
 function getWorktreePaths(): Map<string, string> {
   const result = Bun.spawnSync(["git", "worktree", "list", "--porcelain"], { stdout: "pipe" });
   const output = new TextDecoder().decode(result.stdout);
   const paths = new Map<string, string>();
   let currentPath = "";
+  let isFirst = true;
   for (const line of output.split("\n")) {
     if (line.startsWith("worktree ")) {
       currentPath = line.slice("worktree ".length);
     } else if (line.startsWith("branch ")) {
+      // Skip the main working tree (first entry in porcelain output)
+      if (isFirst) {
+        isFirst = false;
+        continue;
+      }
       // branch refs/heads/foo → "foo"
       const branch = line.slice("branch ".length).replace("refs/heads/", "");
       // Also map by directory basename (workmux uses basename as branch key)
