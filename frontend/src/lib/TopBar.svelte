@@ -2,6 +2,7 @@
   import type { WorktreeInfo, PrEntry } from "./types";
   import PrBadge from "./PrBadge.svelte";
   import CiBadge from "./CiBadge.svelte";
+  import AgentStatusIcon from "./AgentStatusIcon.svelte";
 
   let {
     name,
@@ -126,9 +127,7 @@
   {#if name}
     <div class="flex gap-2 items-center">
       {#if !isMobile}
-        <span class="text-xs px-2 py-0.5 rounded-xl bg-hover"
-          >{worktree?.status || worktree?.agent || ""}</span
-        >
+        <AgentStatusIcon status={worktree?.status || worktree?.agent || ""} pill />
       {/if}
       <button
         class="{btn} !text-accent !border-accent hover:!bg-accent/10"

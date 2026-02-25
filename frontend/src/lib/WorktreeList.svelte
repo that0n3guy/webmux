@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { WorktreeInfo } from "./types";
   import PrBadge from "./PrBadge.svelte";
+  import AgentStatusIcon from "./AgentStatusIcon.svelte";
 
   let { worktrees, selected, removing, onselect, onremove }: {
     worktrees: WorktreeInfo[];
@@ -9,13 +10,6 @@
     onselect: (branch: string) => void;
     onremove: (branch: string) => void;
   } = $props();
-
-  function dotColor(agent: string): string {
-    if (agent === "working") return "bg-success";
-    if (agent === "waiting") return "bg-warning";
-    if (agent === "error") return "bg-danger";
-    return "bg-muted";
-  }
 
 </script>
 
@@ -36,7 +30,7 @@
           {/each}
         </span>
         <span class="flex gap-2 text-[11px] text-muted items-center flex-wrap">
-          <span><span class="inline-block w-2 h-2 rounded-full mr-1 align-middle {dotColor(wt.agent)}"></span>{wt.agent || "none"}</span>
+          <span class="flex items-center gap-1"><AgentStatusIcon status={wt.agent} />{wt.agent || "idle"}</span>
           {#if wt.agentName}
             <span>{wt.agentName}</span>
           {/if}
