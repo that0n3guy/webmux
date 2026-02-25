@@ -297,7 +297,7 @@ export async function addWorktree(
       const dockerExec = `docker exec -it -w ${wtDir} ${containerName} bash`;
       Bun.spawnSync(["tmux", "send-keys", "-t", `${windowTarget}.0`, dockerExec, "Enter"]);
       // Wait for shell to be ready, then chain entrypoint → agent
-      Bun.spawnSync(["sleep", "0.5"]);
+      await Bun.sleep(500);
       const entrypointThenAgent = `/usr/local/bin/entrypoint.sh && ${agentCmd}`;
       console.log(`[workmux] sending to ${windowTarget}.0:\n${entrypointThenAgent}`);
       Bun.spawnSync(["tmux", "send-keys", "-t", `${windowTarget}.0`, entrypointThenAgent, "Enter"]);
