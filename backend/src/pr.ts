@@ -69,7 +69,7 @@ function mapChecks(checks: GhCheckEntry[]): CiCheck[] {
 
 /** Fetch all PRs from a repo via gh CLI. Returns a map of branch name → PrEntry. */
 export async function fetchAllPrs(repoSlug?: string, repoLabel?: string): Promise<Map<string, PrEntry>> {
-  const args = ["gh", "pr", "list", "--state", "all", "--json", "number,headRefName,state,statusCheckRollup,url", "--limit", "100"];
+  const args = ["gh", "pr", "list", "--state", "open", "--json", "number,headRefName,state,statusCheckRollup,url", "--limit", "50"];
   if (repoSlug) args.push("--repo", repoSlug);
 
   const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
