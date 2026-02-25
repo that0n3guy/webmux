@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "bun --watch src/server.ts",
-    "start": "bun src/server.ts"
+    "start": "bun src/server.ts",
+    "check": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/bun": "latest",

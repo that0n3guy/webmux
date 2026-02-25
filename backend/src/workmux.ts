@@ -215,7 +215,7 @@ export async function addWorktree(
   // 2. No name + prompt + autoName → let workmux generate via -A
   // 3. No name + (no prompt or no autoName) → random
   const useAutoName = !rawBranch && !!opts?.prompt && !!opts?.autoName;
-  let branch: string;
+  let branch = "";
 
   if (rawBranch) {
     branch = sanitizeBranchName(rawBranch);

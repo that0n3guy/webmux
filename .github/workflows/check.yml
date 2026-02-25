@@ -1,0 +1,24 @@
+name: Type Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      - name: Backend type check
+        run: bun run check
+        working-directory: backend
+
+      - name: Frontend type check
+        run: bun run check
+        working-directory: frontend
