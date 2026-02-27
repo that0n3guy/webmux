@@ -66,8 +66,9 @@ args = sys.argv[2:]
 host = os.environ.get("WORKMUX_RPC_HOST", "host.docker.internal")
 port = os.environ.get("WORKMUX_RPC_PORT", "5111")
 token = os.environ.get("WORKMUX_RPC_TOKEN", "")
+branch = os.environ.get("WORKMUX_BRANCH", "")
 
-payload = {"command": cmd, "args": args}
+payload = {"command": cmd, "args": args, "branch": branch}
 data = json.dumps(payload).encode()
 req = urllib.request.Request(
     f"http://{host}:{port}/rpc/workmux",
@@ -240,6 +241,7 @@ export function buildDockerRunArgs(
   args.push("-e", `WORKMUX_RPC_HOST=host.docker.internal`);
   args.push("-e", `WORKMUX_RPC_PORT=${rpcPort}`);
   args.push("-e", `WORKMUX_RPC_TOKEN=${rpcSecret}`);
+  args.push("-e", `WORKMUX_BRANCH=${opts.branch}`);
 
   // Image + command.
   args.push(sandboxConfig.image, "sleep", "infinity");
@@ -331,7 +333,7 @@ export async function launchContainer(opts: LaunchContainerOpts): Promise<string
   // Inject workmux stub so agents inside the container can call host-side workmux.
   const stub = buildWorkmuxStub();
   const injectProc = Bun.spawn(
-    ["docker", "exec", "-i", name, "sh", "-c",
+    ["docker", "exec", "-u", "root", "-i", name, "sh", "-c",
      "cat > /usr/local/bin/workmux && chmod +x /usr/local/bin/workmux"],
     { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
   );
