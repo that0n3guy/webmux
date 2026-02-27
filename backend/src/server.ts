@@ -22,14 +22,14 @@ import {
   clearCallbacks,
   cleanupStaleSessions,
 } from "./terminal";
-import { loadConfig, type WmdevConfig } from "./config";
+import { loadConfig, gitRoot, type WmdevConfig } from "./config";
 import { startPrMonitor, type PrEntry } from "./pr";
 import { handleWorkmuxRpc } from "./rpc";
 import { jsonResponse, errorResponse } from "./http";
 
 const PORT = parseInt(Bun.env.DASHBOARD_PORT || "5111", 10);
 const STATIC_DIR = Bun.env.WMDEV_STATIC_DIR || "";
-const PROJECT_DIR = Bun.env.WMDEV_PROJECT_DIR || process.cwd();
+const PROJECT_DIR = Bun.env.WMDEV_PROJECT_DIR || gitRoot(process.cwd());
 const config: WmdevConfig = loadConfig(PROJECT_DIR);
 
 // --- WebSocket protocol types ---

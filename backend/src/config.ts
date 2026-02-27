@@ -55,7 +55,7 @@ function hasAutoName(dir: string): boolean {
 }
 
 /** Resolve the git repository root from a directory. */
-function gitRoot(dir: string): string {
+export function gitRoot(dir: string): string {
   const result = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], { stdout: "pipe", cwd: dir });
   return new TextDecoder().decode(result.stdout).trim() || dir;
 }
