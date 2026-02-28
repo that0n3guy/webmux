@@ -2,6 +2,8 @@
 
 Web dashboard for [workmux](https://github.com/raine/workmux). Provides a browser UI with embedded terminals, PR status monitoring, and CI integration on top of workmux's worktree + tmux orchestration.
 
+https://github.com/user-attachments/assets/70cb5a7b-c70b-477c-b17f-a222201b93d9
+
 ## What is workmux?
 
 [workmux](https://github.com/raine/workmux) is a CLI tool that orchestrates git worktrees and tmux. It pairs each worktree with a tmux window, provisions files (copy/symlink), runs lifecycle hooks, and has first-class AI agent support. A single `workmux add` creates the worktree, opens a tmux window with configured panes, and starts your agent. `workmux merge` merges the branch, deletes the worktree, closes the window, and cleans up branches.
