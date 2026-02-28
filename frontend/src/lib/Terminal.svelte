@@ -17,6 +17,22 @@
   let ws: WebSocket;
   let resizeObs: ResizeObserver;
 
+  function copyToClipboard(text: string): void {
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {});
+      return;
+    }
+    // Fallback for non-secure contexts (HTTP on non-localhost)
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+  }
+
   export function sendSelectPane(pane: number) {
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "selectPane", pane }));
@@ -57,8 +73,7 @@
       if (idx !== -1) {
         const b64 = data.slice(idx + 1);
         try {
-          const text = atob(b64);
-          navigator.clipboard.writeText(text);
+          copyToClipboard(atob(b64));
         } catch {}
       }
       return true;
@@ -68,7 +83,7 @@
     term.onSelectionChange(() => {
       const sel = term.getSelection();
       if (sel) {
-        navigator.clipboard.writeText(sel);
+        copyToClipboard(sel);
       }
     });
 
@@ -77,6 +92,14 @@
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       if (e.type !== "keydown") return true;
       const mod = e.metaKey || e.ctrlKey;
+      if (mod && (e.key === "c" || e.key === "C")) {
+        if (term.hasSelection()) {
+          copyToClipboard(term.getSelection());
+          term.clearSelection();
+          return false;
+        }
+        return true;
+      }
       if (mod && (e.key === "ArrowUp" || e.key === "ArrowDown")) return false;
       if (mod && (e.key === "k" || e.key === "K")) return false;
       if (mod && (e.key === "m" || e.key === "M")) return false;
