@@ -49,7 +49,7 @@ panes:
       Supply an explicit BRANCH name (kebab-case, 1-3 words, describe the change).\n
       Create one at a time — run the command, wait for completion, then create the next."
     focus: true
-  - command: 'ROOT="$(git rev-parse --show-toplevel)"; [ -f "$ROOT/.env.local" ] && source "$ROOT/.env.local"; cd "$ROOT/frontend" && bun install && DASHBOARD_PORT=5111 bun run dev'
+  - command: 'ROOT="$(git rev-parse --show-toplevel)"; [ -f "$ROOT/.env.local" ] && source "$ROOT/.env.local"; cd "$ROOT/frontend" && bun install && DASHBOARD_PORT=5111 PORT=$FRONTEND_PORT bun run dev'
     split: horizontal
 
 sandbox:
