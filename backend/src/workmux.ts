@@ -70,8 +70,12 @@ function workmuxEnv(): Record<string, string | undefined> {
 }
 
 export async function listWorktrees(): Promise<Worktree[]> {
-  const result = await $`workmux list`.env(workmuxEnv()).text();
-  return parseTable(result, (cols) => ({
+  const proc = await $`workmux list`.env(workmuxEnv()).nothrow().quiet();
+  if (proc.exitCode !== 0) {
+    ensureTmux();
+    return [];
+  }
+  return parseTable(proc.text(), (cols) => ({
     branch: cols[0] ?? "",
     agent: cols[1] ?? "",
     mux: cols[2] ?? "",
@@ -81,8 +85,12 @@ export async function listWorktrees(): Promise<Worktree[]> {
 }
 
 export async function getStatus(): Promise<WorktreeStatus[]> {
-  const result = await $`workmux status`.env(workmuxEnv()).text();
-  return parseTable(result, (cols) => ({
+  const proc = await $`workmux status`.env(workmuxEnv()).nothrow().quiet();
+  if (proc.exitCode !== 0) {
+    ensureTmux();
+    return [];
+  }
+  return parseTable(proc.text(), (cols) => ({
     worktree: cols[0] ?? "",
     status: cols[1] ?? "",
     elapsed: cols[2] ?? "",
