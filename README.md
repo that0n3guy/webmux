@@ -2,7 +2,7 @@
 
 Web dashboard for [workmux](https://github.com/raine/workmux). Provides a browser UI with embedded terminals, PR status monitoring, and CI integration on top of workmux's worktree + tmux orchestration.
 
-https://github.com/user-attachments/assets/70cb5a7b-c70b-477c-b17f-a222201b93d9
+https://github.com/user-attachments/assets/fa13366d-e758-4221-94bf-13a5738bf7e7
 
 ## What is workmux?
 
