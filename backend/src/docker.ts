@@ -187,9 +187,10 @@ export function buildDockerRunArgs(
   args.push("-v", `${mainRepoDir}/.git:${mainRepoDir}/.git`);
   args.push("-v", `${mainRepoDir}:${mainRepoDir}:ro`);
 
-  // Claude config mounts.
+  // Agent config mounts.
   args.push("-v", `${home}/.claude:/root/.claude`);
   args.push("-v", `${home}/.claude.json:/root/.claude.json`);
+  args.push("-v", `${home}/.codex:/root/.codex`);
 
   // Compute which guest paths are already covered by extraMounts so credential
   // mounts for the same path can be skipped (extraMounts win).
