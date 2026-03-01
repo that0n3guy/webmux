@@ -21,6 +21,7 @@ wmdev is a web UI that wraps workmux. It delegates core worktree lifecycle opera
 | Open/focus a worktree's tmux window | **workmux** (`workmux open`) |
 | List worktrees and agent status | **workmux** (`workmux list`, `workmux status`) |
 | File provisioning and lifecycle hooks | **workmux** (`.workmux.yaml` `files` and `post_create`) |
+| Port allocation for worktree services | **wmdev** (when `portStart` is set in `.wmdev.yaml`) or **workmux** (via `post_create` hook) |
 | Browser terminal (xterm.js ↔ tmux) | **wmdev** |
 | Service health monitoring (port polling) | **wmdev** |
 | PR status tracking and badges | **wmdev** (polls `gh pr list`) |
@@ -63,9 +64,13 @@ wmdev uses two config files in the project root:
 ```yaml
 # Services to monitor — each maps a display name to a port env var.
 # The dashboard polls these ports and shows health status badges.
+# When portStart is set, wmdev auto-allocates ports for new worktrees
+# and writes them to .env.local (no post_create hook needed).
 services:
   - name: string             # Display name (e.g. "BE", "FE")
     portEnv: string          # Env var holding the port (e.g. "BACKEND_PORT")
+    portStart: number        # (optional) Base port for slot 0 (e.g. 5111)
+    portStep: number         # (optional) Increment per worktree slot (default: 1)
 
 # Profiles define the environment when creating a worktree via the dashboard.
 profiles:
@@ -110,8 +115,12 @@ linkedRepos: []
 services:
   - name: BE
     portEnv: DASHBOARD_PORT
+    portStart: 5111
+    portStep: 10
   - name: FE
     portEnv: FRONTEND_PORT
+    portStart: 5112
+    portStep: 10
 
 profiles:
   default:
@@ -142,6 +151,8 @@ linkedRepos:
 |-----------|------|----------|-------------|
 | `services[].name` | string | yes | Display name shown in the dashboard |
 | `services[].portEnv` | string | yes | Env var containing the service port (read from each worktree's `.env.local`) |
+| `services[].portStart` | number | no | Base port for slot 0. When set, wmdev auto-allocates ports for new worktrees |
+| `services[].portStep` | number | no | Port increment per worktree slot (default: `1`). Slot 0 is reserved for main |
 | `profiles.default.name` | string | yes | Identifier for the default profile |
 | `profiles.default.systemPrompt` | string | no | System prompt for the agent; `${VAR}` placeholders expanded at runtime |
 | `profiles.default.envPassthrough` | string[] | no | Env vars passed through to the agent process |
