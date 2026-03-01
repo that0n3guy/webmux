@@ -23,6 +23,7 @@ profiles:
       - R2_PUBLIC_URL
     systemPrompt: >
       You are running inside a sandboxed container with full permissions.
+      IMPORTANT: Read docs/autonomous-mode.md before starting any work.
       This worktree is configured with the following ports:
 
       - Backend: port ${DASHBOARD_PORT}.
