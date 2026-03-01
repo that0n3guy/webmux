@@ -15,6 +15,10 @@ profiles:
   sandbox:
     name: sandbox
     image: workmux-sandbox
+    extraMounts:
+      - hostPath: ~/.codex
+        guestPath: /root/.codex
+        writable: true
     envPassthrough:
       - AWS_ACCESS_KEY_ID
       - AWS_SECRET_ACCESS_KEY
