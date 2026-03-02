@@ -5,9 +5,14 @@ export interface ServiceStatus {
 }
 
 export interface PrComment {
+  type: "comment" | "inline";
   author: string;
   body: string;
   createdAt: string;
+  path?: string;
+  line?: number | null;
+  diffHunk?: string;
+  isReply?: boolean;
 }
 
 export interface CiCheck {

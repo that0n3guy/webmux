@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
-  import type { PrEntry } from "./types";
+  import type { PrEntry, PrComment } from "./types";
   import { sendWorktreePrompt } from "./api";
   import { normalizeTextForPrompt } from "./promptUtils";
   import { prLabel, errorMessage } from "./utils";
@@ -20,12 +21,17 @@
     onsendsuccess: () => void;
   } = $props();
 
-  let selected = $state(new SvelteSet<number>());
   let sending = $state(false);
   let sendError = $state("");
 
+  const selected = new SvelteSet<number>();
+
   $effect(() => {
-    selected = new SvelteSet(pr.comments.map((_, i) => i));
+    const len = pr.comments.length;
+    untrack(() => {
+      selected.clear();
+      for (let i = 0; i < len; i++) selected.add(i);
+    });
   });
 
   let label = $derived(prLabel(pr));
@@ -48,23 +54,29 @@
     }
   }
 
+  function formatComment(c: PrComment, idx: number): string {
+    if (c.type === "inline") {
+      const loc = c.line ? `${c.path}:${c.line}` : c.path;
+      const hunk = c.diffHunk ? `\n\`\`\`diff\n${c.diffHunk}\n\`\`\`\n` : "\n";
+      return `[${idx}] @${c.author} (${c.createdAt.slice(0, 10)}) on ${loc}:${hunk}${c.body}`;
+    }
+    return `[${idx}] @${c.author} (${c.createdAt.slice(0, 10)}):\n${c.body}`;
+  }
+
   async function handleSend(): Promise<void> {
     if (!branch || noneSelected) return;
     sending = true;
     sendError = "";
     const preamble =
       [
-        "Review the PR comments and elaborate a plan to address them.",
+        "Review the PR comments (including inline review comments) and elaborate a plan to address them.",
         `PR: ${label}`,
         "",
         "Comments:",
       ].join("\n") + "\n";
     const content = pr.comments
       .filter((_, i) => selected.has(i))
-      .map(
-        (c, i) =>
-          `[${i + 1}] @${c.author} (${c.createdAt.slice(0, 10)}):\n${c.body}`,
-      )
+      .map((c, i) => formatComment(c, i + 1))
       .join("\n\n");
     try {
       await sendWorktreePrompt(
@@ -104,9 +116,20 @@
             class="mt-0.5 accent-accent"
           />
           <div class="flex-1 min-w-0">
+            {#if comment.type === "inline"}
+              <div class="text-[10px] font-mono text-accent mb-1 truncate" title={comment.path}>
+                {comment.path}{comment.line ? `:${comment.line}` : ""}
+                {#if comment.isReply}
+                  <span class="text-muted ml-1">(reply)</span>
+                {/if}
+              </div>
+            {/if}
             <div class="text-[12px] text-muted mb-1">
               <span class="font-medium text-primary">@{comment.author}</span>
               &middot; {comment.createdAt.slice(0, 10)}
+              {#if comment.type === "inline"}
+                <span class="text-accent/60 ml-1">review</span>
+              {/if}
             </div>
             <pre class="text-[11px] font-mono whitespace-pre-wrap m-0 text-primary/80">{comment.body}</pre>
           </div>

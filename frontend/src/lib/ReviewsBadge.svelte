@@ -5,6 +5,7 @@
     pr: PrEntry;
     onclick: (pr: PrEntry) => void;
   } = $props();
+
 </script>
 
 <button
