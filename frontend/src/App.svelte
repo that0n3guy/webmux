@@ -288,11 +288,32 @@
       Notification.requestPermission().catch(() => {});
     }
 
-    // Pause polling when tab is hidden to reduce server load.
+    // Pause polling when tab is hidden or idle (no interaction for 60s).
+    let idleTimer: ReturnType<typeof setTimeout>;
+    let idle = false;
+
+    function resetIdleTimer(): void {
+      if (idle) {
+        idle = false;
+        refresh();
+        interval = setInterval(refresh, 5000);
+      }
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        idle = true;
+        clearInterval(interval);
+      }, 60_000);
+    }
+
+    document.addEventListener("click", resetIdleTimer);
+    document.addEventListener("keydown", resetIdleTimer);
+    resetIdleTimer();
+
     function onVisibilityChange(): void {
       if (document.hidden) {
         clearInterval(interval);
       } else {
+        resetIdleTimer();
         refresh();
         interval = setInterval(refresh, 5000);
       }
@@ -309,6 +330,9 @@
 
     return () => {
       clearInterval(interval);
+      clearTimeout(idleTimer);
+      document.removeEventListener("click", resetIdleTimer);
+      document.removeEventListener("keydown", resetIdleTimer);
       window.removeEventListener("keydown", handleKeydown);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       mq.removeEventListener("change", onMqChange);

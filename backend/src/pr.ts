@@ -428,10 +428,14 @@ export async function syncPrStatus(
     }
   }
 
-  // Fetch inline review comments for open PRs whose updatedAt has changed.
+  const wtPaths = await getWorktreePaths();
+  const activeBranches = new Set(wtPaths.keys());
+
+  // Fetch inline review comments only for PRs matching active worktrees.
   // PRs that haven't been updated reuse cached comments (saves API calls).
   const reviewTuples: { entry: PrEntry; repoSlug: string | undefined }[] = [];
-  for (const entries of branchPrs.values()) {
+  for (const [branch, entries] of branchPrs) {
+    if (!activeBranches.has(branch)) continue;
     for (const entry of entries) {
       if (entry.state !== "open") continue;
       const cachedUpdatedAt = prUpdatedAtCache.get(entry.url);
@@ -464,8 +468,6 @@ export async function syncPrStatus(
       );
     }
   }
-
-  const wtPaths = await getWorktreePaths();
   const seen = new Set<string>();
 
   for (const [branch, entries] of branchPrs) {

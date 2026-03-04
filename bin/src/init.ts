@@ -27,12 +27,12 @@ function checkDeps(): Dep[] {
   for (const dep of deps) {
     const found = which(dep.tool);
     if (found) {
-      p.log.success(`${dep.tool} — found`);
+      console.log(`  ✓ ${dep.tool}`);
     } else if (dep.required) {
-      p.log.error(`${dep.tool} — not found (required)`);
+      console.log(`  ✗ ${dep.tool} — not found (required)`);
       missing.push(dep);
     } else {
-      p.log.warning(`${dep.tool} — not found (optional: ${dep.hint})`);
+      console.log(`  ○ ${dep.tool} — not found (optional)`);
     }
   }
   return missing;
@@ -144,11 +144,9 @@ if (existsSync(wmdevYaml)) {
 }
 
 // Step 6 — Summary
-p.note(
-  `1. Edit .workmux.yaml to configure pane layout for your project
-2. Edit .wmdev.yaml to set up service ports and profiles
-3. Run: wmdev`,
-  "Next steps",
-);
-
-p.outro("You're all set!");
+p.outro("You're all set! Next steps:");
+console.log();
+console.log("  1. Edit .workmux.yaml to configure pane layout for your project");
+console.log("  2. Edit .wmdev.yaml to set up service ports and profiles");
+console.log("  3. Run: wmdev");
+console.log();
