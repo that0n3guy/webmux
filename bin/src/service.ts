@@ -350,6 +350,13 @@ export default async function service(args: string[]): Promise<void> {
     return;
   }
 
+  const serviceManager = platform === "linux" ? "systemctl" : "launchctl";
+  const smResult = run("which", [serviceManager]);
+  if (!smResult.success) {
+    p.log.error(`${serviceManager} not found. Cannot manage services on this system.`);
+    return;
+  }
+
   const wmdevPath = resolveWmdevPath();
   if (!wmdevPath) {
     p.log.error("Could not find wmdev in PATH.");
