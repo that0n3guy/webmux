@@ -43,8 +43,9 @@ function wmdevTemplate(name: string): string {
 name: ${name}
 
 # --- Service health monitoring (uncomment to enable) ---
-# Tracks port status for each worktree.
-# Each worktree gets its own port range: base + (slot × step)
+# Each service defines a port env var that wmdev injects into .env.local
+# when creating a worktree. Ports are auto-assigned: base + (slot × step).
+# Use \`source .env.local\` in your .workmux.yaml pane commands to pick them up.
 # services:
 #   - name: app
 #     portEnv: PORT
@@ -78,6 +79,30 @@ profiles:
 # These will appear as configurable fields in the UI when creating a worktree.
 # startupEnvs:
 #   NODE_ENV: development
+`;
+}
+
+function workmuxTemplate(): string {
+  return `main_branch: main
+
+panes:
+  # Agent pane — runs the AI coding assistant
+  - command: >-
+      claude --append-system-prompt
+      "You are running inside a git worktree managed by workmux.\\n
+      Pane layout (current window):\\n
+      - Pane 0: this pane (claude agent)\\n
+      - Pane 1: dev server\\n\\n
+      To check dev server logs: tmux capture-pane -t .1 -p -S -50\\n
+      To restart dev server: tmux send-keys -t .1 C-c 'source .env.local && PORT=\\$PORT npm run dev' Enter"
+    focus: true
+
+  # Dev server — waits for .env.local (written by wmdev) then starts
+  - command: >-
+      until [ -f .env.local ]; do sleep 0.2; done;
+      source .env.local;
+      PORT=$PORT npm run dev
+    split: horizontal
 `;
 }
 
@@ -123,15 +148,8 @@ const workmuxYaml = join(gitRoot, ".workmux.yaml");
 if (existsSync(workmuxYaml)) {
   p.log.info(".workmux.yaml already exists, skipping");
 } else {
-  const s = p.spinner();
-  s.start("Running workmux init...");
-  const result = run("workmux", ["init"], { cwd: gitRoot });
-  if (result.success) {
-    s.stop(".workmux.yaml created");
-  } else {
-    s.stop("workmux init failed");
-    p.log.warning("Could not create .workmux.yaml. Run 'workmux init' manually.");
-  }
+  await Bun.write(workmuxYaml, workmuxTemplate());
+  p.log.success(".workmux.yaml created");
 }
 
 // Step 5 — .wmdev.yaml
