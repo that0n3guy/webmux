@@ -101,8 +101,13 @@
 
   let openingBranches = $state<Set<string>>(new Set());
   let visibleWorktrees = $derived(worktrees);
+  let selectableWorktrees = $derived(
+    visibleWorktrees.filter((w) => !removingBranches.has(w.branch)),
+  );
   let selectedWorktree = $derived(
-    visibleWorktrees.find((w) => w.branch === selectedBranch),
+    selectedBranch && !removingBranches.has(selectedBranch)
+      ? visibleWorktrees.find((w) => w.branch === selectedBranch)
+      : undefined,
   );
   let canConnect = $derived(!!selectedBranch && selectedWorktree?.mux === "✓");
 
@@ -111,14 +116,14 @@
       return;
     }
 
-    if (visibleWorktrees.length === 0) {
+    if (selectableWorktrees.length === 0) {
       selectedBranch = null;
       return;
     }
 
     // Prefer an open worktree, fall back to the first one.
-    const open = visibleWorktrees.find((w) => w.mux === "✓");
-    selectedBranch = (open ?? visibleWorktrees[0]).branch;
+    const open = selectableWorktrees.find((w) => w.mux === "✓");
+    selectedBranch = (open ?? selectableWorktrees[0]).branch;
   });
 
   $effect(() => {
