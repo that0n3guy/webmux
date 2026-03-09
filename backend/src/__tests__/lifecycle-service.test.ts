@@ -479,7 +479,7 @@ describe("LifecycleService", () => {
     ]);
   });
 
-  it("rejects removing a dirty worktree", async () => {
+  it("force removes a dirty worktree", async () => {
     const repoRoot = await initRepo();
     const runtime = new ProjectRuntime();
     const tmux = new FakeTmuxGateway();
@@ -491,16 +491,14 @@ describe("LifecycleService", () => {
     const worktreePath = join(repoRoot, "__worktrees", "feature-dirty");
     await Bun.write(join(worktreePath, "README.md"), "# dirty\n");
 
-    await expect(lifecycle.removeWorktree("feature-dirty")).rejects.toThrow(
-      "Worktree has uncommitted changes: feature-dirty",
-    );
+    await lifecycle.removeWorktree("feature-dirty");
 
-    expect(hooks.calls.filter((call) => call.name === "preRemove")).toHaveLength(0);
-    expect(new BunGitGateway().listWorktrees(repoRoot).some((entry) => entry.path === worktreePath)).toBe(true);
-    expect(run(["git", "branch", "--list", "feature-dirty"], repoRoot)).toContain("feature-dirty");
+    expect(hooks.calls.filter((call) => call.name === "preRemove")).toHaveLength(1);
+    expect(new BunGitGateway().listWorktrees(repoRoot).some((entry) => entry.path === worktreePath)).toBe(false);
+    expect(run(["git", "branch", "--list", "feature-dirty"], repoRoot)).toBe("");
   });
 
-  it("rejects removing a clean worktree that is ahead of its upstream", async () => {
+  it("force removes a worktree that is ahead of its upstream", async () => {
     const repoRoot = await initRepo();
     const runtime = new ProjectRuntime();
     const tmux = new FakeTmuxGateway();
@@ -518,12 +516,10 @@ describe("LifecycleService", () => {
 
     await lifecycle.createWorktree({ branch: "feature-ahead" });
 
-    await expect(lifecycle.removeWorktree("feature-ahead")).rejects.toThrow(
-      "Worktree has unpushed commits: feature-ahead",
-    );
+    await lifecycle.removeWorktree("feature-ahead");
 
-    expect(hooks.calls.filter((call) => call.name === "preRemove")).toHaveLength(0);
-    expect(run(["git", "branch", "--list", "feature-ahead"], repoRoot)).toContain("feature-ahead");
+    expect(hooks.calls.filter((call) => call.name === "preRemove")).toHaveLength(1);
+    expect(run(["git", "branch", "--list", "feature-ahead"], repoRoot)).toBe("");
   });
 
   it("removes the sandbox container before deleting a docker worktree", async () => {

@@ -209,7 +209,7 @@ export class LifecycleService {
   async removeWorktree(branch: string): Promise<void> {
     try {
       const resolved = await this.resolveExistingWorktree(branch);
-      await this.removeResolvedWorktree(resolved, false);
+      await this.removeResolvedWorktree(resolved);
     } catch (error) {
       throw this.wrapOperationError(error);
     }
@@ -230,7 +230,7 @@ export class LifecycleService {
       );
 
       try {
-        await this.removeResolvedWorktree(resolved, true);
+        await this.removeResolvedWorktree(resolved);
       } catch (error) {
         throw new LifecycleError(
           `Merged ${branch} into ${this.deps.config.workspace.mainBranch} but cleanup failed: ${toErrorMessage(error)}`,
@@ -541,26 +541,13 @@ export class LifecycleService {
     }
   }
 
-  private ensureNoAheadCommits(entry: GitWorktreeEntry): void {
-    const status = this.deps.git.readWorktreeStatus(entry.path);
-    if (status.aheadCount > 0) {
-      throw new LifecycleError(`Worktree has unpushed commits: ${entry.branch ?? entry.path}`, 409);
-    }
-  }
-
   private controlUrl(): string {
     return `${this.deps.controlBaseUrl.replace(/\/+$/, "")}/api/runtime/events`;
   }
 
   private async removeResolvedWorktree(
     resolved: ResolvedLifecycleWorktree,
-    allowAheadCommits: boolean,
   ): Promise<void> {
-    this.ensureNoUncommittedChanges(resolved.entry);
-    if (!allowAheadCommits) {
-      this.ensureNoAheadCommits(resolved.entry);
-    }
-
     await this.runLifecycleHook({
       name: "preRemove",
       command: this.deps.config.lifecycleHooks.preRemove,
