@@ -7,6 +7,8 @@ import type { TmuxGateway } from "../adapters/tmux";
 import {
   buildRuntimeEnvMap,
   getWorktreeStoragePaths,
+  loadDotenvLocal,
+  parseDotenv,
   readWorktreePrs,
   readWorktreeMeta,
   renderEnvFile,
@@ -164,6 +166,72 @@ describe("renderEnvFile", () => {
   });
 });
 
+describe("parseDotenv", () => {
+  it("parses key=value pairs, ignoring comments and blank lines", () => {
+    const content = [
+      "# database config",
+      "DB_HOST=localhost",
+      "DB_PORT=5432",
+      "",
+      "  # another comment",
+      "SECRET_KEY='my secret'",
+      'API_URL="https://example.com"',
+    ].join("\n");
+
+    expect(parseDotenv(content)).toEqual({
+      DB_HOST: "localhost",
+      DB_PORT: "5432",
+      SECRET_KEY: "my secret",
+      API_URL: "https://example.com",
+    });
+  });
+
+  it("handles values containing equals signs", () => {
+    expect(parseDotenv("CONN=host=localhost;port=5432")).toEqual({
+      CONN: "host=localhost;port=5432",
+    });
+  });
+
+  it("returns empty object for empty content", () => {
+    expect(parseDotenv("")).toEqual({});
+    expect(parseDotenv("# just a comment")).toEqual({});
+  });
+
+  it("handles export prefix", () => {
+    expect(parseDotenv("export FOO=bar\nexport BAZ='hello world'")).toEqual({
+      FOO: "bar",
+      BAZ: "hello world",
+    });
+  });
+
+  it("trims trailing whitespace on unquoted values", () => {
+    expect(parseDotenv("KEY=value   ")).toEqual({ KEY: "value" });
+  });
+
+  it("preserves a lone quote character as-is", () => {
+    expect(parseDotenv('KEY="')).toEqual({ KEY: '"' });
+    expect(parseDotenv("KEY='")).toEqual({ KEY: "'" });
+  });
+});
+
+describe("loadDotenvLocal", () => {
+  it("returns empty object when .env.local does not exist", async () => {
+    const env = await loadDotenvLocal("/nonexistent/path");
+    expect(env).toEqual({});
+  });
+
+  it("loads and parses .env.local from worktree path", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "webmux-dotenv-"));
+    try {
+      await Bun.write(join(dir, ".env.local"), "FOO=bar\nBAZ=qux\n");
+      const env = await loadDotenvLocal(dir);
+      expect(env).toEqual({ FOO: "bar", BAZ: "qux" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("worktree env maps", () => {
   it("builds runtime env with metadata-derived WEBMUX fields", () => {
     const env = buildRuntimeEnvMap(makeMeta(), {
@@ -177,6 +245,21 @@ describe("worktree env maps", () => {
     expect(env.WEBMUX_WORKTREE_PATH).toBe("/tmp/worktree");
     expect(env.WEBMUX_BRANCH).toBe("feature/search-panel");
     expect(env.WEBMUX_PROFILE).toBe("default");
+  });
+
+  it("includes dotenv values at lowest priority", () => {
+    const dotenv = {
+      NODE_ENV: "production",
+      CUSTOM_VAR: "from-dotenv",
+      FRONTEND_PORT: "9999",
+    };
+    const env = buildRuntimeEnvMap(makeMeta(), {
+      WEBMUX_WORKTREE_PATH: "/tmp/worktree",
+    }, dotenv);
+
+    expect(env.CUSTOM_VAR).toBe("from-dotenv");
+    expect(env.NODE_ENV).toBe("development");
+    expect(env.FRONTEND_PORT).toBe("3010");
   });
 
 });
