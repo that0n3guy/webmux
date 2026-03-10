@@ -17,6 +17,7 @@ Usage:
   webmux              Start the dashboard
   webmux init         Interactive project setup
   webmux service      Manage webmux as a system service
+  webmux update       Update webmux to the latest version
   webmux add          Create a worktree using the dashboard lifecycle
   webmux list         List worktrees and their status
   webmux open         Open an existing worktree session
@@ -32,7 +33,7 @@ Environment:
 `);
 }
 
-type RootCommand = "init" | "service" | "add" | "list" | "open" | "close" | "remove" | "merge" | null;
+type RootCommand = "init" | "service" | "update" | "add" | "list" | "open" | "close" | "remove" | "merge" | null;
 
 interface ParsedRootArgs {
   port: number;
@@ -44,6 +45,7 @@ interface ParsedRootArgs {
 function isRootCommand(value: string): value is NonNullable<RootCommand> {
   return value === "init"
     || value === "service"
+    || value === "update"
     || value === "add"
     || value === "list"
     || value === "open"
@@ -133,6 +135,17 @@ if (parsed.command === "service") {
   const { default: service } = await import("./service.ts");
   await service(parsed.commandArgs);
   process.exit(0);
+}
+
+if (parsed.command === "update") {
+  console.log("Updating webmux to the latest version...");
+  const proc = Bun.spawn(["bun", "install", "--global", "webmux@latest"], {
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  const code = await proc.exited;
+  process.exit(code);
 }
 
 // ── Load env files from CWD (.env.local overrides .env) ─────────────────────
