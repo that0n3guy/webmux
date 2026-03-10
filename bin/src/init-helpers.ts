@@ -120,7 +120,7 @@ export function buildInitPromptSpec(context: InitProjectContext): InitPromptSpec
     "Use this config shape:",
     "name: infer from the repository",
     "workspace.mainBranch: infer from git",
-    "workspace.worktreeRoot: keep __worktrees unless there is clear evidence of an existing alternative",
+    "workspace.worktreeRoot: keep ../worktrees unless there is clear evidence of an existing alternative",
     "services: one entry per real dev service with name, portEnv, and portStart when a default port is clear",
     "profiles.default.runtime: host",
     "profiles.default.envPassthrough: []",
@@ -536,7 +536,7 @@ name: ${input.projectName}
 
 workspace:
   mainBranch: ${input.mainBranch}
-  worktreeRoot: __worktrees
+  worktreeRoot: ../worktrees
   defaultAgent: ${defaultAgent}
 
 # Each service defines a port env var that webmux injects into pane and agent

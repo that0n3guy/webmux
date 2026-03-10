@@ -26,7 +26,7 @@ const DEFAULT_CONFIG: ProjectConfig = {
   name: "Webmux",
   workspace: {
     mainBranch: "main",
-    worktreeRoot: "__worktrees",
+    worktreeRoot: "../worktrees",
     defaultAgent: "claude",
   },
   profiles: {
