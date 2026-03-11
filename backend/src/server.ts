@@ -38,6 +38,7 @@ const config: ProjectConfig = runtime.config;
 const git = runtime.git;
 const tmux = runtime.tmux;
 const projectRuntime = runtime.projectRuntime;
+const worktreeCreationTracker = runtime.worktreeCreationTracker;
 const runtimeNotifications = runtime.runtimeNotifications;
 const reconciliationService = runtime.reconciliationService;
 const removingBranches = new Set<string>();
@@ -164,8 +165,19 @@ function ensureBranchNotRemoving(branch: string): void {
   }
 }
 
-async function withRemovingBranch<T>(branch: string, fn: () => Promise<T>): Promise<T> {
+function ensureBranchNotCreating(branch: string): void {
+  if (worktreeCreationTracker.has(branch)) {
+    throw new LifecycleError(`Worktree is being created: ${branch}`, 409);
+  }
+}
+
+function ensureBranchNotBusy(branch: string): void {
   ensureBranchNotRemoving(branch);
+  ensureBranchNotCreating(branch);
+}
+
+async function withRemovingBranch<T>(branch: string, fn: () => Promise<T>): Promise<T> {
+  ensureBranchNotBusy(branch);
   removingBranches.add(branch);
   try {
     return await fn();
@@ -178,7 +190,7 @@ async function resolveTerminalWorktree(branch: string): Promise<{
   worktreeId: string;
   attachTarget: TerminalAttachTarget;
 }> {
-  ensureBranchNotRemoving(branch);
+  ensureBranchNotBusy(branch);
   await reconciliationService.reconcile(PROJECT_DIR);
   const state = projectRuntime.getWorktreeByBranch(branch);
   if (!state) {
@@ -254,6 +266,7 @@ async function apiGetProject(): Promise<Response> {
     projectName: config.name,
     mainBranch: config.workspace.mainBranch,
     runtime: projectRuntime,
+    creatingWorktrees: worktreeCreationTracker.list(),
     notifications: runtimeNotifications.list(),
     findLinearIssue: (branch) => {
       const match = linearIssues.find((issue) => branchMatchesIssue(branch, issue.branchName));
@@ -324,6 +337,10 @@ async function apiCreateWorktree(req: Request): Promise<Response> {
   const profile = typeof body.profile === "string" ? body.profile : undefined;
   const agent = body.agent === "claude" || body.agent === "codex" ? body.agent : undefined;
 
+  if (branch) {
+    ensureBranchNotCreating(branch);
+  }
+
   log.info(
     `[worktree:add]${branch ? ` branch=${branch}` : ""}${profile ? ` profile=${profile}` : ""}${agent ? ` agent=${agent}` : ""}${prompt ? ` prompt="${prompt.slice(0, 80)}"` : ""}`,
   );
@@ -348,7 +365,7 @@ async function apiDeleteWorktree(name: string): Promise<Response> {
 }
 
 async function apiOpenWorktree(name: string): Promise<Response> {
-  ensureBranchNotRemoving(name);
+  ensureBranchNotBusy(name);
   log.info(`[worktree:open] name=${name}`);
   const result = await lifecycleService.openWorktree(name);
   log.debug(`[worktree:open] done name=${name} worktreeId=${result.worktreeId}`);
@@ -356,6 +373,7 @@ async function apiOpenWorktree(name: string): Promise<Response> {
 }
 
 async function apiCloseWorktree(name: string): Promise<Response> {
+  ensureBranchNotBusy(name);
   log.info(`[worktree:close] name=${name}`);
   await lifecycleService.closeWorktree(name);
   log.debug(`[worktree:close] done name=${name}`);
@@ -363,6 +381,7 @@ async function apiCloseWorktree(name: string): Promise<Response> {
 }
 
 async function apiSendPrompt(name: string, req: Request): Promise<Response> {
+  ensureBranchNotBusy(name);
   const raw: unknown = await req.json();
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return errorResponse("Invalid request body", 400);
@@ -385,6 +404,7 @@ async function apiSendPrompt(name: string, req: Request): Promise<Response> {
 }
 
 async function apiMergeWorktree(name: string): Promise<Response> {
+  ensureBranchNotBusy(name);
   log.info(`[worktree:merge] name=${name}`);
   await lifecycleService.mergeWorktree(name);
   log.debug(`[worktree:merge] done name=${name}`);
