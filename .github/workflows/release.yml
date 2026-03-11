@@ -39,3 +39,15 @@ jobs:
         if: ${{ steps.release.outputs.release_created }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Notify changelog to Discord
+        if: ${{ steps.release.outputs.release_created }}
+        env:
+          WINDMILL_TOKEN: ${{ secrets.WINDMILL_TOKEN }}
+        run: |
+          BODY=$(jq -n --arg changelog "${{ steps.release.outputs.body }}" '{"changelog_body": $changelog}')
+          curl -sf -X POST \
+            -H 'Content-Type: application/json' \
+            -H "Authorization: Bearer $WINDMILL_TOKEN" \
+            -d "$BODY" \
+            'https://app.windmill.dev/api/w/windmill-labs/jobs/run/p/f/all/forward-webmux-changelog-discord'
