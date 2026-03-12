@@ -1,23 +1,21 @@
 <script lang="ts">
   import type { PrEntry, ServiceStatus } from "./types";
-  import PrBadge from "./PrBadge.svelte";
-  import CiBadge from "./CiBadge.svelte";
-  import ReviewsBadge from "./ReviewsBadge.svelte";
+  import PrStatusGroup from "./PrStatusGroup.svelte";
 
   let {
     label,
     prs,
     services = [],
     cursorUrl = null,
-    onciclick,
-    onreviewsclick,
+    onCiClick,
+    onReviewsClick,
   }: {
     label?: string;
     prs: PrEntry[];
     services?: ServiceStatus[];
     cursorUrl?: string | null;
-    onciclick: (pr: PrEntry) => void;
-    onreviewsclick: (pr: PrEntry) => void;
+    onCiClick: (pr: PrEntry) => void;
+    onReviewsClick: (pr: PrEntry) => void;
   } = $props();
 </script>
 
@@ -26,13 +24,7 @@
     <span class="shrink-0 text-[10px] font-medium text-muted">{label}:</span>
   {/if}
   {#each prs as pr (`${pr.repo}#${pr.number}`)}
-    <PrBadge {pr} clickable />
-    {#if pr.ciChecks && pr.ciChecks.length > 0}
-      <CiBadge {pr} onclick={onciclick} />
-    {/if}
-    {#if pr.comments.length > 0}
-      <ReviewsBadge {pr} onclick={onreviewsclick} />
-    {/if}
+    <PrStatusGroup {pr} {onCiClick} {onReviewsClick} />
   {/each}
   {#each services as svc}
     {#if svc.port}

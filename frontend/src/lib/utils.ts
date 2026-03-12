@@ -9,6 +9,44 @@ export function prLabel(pr: Pick<PrEntry, "repo" | "number">): string {
   return pr.repo ? `${pr.repo} #${pr.number}` : `PR #${pr.number}`;
 }
 
+export function prStateTextClass(state: PrEntry["state"]): string {
+  if (state === "merged") return "text-merged";
+  if (state === "closed") return "text-danger";
+  return "text-primary";
+}
+
+export function prBadgeClass(state: PrEntry["state"]): string {
+  if (state === "merged") return "bg-merged/20 text-merged";
+  if (state === "closed") return "bg-danger/20 text-danger";
+  if (state === "open") return "bg-success/20 text-success";
+  return "bg-muted/20 text-muted";
+}
+
+export function ciStatusTextClass(ciStatus: PrEntry["ciStatus"]): string {
+  if (ciStatus === "failed") return "text-danger";
+  if (ciStatus === "success") return "text-success";
+  if (ciStatus === "pending") return "text-warning";
+  return "text-muted";
+}
+
+export function ciStatusDotClass(ciStatus: PrEntry["ciStatus"]): string {
+  if (ciStatus === "failed") return "bg-danger";
+  if (ciStatus === "success") return "bg-success";
+  if (ciStatus === "pending") return "bg-warning animate-pulse";
+  return "bg-muted";
+}
+
+export function prStatusShellClass(pr: Pick<PrEntry, "ciChecks" | "ciStatus" | "state">): string {
+  if (pr.ciChecks.length > 0) {
+    if (pr.ciStatus === "failed") return "border-danger/40 bg-danger/5";
+    if (pr.ciStatus === "pending") return "border-warning/40 bg-warning/5";
+    if (pr.ciStatus === "success") return "border-success/30 bg-success/5";
+  }
+  if (pr.state === "merged") return "border-merged/35 bg-merged/8";
+  if (pr.state === "closed") return "border-danger/35 bg-danger/5";
+  return "border-edge bg-surface";
+}
+
 export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
