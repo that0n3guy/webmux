@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type {
   AgentKind,
@@ -16,6 +16,10 @@ import type {
 export type { LinkedRepoConfig, MountSpec, PaneTemplate, ProfileConfig, ProjectConfig };
 export type ServiceConfig = ServiceSpec;
 export type DockerProfileConfig = ProfileConfig & { runtime: "docker"; image: string };
+
+interface LoadConfigOptions {
+  resolvedRoot?: boolean;
+}
 
 const DEFAULT_PANES: PaneTemplate[] = [
   { id: "agent", kind: "agent", focus: true },
@@ -247,10 +251,19 @@ export function gitRoot(dir: string): string {
   return root || dir;
 }
 
-/** Load `.webmux.yaml` from the git root into the final project config shape. */
-export function loadConfig(dir: string): ProjectConfig {
+/** Resolve the shared project root for a repository, even from a linked worktree. */
+export function projectRoot(dir: string): string {
+  const result = Bun.spawnSync(["git", "rev-parse", "--git-common-dir"], { stdout: "pipe", stderr: "pipe", cwd: dir });
+  if (result.exitCode !== 0) return gitRoot(dir);
+
+  const commonDir = new TextDecoder().decode(result.stdout).trim();
+  return commonDir ? dirname(resolve(dir, commonDir)) : gitRoot(dir);
+}
+
+/** Load `.webmux.yaml` from the shared project root into the final project config shape. */
+export function loadConfig(dir: string, options: LoadConfigOptions = {}): ProjectConfig {
   try {
-    const root = gitRoot(dir);
+    const root = options.resolvedRoot ? dir : projectRoot(dir);
     const text = readConfigFile(root).trim();
     if (!text) return DEFAULT_CONFIG;
 

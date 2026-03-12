@@ -1,4 +1,4 @@
-import { loadConfig, gitRoot, type ProjectConfig } from "./adapters/config";
+import { loadConfig, projectRoot, type ProjectConfig } from "./adapters/config";
 import { loadControlToken } from "./adapters/control-token";
 import { BunDockerGateway } from "./adapters/docker";
 import { BunGitGateway } from "./adapters/git";
@@ -36,8 +36,8 @@ export interface WebmuxRuntime {
 
 export function createWebmuxRuntime(options: WebmuxRuntimeOptions = {}): WebmuxRuntime {
   const port = options.port ?? parseInt(Bun.env.PORT || "5111", 10);
-  const projectDir = gitRoot(options.projectDir ?? Bun.env.WEBMUX_PROJECT_DIR ?? process.cwd());
-  const config = loadConfig(projectDir);
+  const projectDir = projectRoot(options.projectDir ?? Bun.env.WEBMUX_PROJECT_DIR ?? process.cwd());
+  const config = loadConfig(projectDir, { resolvedRoot: true });
   const git = new BunGitGateway();
   const portProbe = new BunPortProbe();
   const tmux = new BunTmuxGateway();
