@@ -59,7 +59,11 @@ dialog textarea:focus {
   width: 100%;
 }
 
-/* Mobile: increase touch targets */
+.xterm .xterm-viewport {
+  overscroll-behavior-y: contain;
+}
+
+/* Mobile layout */
 @media (max-width: 768px) {
   /* Prevent overscroll/bounce on iOS */
   html,

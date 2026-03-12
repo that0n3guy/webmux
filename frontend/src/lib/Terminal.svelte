@@ -17,6 +17,12 @@
   let ws: WebSocket;
   let resizeObs: ResizeObserver;
   let resizeTimer: ReturnType<typeof setTimeout>;
+  let xtermEl: HTMLElement | null = null;
+  let viewportEl: HTMLElement | null = null;
+  let manualTouchCleanup: (() => void) | null = null;
+  let lastTouchX = 0;
+  let lastTouchY = 0;
+  let touchScrollLocked = false;
 
   function copyToClipboard(text: string): void {
     if (navigator.clipboard?.writeText) {
@@ -46,6 +52,85 @@
     }
   }
 
+  function handleTouchGestureEnd(): void {
+    touchScrollLocked = false;
+  }
+
+  function shouldUseManualTouchScroll(): boolean {
+    return isMobile && !!viewportEl && term.modes.mouseTrackingMode !== "none";
+  }
+
+  function handleManualTouchStart(event: TouchEvent): void {
+    if (!shouldUseManualTouchScroll()) return;
+    const touch = event.touches[0];
+    if (!touch) return;
+    lastTouchX = touch.pageX;
+    lastTouchY = touch.pageY;
+    touchScrollLocked = false;
+  }
+
+  function handleManualTouchMove(event: TouchEvent): void {
+    const touch = event.touches[0];
+    if (!shouldUseManualTouchScroll() || !viewportEl || !touch) return;
+
+    const deltaX = lastTouchX - touch.pageX;
+    const deltaY = lastTouchY - touch.pageY;
+    lastTouchX = touch.pageX;
+    lastTouchY = touch.pageY;
+
+    if (!touchScrollLocked) {
+      if (Math.abs(deltaY) <= Math.abs(deltaX)) return;
+      touchScrollLocked = true;
+    }
+    if (deltaY === 0) return;
+
+    const canScrollViewport = viewportEl.scrollHeight > viewportEl.clientHeight;
+    if (!canScrollViewport) {
+      dispatchSyntheticWheel(deltaY, touch);
+      event.preventDefault();
+      return;
+    }
+
+    viewportEl.scrollTop += deltaY;
+    // Keep the swipe owned by the terminal so the app shell never steals it at the top/bottom edge.
+    event.preventDefault();
+  }
+
+  function dispatchSyntheticWheel(deltaY: number, touch: Touch): void {
+    if (!xtermEl) return;
+
+    const wheelEvent = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      clientX: touch.clientX,
+      clientY: touch.clientY,
+      deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+      deltaY,
+    });
+    xtermEl.dispatchEvent(wheelEvent);
+  }
+
+  function attachManualTouchScroll(): void {
+    const nextXtermEl = containerEl.querySelector(".xterm");
+    const nextViewportEl = containerEl.querySelector(".xterm-viewport");
+    if (!(nextXtermEl instanceof HTMLElement) || !(nextViewportEl instanceof HTMLElement)) return;
+
+    xtermEl = nextXtermEl;
+    viewportEl = nextViewportEl;
+    nextXtermEl.addEventListener("touchstart", handleManualTouchStart, { passive: true });
+    nextXtermEl.addEventListener("touchmove", handleManualTouchMove, { passive: false });
+    nextXtermEl.addEventListener("touchend", handleTouchGestureEnd);
+    nextXtermEl.addEventListener("touchcancel", handleTouchGestureEnd);
+    manualTouchCleanup = () => {
+      nextXtermEl.removeEventListener("touchstart", handleManualTouchStart);
+      nextXtermEl.removeEventListener("touchmove", handleManualTouchMove);
+      nextXtermEl.removeEventListener("touchend", handleTouchGestureEnd);
+      nextXtermEl.removeEventListener("touchcancel", handleTouchGestureEnd);
+      xtermEl = null;
+      viewportEl = null;
+    };
+  }
+
   onMount(() => {
     term = new Terminal({
       cursorBlink: true,
@@ -64,6 +149,7 @@
     term.loadAddon(fitAddon);
     term.loadAddon(new WebLinksAddon());
     term.open(containerEl);
+    attachManualTouchScroll();
 
     // Prevent browser context menu so tmux right-click works unobstructed
     containerEl.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -187,6 +273,7 @@
 
   onDestroy(() => {
     clearTimeout(resizeTimer);
+    manualTouchCleanup?.();
     resizeObs?.disconnect();
     ws?.close();
     term?.dispose();
