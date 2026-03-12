@@ -1,5 +1,10 @@
 <script lang="ts">
-  import type { WorktreeInfo, AppNotification, PrEntry, LinkedRepoInfo } from "./types";
+  import type {
+    WorktreeInfo,
+    AppNotification,
+    PrEntry,
+    LinkedRepoInfo,
+  } from "./types";
   import LinearBadge from "./LinearBadge.svelte";
   import RepoGroup from "./RepoGroup.svelte";
   import Btn from "./Btn.svelte";
@@ -67,17 +72,22 @@
     return `cursor://file${dir}`;
   }
 
-  function truncateWorktreeName(value: string | null, maxLength: number): string | null {
+  function truncateWorktreeName(
+    value: string | null,
+    maxLength: number,
+  ): string | null {
     if (!value || value.length <= maxLength) return value;
     return `${value.slice(0, maxLength - 3)}...`;
   }
 
   let cursorUrl = $derived(makeCursorUrl(worktree?.dir));
-  let displayName = $derived(truncateWorktreeName(name, 40));
+  let displayName = $derived(truncateWorktreeName(name, 30));
 
   // Split PRs into main repo vs linked repo groups
   let mainPrs = $derived(
-    (worktree?.prs ?? []).filter((pr) => !pr.repo || !linkedRepos.some((lr) => lr.alias === pr.repo)),
+    (worktree?.prs ?? []).filter(
+      (pr) => !pr.repo || !linkedRepos.some((lr) => lr.alias === pr.repo),
+    ),
   );
 
   let linkedRepoGroups = $derived(
@@ -92,8 +102,7 @@
   );
 
   let hasMoreContent = $derived(
-    mainPrs.length > 0 ||
-    linkedRepoGroups.length > 0,
+    mainPrs.length > 0 || linkedRepoGroups.length > 0,
   );
 </script>
 
@@ -109,16 +118,31 @@
           onclick={ontogglesidebar}
           title="Toggle sidebar"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
             <line x1="3" y1="6" x2="21" y2="6" />
             <line x1="3" y1="12" x2="21" y2="12" />
             <line x1="3" y1="18" x2="21" y2="18" />
           </svg>
         </button>
       {/if}
-      <span class="text-sm font-semibold truncate" title={name ?? undefined}>{displayName ?? "Select a worktree"}</span>
+      <span class="text-sm font-semibold truncate" title={name ?? undefined}
+        >{displayName ?? "Select a worktree"}</span
+      >
       {#if worktree?.dirty}
-        <span class="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-warning/40 text-warning">dirty</span>
+        <span
+          class="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-warning/40 text-warning"
+          >dirty</span
+        >
       {/if}
       {#if worktree?.linearIssue}
         <LinearBadge issue={worktree.linearIssue} />
@@ -152,21 +176,15 @@
   <div class="shrink-0 flex gap-2 items-center px-4">
     {#if worktree}
       {#if worktree.mux === "✓"}
-        <Btn
-          variant="default"
-          onclick={onclose}
-          title="Close worktree window">{isMobile ? "C" : "Close"}</Btn
+        <Btn variant="default" onclick={onclose} title="Close worktree window"
+          >{isMobile ? "C" : "Close"}</Btn
         >
       {/if}
-      <Btn
-        variant="accent-outline"
-        onclick={onmerge}
-        title="Merge worktree">{isMobile ? "M" : "Merge"}</Btn
+      <Btn variant="accent-outline" onclick={onmerge} title="Merge worktree"
+        >{isMobile ? "M" : "Merge"}</Btn
       >
-      <Btn
-        variant="danger-outline"
-        onclick={onremove}
-        title="Remove worktree">{isMobile ? "R" : "Remove"}</Btn
+      <Btn variant="danger-outline" onclick={onremove} title="Remove worktree"
+        >{isMobile ? "R" : "Remove"}</Btn
       >
     {/if}
 
@@ -177,9 +195,21 @@
           type="button"
           class="p-1.5 rounded-md cursor-pointer bg-transparent border border-transparent text-muted hover:text-primary hover:border-edge"
           title="More info"
-          onclick={() => { moreOpen = !moreOpen; }}
+          onclick={() => {
+            moreOpen = !moreOpen;
+          }}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
             <circle cx="12" cy="5" r="1" />
             <circle cx="12" cy="12" r="1" />
             <circle cx="12" cy="19" r="1" />
@@ -189,11 +219,7 @@
         {#if moreOpen}
           <div class="more-dropdown">
             <div class="flex flex-col gap-2 p-3">
-              <RepoGroup
-                prs={mainPrs}
-                {onCiClick}
-                {onReviewsClick}
-              />
+              <RepoGroup prs={mainPrs} {onCiClick} {onReviewsClick} />
               {#each linkedRepoGroups as group (group.alias)}
                 <RepoGroup
                   label={group.alias}
@@ -216,20 +242,39 @@
         title="Notifications"
         onclick={toggleBell}
       >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
           <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
         </svg>
         {#if unreadCount > 0}
-          <span class="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-accent text-white text-[10px] flex items-center justify-center leading-none">{unreadCount > 9 ? "9+" : unreadCount}</span>
+          <span
+            class="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-accent text-white text-[10px] flex items-center justify-center leading-none"
+            >{unreadCount > 9 ? "9+" : unreadCount}</span
+          >
         {/if}
       </button>
 
       {#if bellOpen}
         <div class="bell-dropdown">
-          <div class="text-xs font-semibold text-muted px-3 py-2 border-b border-edge">Notifications</div>
+          <div
+            class="text-xs font-semibold text-muted px-3 py-2 border-b border-edge"
+          >
+            Notifications
+          </div>
           {#if notificationHistory.length === 0}
-            <div class="px-3 py-4 text-xs text-muted text-center">No notifications yet</div>
+            <div class="px-3 py-4 text-xs text-muted text-center">
+              No notifications yet
+            </div>
           {:else}
             <ul class="list-none max-h-64 overflow-y-auto">
               {#each notificationHistory as n (n.id)}
@@ -258,8 +303,20 @@
       title="Settings"
       onclick={onsettings}
     >
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path
+          d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+        />
         <circle cx="12" cy="12" r="3" />
       </svg>
     </button>
