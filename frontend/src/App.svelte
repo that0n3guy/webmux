@@ -167,7 +167,7 @@
   });
 
   $effect(() => {
-    if (pendingCreateCount === 0) return;
+    if (pendingCreateCount === 0 || latestAutoSelectCreateId === -1) return;
     const target = pendingCreateBranchHint
       ? visibleWorktrees.find((w) => w.branch === pendingCreateBranchHint)
       : creatingWorktrees.length === 1
@@ -263,9 +263,14 @@
     envOverrides: Record<string, string>,
   ) {
     const requestId = nextCreateRequestId++;
-    latestAutoSelectCreateId = requestId;
+    const shouldAutoSelectCreatedWorktree = selectedWorktree == null;
+    if (shouldAutoSelectCreatedWorktree) {
+      latestAutoSelectCreateId = requestId;
+    }
     pendingCreateCount += 1;
-    pendingCreateBranchHint = name || null;
+    if (shouldAutoSelectCreatedWorktree) {
+      pendingCreateBranchHint = name || null;
+    }
     showCreateDialog = false;
     assignIssue = null;
 
@@ -280,9 +285,11 @@
       );
       void refresh();
       const result = await createPromise;
-      pendingCreateBranchHint = result.branch;
+      if (shouldAutoSelectCreatedWorktree) {
+        pendingCreateBranchHint = result.branch;
+      }
       await refresh();
-      if (requestId === latestAutoSelectCreateId) {
+      if (shouldAutoSelectCreatedWorktree && requestId === latestAutoSelectCreateId) {
         selectedBranch = result.branch;
         if (isMobile) sidebarOpen = false;
       }
@@ -290,8 +297,9 @@
       alert(`Failed to create: ${errorMessage(err)}`);
     } finally {
       pendingCreateCount = Math.max(0, pendingCreateCount - 1);
-      if (requestId === latestAutoSelectCreateId) {
+      if (shouldAutoSelectCreatedWorktree && requestId === latestAutoSelectCreateId) {
         pendingCreateBranchHint = null;
+        latestAutoSelectCreateId = -1;
       }
     }
   }
