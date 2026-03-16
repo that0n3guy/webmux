@@ -20,6 +20,7 @@
     unreadCount = 0,
     ontogglesidebar,
     onclose,
+    onedit,
     onmerge,
     onremove,
     onsettings,
@@ -37,6 +38,7 @@
     unreadCount?: number;
     ontogglesidebar?: () => void;
     onclose: () => void;
+    onedit: () => void;
     onmerge: () => void;
     onremove: () => void;
     onsettings: () => void;
@@ -180,6 +182,9 @@
           >{isMobile ? "C" : "Close"}</Btn
         >
       {/if}
+      <Btn variant="default" onclick={onedit} title="Edit worktree config"
+        >{isMobile ? "E" : "Edit"}</Btn
+      >
       <Btn variant="accent-outline" onclick={onmerge} title="Merge worktree"
         >{isMobile ? "M" : "Merge"}</Btn
       >

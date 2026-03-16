@@ -34,6 +34,7 @@ function renderTopBar(branch: string): void {
       notificationHistory: [],
       unreadCount: 0,
       onclose: vi.fn(),
+      onedit: vi.fn(),
       onmerge: vi.fn(),
       onremove: vi.fn(),
       onsettings: vi.fn(),
