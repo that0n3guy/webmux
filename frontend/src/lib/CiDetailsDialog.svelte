@@ -19,40 +19,68 @@
     onfixsuccess: () => void;
   } = $props();
 
-  let expandedRunId = $state<number | null>(null);
-  let logs = $state("");
-  let logsLoading = $state(false);
+  let logsByRunId = $state(new Map<number, string>());
+  let expandedChecks = $state(new Set<string>());
+  let loadingRunId = $state<number | null>(null);
   let logsError = $state("");
   let copied = $state(false);
-  let fixLoading = $state<number | null>(null);
+  let fixLoading = $state(false);
   let fixError = $state("");
 
   let label = $derived(prLabel(pr));
 
-  async function handleViewLogs(runId: number): Promise<void> {
-    if (expandedRunId === runId) {
-      expandedRunId = null;
+  function checkKey(check: { name: string; runId: number | null }): string {
+    return `${check.name}:${check.runId}`;
+  }
+
+  function logsForCheck(check: { name: string; runId: number | null }): string {
+    if (check.runId === null) return "";
+    const allLogs = logsByRunId.get(check.runId);
+    if (!allLogs) return "";
+    const prefix = check.name + "\t";
+    return allLogs
+      .split("\n")
+      .filter((line) => line.startsWith(prefix))
+      .map((line) => line.slice(prefix.length))
+      .join("\n");
+  }
+
+  function toggleCheck(key: string): void {
+    if (expandedChecks.has(key)) {
+      expandedChecks.delete(key);
+    } else {
+      expandedChecks.add(key);
+    }
+    expandedChecks = new Set(expandedChecks);
+  }
+
+  async function handleViewLogs(check: { runId: number; name: string }): Promise<void> {
+    const key = checkKey(check);
+    if (logsByRunId.has(check.runId)) {
+      toggleCheck(key);
       return;
     }
-    expandedRunId = runId;
-    logs = "";
+    expandedChecks.add(key);
+    expandedChecks = new Set(expandedChecks);
     logsError = "";
-    logsLoading = true;
-    copied = false;
-    fixError = "";
+    loadingRunId = check.runId;
     try {
-      logs = await fetchCiLogs(runId);
+      const logs = await fetchCiLogs(check.runId);
+      logsByRunId.set(check.runId, logs);
+      logsByRunId = new Map(logsByRunId);
     } catch (err) {
       logsError = errorMessage(err);
+      expandedChecks.delete(key);
+      expandedChecks = new Set(expandedChecks);
     } finally {
-      logsLoading = false;
+      loadingRunId = null;
     }
   }
 
-  async function handleFix(checkName: string): Promise<void> {
+  async function handleFix(checkName: string, filteredLogs: string): Promise<void> {
     if (!branch) return;
     fixError = "";
-    fixLoading = expandedRunId ?? -1;
+    fixLoading = true;
     const preamble =
       [
         "Fix the failing CI check.",
@@ -61,19 +89,19 @@
         "",
         "Logs:",
       ].join("\n") + "\n";
-    const sanitizedLogs = normalizeTextForPrompt(logs);
+    const sanitizedLogs = normalizeTextForPrompt(filteredLogs);
     try {
       await sendWorktreePrompt(branch, sanitizedLogs, preamble);
       onfixsuccess();
     } catch (err) {
       fixError = errorMessage(err);
     } finally {
-      fixLoading = null;
+      fixLoading = false;
     }
   }
 
-  async function handleCopy(): Promise<void> {
-    await navigator.clipboard.writeText(logs);
+  async function handleCopy(filteredLogs: string): Promise<void> {
+    await navigator.clipboard.writeText(filteredLogs);
     copied = true;
     setTimeout(() => {
       copied = false;
@@ -100,6 +128,10 @@
 
   <ul class="list-none p-0 m-0 flex flex-col gap-2 mb-4">
     {#each pr.ciChecks as check (check.name + check.runId)}
+      {@const key = checkKey(check)}
+      {@const cached = check.runId !== null && logsByRunId.has(check.runId)}
+      {@const expanded = expandedChecks.has(key)}
+      {@const filtered = expanded ? logsForCheck(check) : ""}
       <li class="rounded-md border border-edge bg-surface p-3">
         <div class="flex items-center gap-2">
           <span class="text-sm font-bold {statusColor(check.status)}"
@@ -114,12 +146,15 @@
         </div>
         <div class="flex items-center gap-2 mt-1.5">
           {#if check.status === "failed" && check.runId !== null}
-            <LinkBtn
-              onclick={() => handleViewLogs(check.runId ?? -1)}
-              >{expandedRunId === check.runId
-                ? "Hide logs"
-                : "View logs"}</LinkBtn
-            >
+            {#if cached}
+              <LinkBtn onclick={() => toggleCheck(key)}
+                >{expanded ? "Hide logs" : "Show logs"}</LinkBtn
+              >
+            {:else}
+              <LinkBtn onclick={() => handleViewLogs({ runId: check.runId!, name: check.name })}
+                >View logs</LinkBtn
+              >
+            {/if}
           {/if}
           {#if check.url}
             <a
@@ -132,37 +167,31 @@
           {/if}
         </div>
 
-        {#if expandedRunId === check.runId}
+        {#if check.runId !== null && loadingRunId === check.runId && expanded}
+          <div class="text-[12px] text-muted py-2 mt-2">Loading logs...</div>
+        {:else if expanded && filtered}
           <div class="mt-2">
-            {#if logsLoading}
-              <div class="text-[12px] text-muted py-2">Loading logs...</div>
-            {:else if logsError}
-              <div class="text-[12px] text-danger py-2">{logsError}</div>
-            {:else if logs}
-              <pre
-                class="bg-surface border border-edge rounded-md p-3 text-[11px] font-mono overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap m-0">{logs}</pre>
-              <div class="flex justify-end items-center gap-2 mt-1.5">
-                <LinkBtn onclick={handleCopy}
-                  >{copied ? "Copied!" : "Copy logs"}</LinkBtn
-                >
-                <Btn
-                  variant="cta"
-                  small
-                  disabled={!branch ||
-                    !logs ||
-                    logsLoading ||
-                    fixLoading !== null}
-                  onclick={() => handleFix(check.name)}
-                  >{fixLoading !== null
-                    ? "Asking agent..."
-                    : "Ask agent to fix"}</Btn
-                >
-              </div>
-            {/if}
-            {#if fixError}
-              <div class="text-[12px] text-danger py-1.5">{fixError}</div>
-            {/if}
+            <pre
+              class="bg-surface border border-edge rounded-md p-3 text-[11px] font-mono overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap m-0">{filtered}</pre>
+            <div class="flex justify-end items-center gap-2 mt-1.5">
+              <LinkBtn onclick={() => handleCopy(filtered)}
+                >{copied ? "Copied!" : "Copy logs"}</LinkBtn
+              >
+              <Btn
+                variant="cta"
+                small
+                disabled={!branch || fixLoading}
+                onclick={() => handleFix(check.name, filtered)}
+                >{fixLoading ? "Asking agent..." : "Ask agent to fix"}</Btn
+              >
+            </div>
           </div>
+        {/if}
+        {#if logsError && loadingRunId === null && check.runId !== null && !logsByRunId.has(check.runId)}
+          <div class="text-[12px] text-danger py-2 mt-2">{logsError}</div>
+        {/if}
+        {#if fixError}
+          <div class="text-[12px] text-danger py-1.5">{fixError}</div>
         {/if}
       </li>
     {/each}
