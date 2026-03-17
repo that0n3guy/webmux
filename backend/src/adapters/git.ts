@@ -46,6 +46,11 @@ export interface GitWorktreeStatus {
   currentCommit: string | null;
 }
 
+export interface UnpushedCommit {
+  hash: string;
+  message: string;
+}
+
 export type TryGitCommandResult =
   | { ok: true; stdout: string }
   | { ok: false; stderr: string };
@@ -68,7 +73,7 @@ export interface GitGateway {
   mergeBranch(opts: MergeGitBranchOptions): void;
   currentBranch(repoRoot: string): string;
   readDiff(cwd: string): string;
-  readUnpushedDiff(cwd: string): string;
+  listUnpushedCommits(cwd: string): UnpushedCommit[];
 }
 
 function runGit(args: string[], cwd: string): string {
@@ -217,7 +222,12 @@ export function listLocalGitBranches(cwd: string): string[] {
 export function readGitWorktreeStatus(cwd: string): GitWorktreeStatus {
   const dirtyOutput = runGit(["status", "--porcelain"], cwd);
   const commit = tryRunGit(["rev-parse", "HEAD"], cwd);
-  const ahead = tryRunGit(["rev-list", "--count", "@{upstream}..HEAD"], cwd);
+  let ahead = tryRunGit(["rev-list", "--count", "@{upstream}..HEAD"], cwd);
+  if (!ahead.ok) {
+    // Fallback: counts commits not on any origin/* branch. May slightly over-count
+    // on repos with many branches, but is a reasonable default when no upstream is set.
+    ahead = tryRunGit(["rev-list", "--count", "HEAD", "--not", "--remotes=origin"], cwd);
+  }
 
   return {
     dirty: dirtyOutput.length > 0,
@@ -338,8 +348,22 @@ export class BunGitGateway implements GitGateway {
     return result.ok ? result.stdout : "";
   }
 
-  readUnpushedDiff(cwd: string): string {
-    const result = tryRunGit(["diff", "@{upstream}..HEAD", "--no-color"], cwd);
-    return result.ok ? result.stdout : "";
+  listUnpushedCommits(cwd: string): UnpushedCommit[] {
+    let result = tryRunGit(["log", "--oneline", "@{upstream}..HEAD"], cwd);
+    if (!result.ok) {
+      // Fallback: see comment in readGitWorktreeStatus for trade-off
+      result = tryRunGit(["log", "--oneline", "HEAD", "--not", "--remotes=origin"], cwd);
+    }
+    if (!result.ok || !result.stdout) return [];
+    return result.stdout
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => {
+        const spaceIdx = line.indexOf(" ");
+        return {
+          hash: line.slice(0, spaceIdx),
+          message: line.slice(spaceIdx + 1),
+        };
+      });
   }
 }

@@ -2,6 +2,7 @@
   import { html as diff2html } from "diff2html";
   import { ColorSchemeType } from "diff2html/lib/types";
   import "diff2html/bundles/css/diff2html.min.css";
+  import type { UnpushedCommit } from "./types";
   import { fetchWorktreeDiff } from "./api";
   import { errorMessage } from "./utils";
   import BaseDialog from "./BaseDialog.svelte";
@@ -17,8 +18,7 @@
 
   let uncommitted = $state("");
   let uncommittedTruncated = $state(false);
-  let unpushed = $state("");
-  let unpushedTruncated = $state(false);
+  let unpushedCommits = $state<UnpushedCommit[]>([]);
   let loading = $state(true);
   let error = $state("");
 
@@ -29,8 +29,7 @@
       .then((res) => {
         uncommitted = res.uncommitted;
         uncommittedTruncated = res.uncommittedTruncated;
-        unpushed = res.unpushed;
-        unpushedTruncated = res.unpushedTruncated;
+        unpushedCommits = res.unpushedCommits;
       })
       .catch((err: unknown) => {
         error = errorMessage(err);
@@ -47,8 +46,18 @@
   };
 
   let renderedUncommitted = $derived(uncommitted ? diff2html(uncommitted, diffOpts) : "");
-  let renderedUnpushed = $derived(unpushed ? diff2html(unpushed, diffOpts) : "");
-  let hasContent = $derived(!!uncommitted || !!unpushed);
+  let hasContent = $derived(!!uncommitted || unpushedCommits.length > 0);
+
+  type DiffTab = "diff" | "unpushed";
+  let activeTab = $state<DiffTab>("diff");
+
+  let initialTabSet = false;
+  $effect(() => {
+    if (!loading && !error && !initialTabSet) {
+      initialTabSet = true;
+      activeTab = uncommitted ? "diff" : "unpushed";
+    }
+  });
 </script>
 
 <BaseDialog {onclose} wide maxWidth="90vw" className="diff-dialog">
@@ -61,22 +70,40 @@
   {:else if !hasContent}
     <div class="text-sm text-muted py-8 text-center">No changes</div>
   {:else}
-    <div class="diff-container overflow-auto max-h-[60vh] md:max-h-[70vh] rounded-md border border-edge">
-      {#if uncommitted}
-        <div class="section-header">Uncommitted changes</div>
+    <div class="flex gap-1 mb-3">
+      <button
+        type="button"
+        class="tab-btn"
+        class:active={activeTab === "diff"}
+        disabled={!uncommitted}
+        onclick={() => (activeTab = "diff")}
+      >Current diff</button>
+      <button
+        type="button"
+        class="tab-btn"
+        class:active={activeTab === "unpushed"}
+        disabled={unpushedCommits.length === 0}
+        onclick={() => (activeTab = "unpushed")}
+      >Unpushed commits ({unpushedCommits.length})</button>
+    </div>
+
+    {#if activeTab === "diff" && uncommitted}
+      <div class="diff-container overflow-auto max-h-[60vh] md:max-h-[70vh] rounded-md border border-edge">
         {#if uncommittedTruncated}
           <div class="text-[11px] text-warning px-3 py-1">Truncated (exceeded 200KB)</div>
         {/if}
         {@html renderedUncommitted}
-      {/if}
-      {#if unpushed}
-        <div class="section-header" class:border-t={!!uncommitted}>Unpushed commits</div>
-        {#if unpushedTruncated}
-          <div class="text-[11px] text-warning px-3 py-1">Truncated (exceeded 200KB)</div>
-        {/if}
-        {@html renderedUnpushed}
-      {/if}
-    </div>
+      </div>
+    {:else if activeTab === "unpushed" && unpushedCommits.length > 0}
+      <ul class="commit-list overflow-auto max-h-[60vh] md:max-h-[70vh] rounded-md border border-edge list-none m-0 p-0">
+        {#each unpushedCommits as commit (commit.hash)}
+          <li class="flex items-baseline gap-2 px-3 py-1.5 border-b border-edge last:border-b-0">
+            <code class="text-[11px] text-accent shrink-0">{commit.hash}</code>
+            <span class="text-[12px] text-primary">{commit.message}</span>
+          </li>
+        {/each}
+      </ul>
+    {/if}
   {/if}
 
   <div class="flex justify-end mt-4">
@@ -97,16 +124,35 @@
     }
   }
 
-  .section-header {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    padding: 6px 12px;
+  .tab-btn {
+    padding: 4px 12px;
     font-size: 11px;
-    font-weight: 600;
+    border-radius: 4px;
+    border: 1px solid var(--color-edge);
+    background: transparent;
     color: var(--color-muted);
+    cursor: pointer;
+  }
+  .tab-btn:hover {
+    color: var(--color-primary);
+    background: var(--color-hover);
+  }
+  .tab-btn.active {
     background: var(--color-surface);
-    border-color: var(--color-edge);
+    color: var(--color-primary);
+    border-color: var(--color-accent);
+  }
+  .tab-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .tab-btn:disabled:hover {
+    color: var(--color-muted);
+    background: transparent;
+  }
+
+  .diff-container {
+    font-size: 12px;
   }
 
   .diff-container :global(.d2h-wrapper) {
@@ -123,6 +169,7 @@
   .diff-container :global(.d2h-code-linenumber),
   .diff-container :global(.d2h-code-line) {
     color: var(--color-primary);
+    font-size: 11px;
   }
   .diff-container :global(.d2h-code-line-ctn) {
     color: var(--color-primary);
