@@ -4,6 +4,7 @@
   import type { ITheme } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import { WebLinksAddon } from "@xterm/addon-web-links";
+  import { uploadFiles } from "./api";
   import "@xterm/xterm/css/xterm.css";
 
   let { worktree, isMobile = false, initialPane, terminalTheme }: {
@@ -29,6 +30,8 @@
   let touchScrollLocked = false;
   let destroyed = false;
   let canRetryVisibleClose = true;
+  let isDraggingOver = $state(false);
+  let dragCounter = 0;
 
   function copyToClipboard(text: string): void {
     if (navigator.clipboard?.writeText) {
@@ -137,6 +140,113 @@
     };
   }
 
+  function hasDragFiles(dt: DataTransfer | null): boolean {
+    if (!dt) return false;
+    // During dragenter/dragover, browsers hide file details for security.
+    // We can only check if "Files" is among the drag types.
+    // For cross-browser images dragged from webpages, also accept uri-list.
+    return dt.types.includes("Files") || dt.types.includes("text/uri-list");
+  }
+
+  function handleDragEnter(e: DragEvent): void {
+    if (!hasDragFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    dragCounter++;
+    isDraggingOver = true;
+  }
+
+  function handleDragOver(e: DragEvent): void {
+    if (!isDraggingOver) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  }
+
+  function handleDragLeave(_e: DragEvent): void {
+    dragCounter--;
+    if (dragCounter <= 0) {
+      dragCounter = 0;
+      isDraggingOver = false;
+    }
+  }
+
+  function extractImageUrlFromHtml(html: string): string | null {
+    const match = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+    return match ? match[1] : null;
+  }
+
+  async function handleDrop(e: DragEvent): Promise<void> {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter = 0;
+    isDraggingOver = false;
+
+    const dt = e.dataTransfer;
+    if (!dt) return;
+
+    let files: File[] = Array.from(dt.files).filter((f) => f.type.startsWith("image/"));
+
+    // If no direct files, try to extract an image from dropped HTML (browser image drag)
+    if (files.length === 0) {
+      const html = dt.getData("text/html");
+      const uri = dt.getData("text/uri-list");
+      const imageUrl = (html ? extractImageUrlFromHtml(html) : null) ?? uri;
+
+      if (imageUrl) {
+        try {
+          const dataMatch = imageUrl.match(/^data:(image\/[^;]+);base64,(.+)/);
+          if (dataMatch) {
+            const byteString = atob(dataMatch[2]);
+            const bytes = new Uint8Array(byteString.length);
+            for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
+            const ext = dataMatch[1].split("/")[1]?.replace("+xml", "") || "png";
+            files = [new File([bytes], `image.${ext}`, { type: dataMatch[1] })];
+          } else if (/^https?:\/\//i.test(imageUrl)) {
+            const resp = await fetch(imageUrl);
+            const contentType = resp.headers.get("content-type") ?? "";
+            const contentLength = parseInt(resp.headers.get("content-length") ?? "0", 10);
+            if (resp.ok && contentType.startsWith("image/") && contentLength <= 10 * 1024 * 1024) {
+              const blob = await resp.blob();
+              const name = imageUrl.split("/").pop()?.split("?")[0]?.split("#")[0] || "image.png";
+              files = [new File([blob], name, { type: blob.type })];
+            }
+          }
+        } catch { /* ignore fetch/decode errors for browser drags */ }
+      }
+    }
+
+    if (files.length === 0) return;
+    await uploadAndTypeFiles(files);
+  }
+
+  async function uploadAndTypeFiles(files: File[]): Promise<void> {
+    try {
+      const result = await uploadFiles(worktree, files);
+      const paths = result.files.map((f) => f.path).join(" ");
+      sendInput(paths);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      term.writeln(`\r\n\x1b[31m[Upload error: ${msg}]\x1b[0m`);
+    }
+  }
+
+  function handlePaste(e: Event): void {
+    const clipboard = (e as ClipboardEvent).clipboardData;
+    if (!clipboard) return;
+
+    const imageFiles: File[] = [];
+    for (const item of clipboard.items) {
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) imageFiles.push(file);
+      }
+    }
+    if (imageFiles.length === 0) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    uploadAndTypeFiles(imageFiles);
+  }
+
   function buildResizeMessage(): string {
     const msg = {
       type: "resize" as const,
@@ -225,6 +335,9 @@
 
     // Prevent browser context menu so tmux right-click works unobstructed
     containerEl.addEventListener("contextmenu", (e) => e.preventDefault());
+
+    // Upload pasted images — use capture phase since xterm's textarea consumes the event
+    containerEl.addEventListener("paste", handlePaste, true);
 
     // Handle OSC 52 sequences from tmux → write to system clipboard
     term.parser.registerOscHandler(52, (data) => {
@@ -320,6 +433,7 @@
     clearTimeout(resizeTimer);
     manualTouchCleanup?.();
     resizeObs?.disconnect();
+    containerEl?.removeEventListener("paste", handlePaste, true);
     document.removeEventListener("visibilitychange", reconnectIfNeeded);
     window.removeEventListener("focus", reconnectIfNeeded);
     window.removeEventListener("online", reconnectIfNeeded);
@@ -328,4 +442,18 @@
   });
 </script>
 
-<div class="flex-1 min-h-0 w-full p-1 overflow-hidden" bind:this={containerEl}></div>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="flex-1 min-h-0 w-full p-1 overflow-hidden relative"
+  bind:this={containerEl}
+  ondragenter={handleDragEnter}
+  ondragover={handleDragOver}
+  ondragleave={handleDragLeave}
+  ondrop={handleDrop}
+>
+  {#if isDraggingOver}
+    <div class="absolute inset-0 z-10 flex items-center justify-center bg-black/50 border-2 border-dashed border-[var(--color-accent)] rounded pointer-events-none">
+      <span class="text-white text-sm font-medium">Drop image(s) to upload</span>
+    </div>
+  {/if}
+</div>
