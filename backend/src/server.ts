@@ -430,6 +430,31 @@ async function apiGetLinearIssues(): Promise<Response> {
   return jsonResponse(result.data);
 }
 
+const MAX_DIFF_BYTES = 200 * 1024;
+
+async function apiGetWorktreeDiff(name: string): Promise<Response> {
+  await reconciliationService.reconcile(PROJECT_DIR);
+  const state = projectRuntime.getWorktreeByBranch(name);
+  if (!state) return errorResponse(`Worktree not found: ${name}`, 404);
+
+  const uncommitted = git.readDiff(state.path);
+  const unpushed = git.readUnpushedDiff(state.path);
+
+  function cap(raw: string): { diff: string; truncated: boolean } {
+    const truncated = raw.length > MAX_DIFF_BYTES;
+    return { diff: truncated ? raw.slice(0, MAX_DIFF_BYTES) : raw, truncated };
+  }
+
+  const u = cap(uncommitted);
+  const p = cap(unpushed);
+  return jsonResponse({
+    uncommitted: u.diff,
+    uncommittedTruncated: u.truncated,
+    unpushed: p.diff,
+    unpushedTruncated: p.truncated,
+  });
+}
+
 async function apiCiLogs(runId: string): Promise<Response> {
   if (!/^\d+$/.test(runId)) return errorResponse("Invalid run ID", 400);
   const proc = Bun.spawn(["gh", "run", "view", runId, "--log-failed"], {
@@ -577,6 +602,14 @@ Bun.serve({
         const name = decodeURIComponent(req.params.name);
         if (!isValidWorktreeName(name)) return errorResponse("Invalid worktree name", 400);
         return catching(`POST /api/worktrees/${name}/merge`, () => apiMergeWorktree(name));
+      },
+    },
+
+    "/api/worktrees/:name/diff": {
+      GET: (req) => {
+        const name = decodeURIComponent(req.params.name);
+        if (!isValidWorktreeName(name)) return errorResponse("Invalid worktree name", 400);
+        return catching(`GET /api/worktrees/${name}/diff`, () => apiGetWorktreeDiff(name));
       },
     },
 

@@ -59,6 +59,14 @@ class FakeGitGateway implements GitGateway {
   currentBranch(): string {
     return "main";
   }
+
+  readDiff(): string {
+    return "";
+  }
+
+  readUnpushedDiff(): string {
+    return "";
+  }
 }
 
 class FakeTmuxGateway implements TmuxGateway {
