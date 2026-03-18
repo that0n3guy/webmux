@@ -751,10 +751,10 @@ Bun.serve({
           }
           break;
         case "setInteractionMode": {
-          const worktreeId = getAttachedWorktreeId(ws);
-          if (!worktreeId) return;
-          log.debug(`[ws] setInteractionMode mode=${msg.mode} branch=${branch} worktreeId=${worktreeId}`);
-          await setInteractionMode(worktreeId, msg.mode);
+          const attachId = getAttachedSessionId(ws);
+          if (!attachId) return;
+          log.debug(`[ws] setInteractionMode mode=${msg.mode} branch=${branch} attachId=${attachId}`);
+          await setInteractionMode(attachId, msg.mode);
           break;
         }
         case "resize":

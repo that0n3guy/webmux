@@ -707,18 +707,14 @@
       />
     </aside>
 
-    <div
-      class="w-1 shrink-0 cursor-col-resize transition-colors hover:bg-accent/50"
+    <button
+      type="button"
+      class="w-1 shrink-0 cursor-col-resize border-none bg-transparent p-0 transition-colors hover:bg-accent/50"
       class:bg-accent={isResizingSidebar}
       onpointerdown={handleResizeStart}
       onkeydown={handleResizeKeydown}
-      role="separator"
-      aria-orientation="vertical"
-      aria-valuenow={sidebarWidth}
-      aria-valuemin={MIN_SIDEBAR_WIDTH}
-      aria-valuemax={MAX_SIDEBAR_WIDTH}
-      tabindex="0"
-    ></div>
+      aria-label="Resize worktree sidebar"
+    ></button>
 
     <main class="flex flex-1 min-w-0 overflow-hidden">
       <SessionPanel
