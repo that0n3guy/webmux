@@ -1,0 +1,97 @@
+macOS native POC handoff
+
+Context
+- Goal: build the first real macOS SwiftUI POC for a native `webmux` client using `libghostty` as the terminal surface.
+- This repo worktree is on branch `cmux-comparison-research`.
+- The current environment was Linux/NixOS, so only backend and docs groundwork was completed here.
+- There is no uncommitted work left in the branch at handoff time.
+
+What is already done
+- Commit `5c3d56e`: adds architecture notes for two native-terminal POC options.
+- Commit `15b8323`: adds a backend API for native clients to fetch the tmux attach target for a worktree.
+
+Key docs and files
+- `docs/native-terminal-poc-options.md`
+- `backend/src/server.ts`
+- `backend/src/services/native-terminal-service.ts`
+- `backend/src/__tests__/native-terminal-service.test.ts`
+- `backend/src/adapters/terminal.ts`
+- `backend/src/runtime.ts`
+- `README.md`
+
+New backend contract
+- Endpoint: `GET /api/worktrees/:name/terminal-target`
+- Success response shape:
+  - `worktreeId`
+  - `branch`
+  - `path`
+  - `ownerSessionName`
+  - `windowName`
+  - `paneCount`
+- Failure semantics:
+  - `404` if the worktree branch is unknown
+  - `409` if the worktree exists but does not currently have an open tmux window
+
+Validation already done
+- `bun test backend/src/__tests__/native-terminal-service.test.ts`
+- `bun test backend/src/__tests__/snapshot-service.test.ts`
+
+Recommended implementation target
+- Build the smallest possible SwiftUI macOS app first.
+- Do not start with Tauri.
+- Do not try to replace `tmux`.
+- Reuse the current Bun backend as a sidecar first.
+- Use `libghostty` for the embedded terminal view.
+
+Recommended v1 POC scope
+- One macOS app
+- One main window
+- Sidebar listing worktrees
+- One embedded terminal view
+- Select worktree -> attach terminal to its tmux target
+- Create worktree
+- Open worktree
+- Close worktree
+- No PR/CI/Linear native panels yet
+
+Suggested architecture
+- `apps/webmux-macos/`
+- SwiftUI shell for the window and sidebar
+- AppKit wrapper around `GhosttyKit` / `libghostty` for the terminal view
+- `BackendClient` that talks to the existing Bun backend
+- Sidecar launcher that starts the backend locally for the selected project
+
+Recommended first milestones
+1. Create a macOS Swift package or Xcode project for `webmux-macos`.
+2. Add a sidecar launcher for the Bun backend.
+3. Add a minimal `BackendClient` for:
+   - `GET /api/project`
+   - `POST /api/worktrees`
+   - `POST /api/worktrees/:name/open`
+   - `POST /api/worktrees/:name/close`
+   - `GET /api/worktrees/:name/terminal-target`
+4. Get a basic SwiftUI sidebar rendering the project worktrees.
+5. Embed a native `libghostty` terminal view in the main pane.
+6. Attach that terminal view to the tmux target returned by `terminal-target`.
+7. Validate with:
+   - `nvim`
+   - `lazygit`
+   - long-running agent CLI output
+   - terminal resize
+   - copy/paste
+   - switching worktrees
+
+Important product constraints
+- The point of the POC is to validate whether a native terminal materially improves the user experience over the current browser terminal.
+- Keep the existing Bun orchestration logic intact for now.
+- Do not spend time on production packaging or updater work.
+- Do not rewrite GitHub/Linear integrations yet.
+
+Practical note about `libghostty`
+- Use the real Ghostty macOS sources and `GhosttyKit` surface types as reference on the Mac.
+- The previous agent inspected Ghostty upstream and confirmed the macOS app structure is under `macos/Sources/...`, with terminal surface code in the Ghostty surface view layer.
+- Mirror the upstream structure where it helps, rather than inventing a wrapper API from scratch.
+
+Definition of done for this POC
+- A user can launch the app, see worktrees, pick one, and work inside a real native terminal view attached to the correct tmux session/window.
+- The experience with serious terminal workflows is clearly better than the existing browser terminal.
