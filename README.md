@@ -56,7 +56,7 @@ cd /path/to/your/project
 webmux init                     # creates .webmux.yaml
 
 # 4. Start the dashboard
-webmux                          # opens on http://localhost:5111
+webmux serve                         # opens on http://localhost:5111
 ```
 
 ## Prerequisites
