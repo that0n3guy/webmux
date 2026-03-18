@@ -170,3 +170,12 @@ export interface ProjectSnapshot {
   worktrees: WorktreeSnapshot[];
   notifications: NotificationView[];
 }
+
+export interface NativeTerminalTarget {
+  worktreeId: string;
+  branch: string;
+  path: string;
+  ownerSessionName: string;
+  windowName: string;
+  paneCount: number;
+}

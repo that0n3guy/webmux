@@ -24,6 +24,7 @@ import { branchMatchesIssue, fetchAssignedIssues } from "./services/linear-servi
 import { LifecycleError } from "./services/lifecycle-service";
 import { startPrMonitor } from "./services/pr-service";
 import { buildProjectSnapshot } from "./services/snapshot-service";
+import { buildNativeTerminalTarget } from "./services/native-terminal-service";
 import { parseRuntimeEvent } from "./domain/events";
 import { isValidWorktreeName } from "./domain/policies";
 import { createWebmuxRuntime } from "./runtime";
@@ -193,21 +194,27 @@ async function resolveTerminalWorktree(branch: string): Promise<{
 }> {
   ensureBranchNotBusy(branch);
   await reconciliationService.reconcile(PROJECT_DIR);
-  const state = projectRuntime.getWorktreeByBranch(branch);
-  if (!state) {
-    throw new Error(`Worktree not found: ${branch}`);
-  }
-  if (!state.session.exists || !state.session.sessionName) {
-    throw new Error(`No open tmux window found for worktree: ${branch}`);
-  }
+  const target = buildNativeTerminalTarget(branch, projectRuntime.getWorktreeByBranch(branch));
+  if (!target.ok) throw new Error(target.message);
 
   return {
-    worktreeId: state.worktreeId,
+    worktreeId: target.data.worktreeId,
     attachTarget: {
-      ownerSessionName: state.session.sessionName,
-      windowName: state.session.windowName,
+      ownerSessionName: target.data.ownerSessionName,
+      windowName: target.data.windowName,
     },
   };
+}
+
+async function apiGetNativeTerminalTarget(branch: string): Promise<Response> {
+  touchDashboardActivity();
+  ensureBranchNotBusy(branch);
+  await reconciliationService.reconcile(PROJECT_DIR);
+  const target = buildNativeTerminalTarget(branch, projectRuntime.getWorktreeByBranch(branch));
+  if (!target.ok) {
+    return errorResponse(target.message, target.reason === "not_found" ? 404 : 409);
+  }
+  return jsonResponse(target.data);
 }
 
 function getAttachedWorktreeId(ws: { data: WsData; readyState: number; send: (data: string) => void }): string | null {
@@ -563,6 +570,14 @@ Bun.serve({
         const name = decodeURIComponent(req.params.name);
         if (!isValidWorktreeName(name)) return errorResponse("Invalid worktree name", 400);
         return catching(`POST /api/worktrees/${name}/open`, () => apiOpenWorktree(name));
+      },
+    },
+
+    "/api/worktrees/:name/terminal-target": {
+      GET: (req) => {
+        const name = decodeURIComponent(req.params.name);
+        if (!isValidWorktreeName(name)) return errorResponse("Invalid worktree name", 400);
+        return catching(`GET /api/worktrees/${name}/terminal-target`, () => apiGetNativeTerminalTarget(name));
       },
     },
 
