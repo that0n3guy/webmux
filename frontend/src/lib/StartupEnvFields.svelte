@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Toggle from "./Toggle.svelte";
+
   let {
     startupEnvs = {},
     envValues = $bindable({}),
@@ -17,15 +19,12 @@
       {#each envKeys as key (key)}
         {#if typeof startupEnvs[key] === "boolean"}
           <div class="mb-3">
-            <label class="flex items-center gap-2 text-xs text-muted cursor-pointer" for="wt-env-{key}">
-              {key}
-              <input
-                id="wt-env-{key}"
-                type="checkbox"
-                checked={envValues[key] === true}
-                onchange={(e) => { envValues[key] = e.currentTarget.checked; }}
-                class="accent-[var(--accent)]"
+            <label class="flex items-center gap-2 text-xs text-muted cursor-pointer">
+              <Toggle
+                aria-label={key}
+                bind:checked={() => envValues[key] as boolean, (v) => envValues[key] = v}
               />
+              {key}
             </label>
           </div>
         {:else}
