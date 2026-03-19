@@ -21,7 +21,7 @@ import { loadControlToken } from "./adapters/control-token";
 import { getDefaultProfileName, persistLocalLinearConfig, type ProjectConfig } from "./adapters/config";
 import { jsonResponse, errorResponse } from "./lib/http";
 import { hasRecentDashboardActivity, touchDashboardActivity } from "./services/dashboard-activity";
-import { branchMatchesIssue, fetchAssignedIssues } from "./services/linear-service";
+import { branchMatchesIssue, buildLinearIssuesResponse, fetchAssignedIssues } from "./services/linear-service";
 import { LifecycleError } from "./services/lifecycle-service";
 import { buildNativeTerminalLaunch, buildNativeTerminalTmuxCommand } from "./services/native-terminal-service";
 import { startPrMonitor } from "./services/pr-service";
@@ -300,7 +300,8 @@ function makeCallbacks(ws: { send: (data: string) => void; readyState: number })
 
 async function apiGetProject(): Promise<Response> {
   touchDashboardActivity();
-  const linearIssuesPromise = config.integrations.linear.enabled
+  const linearApiKey = Bun.env.LINEAR_API_KEY;
+  const linearIssuesPromise = config.integrations.linear.enabled && linearApiKey?.trim()
     ? fetchAssignedIssues()
     : Promise.resolve({ ok: true as const, data: [] });
   const [, linearResult] = await Promise.all([
@@ -503,7 +504,15 @@ async function apiSetLinearAutoCreate(req: Request): Promise<Response> {
 }
 
 async function apiGetLinearIssues(): Promise<Response> {
-  const result = await fetchAssignedIssues();
+  const apiKey = Bun.env.LINEAR_API_KEY;
+  const fetchResult = config.integrations.linear.enabled && apiKey?.trim()
+    ? await fetchAssignedIssues()
+    : undefined;
+  const result = buildLinearIssuesResponse({
+    integrationEnabled: config.integrations.linear.enabled,
+    apiKey,
+    fetchResult,
+  });
   if (!result.ok) return errorResponse(result.error, 502);
   return jsonResponse(result.data);
 }

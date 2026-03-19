@@ -20,6 +20,7 @@
     AppConfig,
     AppNotification,
     PrEntry,
+    LinearIssueAvailability,
     LinearIssue,
   } from "./lib/types";
   import {
@@ -71,6 +72,7 @@
 
   // Linear integration
   let linearIssues = $state<LinearIssue[]>([]);
+  let linearAvailability = $state<LinearIssueAvailability>("disabled");
   let assignIssue = $state<LinearIssue | null>(null);
   let detailIssue = $state<LinearIssue | null>(null);
   let linearLastFetch = 0;
@@ -201,6 +203,7 @@
   let pollIntervalMs = $derived(
     hasCreatingWorktrees ? ACTIVE_CREATE_POLL_INTERVAL_MS : DEFAULT_POLL_INTERVAL_MS,
   );
+  let showLinearPanel = $derived(linearAvailability !== "disabled");
 
   $effect(() => {
     const nextSelectedBranch = resolveSelectedBranch(
@@ -283,7 +286,8 @@
     if (now - linearLastFetch < LINEAR_THROTTLE_MS) return;
     linearLastFetch = now;
     api.fetchLinearIssues().then((data) => {
-      linearIssues = data;
+      linearAvailability = data.availability;
+      linearIssues = data.issues;
     }).catch((err: unknown) => console.warn("[linear]", err));
   }
 
@@ -624,8 +628,13 @@
         }}
         onremove={(b) => (removeBranch = b)}
       />
-      {#if linearIssues.length > 0}
-        <LinearPanel issues={linearIssues} onassign={handleAssignIssue} onselect={(issue) => (detailIssue = issue)} />
+      {#if showLinearPanel}
+        <LinearPanel
+          issues={linearIssues}
+          availability={linearAvailability}
+          onassign={handleAssignIssue}
+          onselect={(issue) => (detailIssue = issue)}
+        />
       {/if}
       {#if !isMobile}
         <div
