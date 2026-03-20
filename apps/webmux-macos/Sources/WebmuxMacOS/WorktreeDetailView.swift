@@ -13,7 +13,7 @@ struct WorktreeDetailView: View {
     var body: some View {
         Group {
             if let worktree {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 0) {
                     WorktreeHeaderView(
                         worktree: worktree,
                         onMergeWorktree: onMergeWorktree,
@@ -27,8 +27,8 @@ struct WorktreeDetailView: View {
                         terminalSession: terminalSession,
                         terminalMessage: terminalMessage
                     )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .padding(24)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
                 ContentUnavailableView(
@@ -49,7 +49,7 @@ private struct WorktreeHeaderView: View {
     let onCloseWorktree: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 16) {
                 Text(verbatim: worktree.branch)
                     .font(.title3.weight(.semibold))
@@ -86,7 +86,9 @@ private struct WorktreeHeaderView: View {
                 }
             }
         }
-        .padding(.bottom, 4)
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
     }
 }
 
@@ -97,7 +99,7 @@ private struct TerminalPanelView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(Color(nsColor: .windowBackgroundColor))
 
             if isResolvingTerminal {
@@ -106,7 +108,8 @@ private struct TerminalPanelView: View {
             } else if let terminalSession {
                 GhosttyTerminalContainer(session: terminalSession)
                     .id(terminalSession.id)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Terminal")
@@ -117,8 +120,9 @@ private struct TerminalPanelView: View {
                 .padding(20)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay {
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
         }
     }
