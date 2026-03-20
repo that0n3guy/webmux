@@ -29,9 +29,60 @@ struct WorktreeSnapshot: Decodable, Identifiable, Hashable {
     let paneCount: Int
     let status: String
     let elapsed: String
+    let services: [ServiceStatus]
+    let prs: [PrEntry]
+    let linearIssue: LinkedLinearIssue?
     let creation: WorktreeCreationState?
 
     var id: String { branch }
+}
+
+struct ServiceStatus: Decodable, Hashable {
+    let name: String
+    let port: Int?
+    let running: Bool
+    let url: String?
+}
+
+struct PrComment: Decodable, Hashable {
+    let type: String
+    let author: String
+    let body: String
+    let createdAt: String
+    let path: String?
+    let line: Int?
+    let diffHunk: String?
+    let isReply: Bool?
+}
+
+struct CiCheck: Decodable, Hashable {
+    let name: String
+    let status: String
+    let url: String?
+    let runId: Int?
+}
+
+struct PrEntry: Decodable, Hashable {
+    let repo: String
+    let number: Int
+    let state: String
+    let url: String
+    let updatedAt: String
+    let ciStatus: String
+    let ciChecks: [CiCheck]
+    let comments: [PrComment]
+}
+
+struct LinearIssueState: Decodable, Hashable {
+    let name: String
+    let color: String
+    let type: String
+}
+
+struct LinkedLinearIssue: Decodable, Hashable {
+    let identifier: String
+    let url: String
+    let state: LinearIssueState
 }
 
 struct WorktreeCreationState: Decodable, Hashable {

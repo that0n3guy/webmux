@@ -42,6 +42,22 @@ struct BackendClient {
         ) as EmptyResponse
     }
 
+    func removeWorktree(named branch: String) async throws {
+        _ = try await request(
+            path: BackendPath.removeWorktree(named: branch),
+            method: "DELETE",
+            body: Optional<String>.none
+        ) as EmptyResponse
+    }
+
+    func mergeWorktree(named branch: String) async throws {
+        _ = try await request(
+            path: BackendPath.mergeWorktree(named: branch),
+            method: "POST",
+            body: Optional<String>.none
+        ) as EmptyResponse
+    }
+
     func fetchTerminalLaunch(named branch: String) async throws -> NativeTerminalLaunch {
         try await request(
             path: BackendPath.terminalLaunch(named: branch),

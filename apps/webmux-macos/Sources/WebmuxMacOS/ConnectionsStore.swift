@@ -8,7 +8,6 @@ final class ConnectionsStore: ObservableObject {
             persistSelectedConnectionID()
         }
     }
-    @Published var addSheetPresented = false
 
     private static let connectionsKey = "webmux.macos.savedConnections"
     private static let selectedConnectionIDKey = "webmux.macos.selectedConnectionID"
@@ -111,17 +110,6 @@ final class ConnectionsStore: ObservableObject {
         if alreadyExists {
             throw ConnectionStoreError.duplicateConnection
         }
-    }
-
-    private func resolveSSHPort(from rawValue: String) throws -> Int {
-        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return 22 }
-        guard let port = Int(trimmed),
-              (1...65535).contains(port) else {
-            throw ConnectionStoreError.invalidSSHPort(rawValue)
-        }
-
-        return port
     }
 
     private func persistConnections() {

@@ -21,6 +21,14 @@ final class BackendPathTests: XCTestCase {
             "api/worktrees/farhad%2Fwin%201892/close"
         )
         XCTAssertEqual(
+            BackendPath.removeWorktree(named: branch),
+            "api/worktrees/farhad%2Fwin%201892"
+        )
+        XCTAssertEqual(
+            BackendPath.mergeWorktree(named: branch),
+            "api/worktrees/farhad%2Fwin%201892/merge"
+        )
+        XCTAssertEqual(
             BackendPath.terminalLaunch(named: branch),
             "api/worktrees/farhad%2Fwin%201892/terminal-launch"
         )

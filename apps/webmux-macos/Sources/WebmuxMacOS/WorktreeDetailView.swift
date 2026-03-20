@@ -5,48 +5,22 @@ struct WorktreeDetailView: View {
     let isResolvingTerminal: Bool
     let terminalSession: TerminalSessionDescriptor?
     let terminalMessage: String?
+    let onMergeWorktree: () -> Void
+    let onRemoveWorktree: () -> Void
     let onOpenWorktree: () -> Void
     let onCloseWorktree: () -> Void
 
     var body: some View {
         Group {
             if let worktree {
-                VStack(alignment: .leading, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(verbatim: worktree.branch)
-                            .font(.largeTitle.weight(.semibold))
-
-                        Text(verbatim: worktree.path)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-
-                        HStack(spacing: 12) {
-                            Label {
-                                Text(verbatim: worktree.mux ? "Open" : "Closed")
-                            } icon: {
-                                Image(systemName: worktree.mux ? "bolt.horizontal.circle.fill" : "pause.circle")
-                            }
-                            Label {
-                                Text(verbatim: worktree.status)
-                            } icon: {
-                                Image(systemName: "terminal")
-                            }
-                            Label {
-                                Text(verbatim: "\(worktree.paneCount) panes")
-                            } icon: {
-                                Image(systemName: "square.split.2x1")
-                            }
-                        }
-                        .font(.callout)
-                    }
-
-                    HStack(spacing: 12) {
-                        Button("Open Worktree", action: onOpenWorktree)
-                            .disabled(worktree.mux)
-
-                        Button("Close Worktree", action: onCloseWorktree)
-                            .disabled(!worktree.mux)
-                    }
+                VStack(alignment: .leading, spacing: 18) {
+                    WorktreeHeaderView(
+                        worktree: worktree,
+                        onMergeWorktree: onMergeWorktree,
+                        onRemoveWorktree: onRemoveWorktree,
+                        onOpenWorktree: onOpenWorktree,
+                        onCloseWorktree: onCloseWorktree
+                    )
 
                     TerminalPanelView(
                         isResolvingTerminal: isResolvingTerminal,
@@ -64,6 +38,55 @@ struct WorktreeDetailView: View {
                 )
             }
         }
+    }
+}
+
+private struct WorktreeHeaderView: View {
+    let worktree: WorktreeSnapshot
+    let onMergeWorktree: () -> Void
+    let onRemoveWorktree: () -> Void
+    let onOpenWorktree: () -> Void
+    let onCloseWorktree: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 16) {
+                Text(verbatim: worktree.branch)
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+
+                HStack(spacing: 8) {
+                    if worktree.mux {
+                        Button("Close", action: onCloseWorktree)
+                    } else {
+                        Button("Open", action: onOpenWorktree)
+                    }
+
+                    Button("Merge", action: onMergeWorktree)
+                    Button("Remove", role: .destructive, action: onRemoveWorktree)
+                }
+                .controlSize(.small)
+            }
+
+            if !worktree.prs.isEmpty || worktree.linearIssue != nil || !worktree.services.isEmpty {
+                WrappingFlowLayout(spacing: 6, rowSpacing: 6) {
+                    ForEach(worktree.prs, id: \.self) { pr in
+                        PRBadgeView(pr: pr)
+                    }
+
+                    if let issue = worktree.linearIssue {
+                        LinearBadgeView(issue: issue)
+                    }
+
+                    ForEach(worktree.services, id: \.self) { service in
+                        ServiceBadgeView(service: service)
+                    }
+                }
+            }
+        }
+        .padding(.bottom, 4)
     }
 }
 

@@ -4,8 +4,9 @@ struct ContentView: View {
     @ObservedObject var connectionsStore: ConnectionsStore
     @ObservedObject var store: WorktreeStore
 
-    @State private var editingConnection: ConnectionProfile?
-    @State private var connectionPendingRemoval: ConnectionProfile?
+    @State private var projectsDialogPresented = false
+    @State private var worktreePendingRemovalBranch: String?
+    @State private var worktreePendingMergeBranch: String?
 
     var body: some View {
         Group {
@@ -16,7 +17,35 @@ struct ContentView: View {
                     WorktreeSidebarView(
                         title: selectedConnectionName,
                         worktrees: store.worktrees,
-                        selection: selectedBranchBinding
+                        selection: selectedBranchBinding,
+                        canCreateWorktree: connectionsStore.selectedConnection != nil,
+                        canRefresh: !store.isLoading && !store.isConnecting && connectionsStore.selectedConnection != nil,
+                        onCreateWorktree: {
+                            store.createSheetPresented = true
+                        },
+                        onRefresh: {
+                            Task {
+                                await store.reload()
+                            }
+                        },
+                        onOpenWorktree: { branch in
+                            store.selectBranch(branch)
+                            Task {
+                                await store.openWorktree(named: branch)
+                            }
+                        },
+                        onCloseWorktree: { branch in
+                            store.selectBranch(branch)
+                            Task {
+                                await store.closeWorktree(named: branch)
+                            }
+                        },
+                        onMergeWorktree: { branch in
+                            presentMergeConfirmation(for: branch)
+                        },
+                        onRemoveWorktree: { branch in
+                            presentRemoveConfirmation(for: branch)
+                        }
                     )
                 } detail: {
                     detailView
@@ -27,25 +56,8 @@ struct ContentView: View {
             ProjectToolbar(
                 connections: connectionsStore.connections,
                 selectedConnectionID: $connectionsStore.selectedConnectionID,
-                canEditSelectedConnection: connectionsStore.selectedConnection != nil,
-                canCreateWorktree: connectionsStore.selectedConnection != nil,
-                canRefresh: !store.isLoading && !store.isConnecting && connectionsStore.selectedConnection != nil,
-                onAddConnection: {
-                    connectionsStore.addSheetPresented = true
-                },
-                onEditConnection: {
-                    editingConnection = connectionsStore.selectedConnection
-                },
-                onRemoveConnection: {
-                    connectionPendingRemoval = connectionsStore.selectedConnection
-                },
-                onCreateWorktree: {
-                    store.createSheetPresented = true
-                },
-                onRefresh: {
-                    Task {
-                        await store.reload()
-                    }
+                onManageProjects: {
+                    projectsDialogPresented = true
                 }
             )
         }
@@ -62,14 +74,8 @@ struct ContentView: View {
                 await store.createWorktree(mode: mode, branch: branch)
             }
         }
-        .sheet(isPresented: $connectionsStore.addSheetPresented) {
-            AddConnectionSheet(connectionsStore: connectionsStore)
-        }
-        .sheet(item: $editingConnection) { connection in
-            AddConnectionSheet(
-                connectionsStore: connectionsStore,
-                editingConnection: connection
-            )
+        .sheet(isPresented: $projectsDialogPresented) {
+            ProjectsDialog(connectionsStore: connectionsStore)
         }
         .alert("webmux", isPresented: alertPresented) {
             Button("OK", role: .cancel) {
@@ -79,17 +85,34 @@ struct ContentView: View {
             Text(verbatim: store.alertMessage ?? "")
         }
         .confirmationDialog(
-            "Remove Project?",
-            isPresented: connectionRemovalPresented
+            "Remove Worktree?",
+            isPresented: worktreeRemovalPresented
         ) {
             Button("Remove", role: .destructive) {
-                if let connectionPendingRemoval {
-                    connectionsStore.removeConnection(connectionPendingRemoval)
-                    self.connectionPendingRemoval = nil
+                if let worktreePendingRemovalBranch {
+                    Task {
+                        await store.removeWorktree(named: worktreePendingRemovalBranch)
+                    }
+                    self.worktreePendingRemovalBranch = nil
                 }
             }
         } message: {
-            Text(verbatim: "This will remove the saved connection for \(connectionPendingRemoval?.name ?? "this project").")
+            Text(verbatim: "Remove worktree \"\(worktreePendingRemovalBranch ?? "")\"? This action cannot be undone.")
+        }
+        .confirmationDialog(
+            "Merge Worktree?",
+            isPresented: worktreeMergePresented
+        ) {
+            Button("Merge", role: .destructive) {
+                if let worktreePendingMergeBranch {
+                    Task {
+                        await store.mergeWorktree(named: worktreePendingMergeBranch)
+                    }
+                    self.worktreePendingMergeBranch = nil
+                }
+            }
+        } message: {
+            Text(verbatim: "Merge worktree \"\(worktreePendingMergeBranch ?? "")\" into main? The worktree will be removed after merging.")
         }
     }
 
@@ -111,7 +134,7 @@ struct ContentView: View {
             Text("Add a webmux server to load worktrees and attach terminals.")
         } actions: {
             Button("Add Project") {
-                connectionsStore.addSheetPresented = true
+                projectsDialogPresented = true
             }
         }
     }
@@ -123,6 +146,16 @@ struct ContentView: View {
             isResolvingTerminal: store.isResolvingTerminal,
             terminalSession: store.terminalSession,
             terminalMessage: store.terminalMessage,
+            onMergeWorktree: {
+                if let selectedBranch = store.selectedBranch {
+                    presentMergeConfirmation(for: selectedBranch)
+                }
+            },
+            onRemoveWorktree: {
+                if let selectedBranch = store.selectedBranch {
+                    presentRemoveConfirmation(for: selectedBranch)
+                }
+            },
             onOpenWorktree: {
                 Task {
                     await store.openSelectedWorktree()
@@ -147,14 +180,35 @@ struct ContentView: View {
         )
     }
 
-    private var connectionRemovalPresented: Binding<Bool> {
+    private var worktreeRemovalPresented: Binding<Bool> {
         Binding(
-            get: { connectionPendingRemoval != nil },
+            get: { worktreePendingRemovalBranch != nil },
             set: { newValue in
                 if !newValue {
-                    connectionPendingRemoval = nil
+                    worktreePendingRemovalBranch = nil
                 }
             }
         )
+    }
+
+    private var worktreeMergePresented: Binding<Bool> {
+        Binding(
+            get: { worktreePendingMergeBranch != nil },
+            set: { newValue in
+                if !newValue {
+                    worktreePendingMergeBranch = nil
+                }
+            }
+        )
+    }
+
+    private func presentMergeConfirmation(for branch: String) {
+        store.selectBranch(branch)
+        worktreePendingMergeBranch = branch
+    }
+
+    private func presentRemoveConfirmation(for branch: String) {
+        store.selectBranch(branch)
+        worktreePendingRemovalBranch = branch
     }
 }

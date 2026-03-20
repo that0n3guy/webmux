@@ -56,27 +56,23 @@ final class WorktreeStore: ObservableObject {
     }
 
     func openSelectedWorktree() async {
-        guard let selectedBranch,
-              let client = connection?.client else { return }
-
-        do {
-            try await client.openWorktree(named: selectedBranch)
-            await reload()
-        } catch {
-            alertMessage = error.localizedDescription
-        }
+        guard let selectedBranch else { return }
+        await openWorktree(named: selectedBranch)
     }
 
     func closeSelectedWorktree() async {
-        guard let selectedBranch,
-              let client = connection?.client else { return }
+        guard let selectedBranch else { return }
+        await closeWorktree(named: selectedBranch)
+    }
 
-        do {
-            try await client.closeWorktree(named: selectedBranch)
-            await reload()
-        } catch {
-            alertMessage = error.localizedDescription
-        }
+    func mergeSelectedWorktree() async {
+        guard let selectedBranch else { return }
+        await mergeWorktree(named: selectedBranch)
+    }
+
+    func removeSelectedWorktree() async {
+        guard let selectedBranch else { return }
+        await removeWorktree(named: selectedBranch)
     }
 
     func selectConnection(_ profile: ConnectionProfile?) async {
@@ -99,6 +95,50 @@ final class WorktreeStore: ObservableObject {
         } catch {
             isConnecting = false
             self.connection = nil
+            alertMessage = error.localizedDescription
+        }
+    }
+
+    func openWorktree(named branch: String) async {
+        guard let client = connection?.client else { return }
+
+        do {
+            try await client.openWorktree(named: branch)
+            await reload(selecting: branch)
+        } catch {
+            alertMessage = error.localizedDescription
+        }
+    }
+
+    func closeWorktree(named branch: String) async {
+        guard let client = connection?.client else { return }
+
+        do {
+            try await client.closeWorktree(named: branch)
+            await reload(selecting: branch)
+        } catch {
+            alertMessage = error.localizedDescription
+        }
+    }
+
+    func mergeWorktree(named branch: String) async {
+        guard let client = connection?.client else { return }
+
+        do {
+            try await client.mergeWorktree(named: branch)
+            await reload()
+        } catch {
+            alertMessage = error.localizedDescription
+        }
+    }
+
+    func removeWorktree(named branch: String) async {
+        guard let client = connection?.client else { return }
+
+        do {
+            try await client.removeWorktree(named: branch)
+            await reload()
+        } catch {
             alertMessage = error.localizedDescription
         }
     }

@@ -12,6 +12,14 @@ enum BackendPath {
         "api/worktrees/\(encodePathSegment(branch))/close"
     }
 
+    static func removeWorktree(named branch: String) -> String {
+        "api/worktrees/\(encodePathSegment(branch))"
+    }
+
+    static func mergeWorktree(named branch: String) -> String {
+        "api/worktrees/\(encodePathSegment(branch))/merge"
+    }
+
     static func terminalLaunch(named branch: String) -> String {
         "api/worktrees/\(encodePathSegment(branch))/terminal-launch"
     }
