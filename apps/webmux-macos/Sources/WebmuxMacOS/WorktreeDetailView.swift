@@ -108,7 +108,10 @@ private struct TerminalPanelView: View {
             if !cachedSessionOrder.isEmpty {
                 ForEach(cachedSessionOrder, id: \.self) { sessionID in
                     if let session = cachedSessions[sessionID] {
-                        GhosttyTerminalContainer(session: session)
+                        GhosttyTerminalContainer(
+                            session: session,
+                            isActive: session.id == terminalSession?.id
+                        )
                             .id(session.id)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .clipShape(RoundedRectangle(cornerRadius: 12))

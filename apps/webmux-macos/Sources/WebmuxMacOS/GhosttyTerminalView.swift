@@ -11,6 +11,7 @@ final class GhosttyTerminalNSView: NSView {
     private var lastSurfaceSize: CGSize?
     private var lastSurfaceScale: CGFloat?
     private var didCleanUp = false
+    private var isActiveSession = false
 
     nonisolated var surface: ghostty_surface_t? {
         surfaceStorage
@@ -42,6 +43,7 @@ final class GhosttyTerminalNSView: NSView {
         syncWindowMetadata()
         syncFocus()
         syncGeometry()
+        requestFocusIfNeeded()
     }
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
@@ -291,6 +293,15 @@ final class GhosttyTerminalNSView: NSView {
         NSCursor.setHiddenUntilMouseMoves(!visible)
     }
 
+    func setActiveState(_ isActive: Bool) {
+        isActiveSession = isActive
+        if isActive {
+            requestFocusIfNeeded()
+        } else {
+            syncFocus()
+        }
+    }
+
     private func createSurface() {
         guard let runtime else { return }
 
@@ -342,6 +353,17 @@ final class GhosttyTerminalNSView: NSView {
         guard let surfaceStorage else { return }
         let isFocused = window?.isKeyWindow == true && window?.firstResponder === self
         ghostty_surface_set_focus(surfaceStorage, isFocused)
+    }
+
+    private func requestFocusIfNeeded() {
+        guard isActiveSession,
+              window?.firstResponder !== self else {
+            return
+        }
+
+        guard let window else { return }
+        window.makeFirstResponder(self)
+        syncFocus()
     }
 
     private func configureWindowObservers() {
