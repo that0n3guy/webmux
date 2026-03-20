@@ -23,7 +23,7 @@ final class TerminalCommandFactoryTests: XCTestCase {
             workingDirectory: launch.path
         )
 
-        XCTAssertEqual(session.id, "local:wt_1")
+        XCTAssertFalse(session.id.isEmpty)
         XCTAssertEqual(session.command, "tmux attach -t wm")
         XCTAssertEqual(session.workingDirectory, "/tmp/repo")
     }
@@ -49,11 +49,40 @@ final class TerminalCommandFactoryTests: XCTestCase {
             workingDirectory: "/Users/farhad"
         )
 
-        XCTAssertEqual(session.id, "remote:wt_2")
+        XCTAssertFalse(session.id.isEmpty)
         XCTAssertEqual(session.workingDirectory, "/Users/farhad")
         XCTAssertTrue(session.command.contains("env TERM=xterm-256color ssh -tt"))
         XCTAssertTrue(session.command.contains("-p 2222"))
         XCTAssertTrue(session.command.contains("farhad@100.116.162.22"))
         XCTAssertTrue(session.command.contains("tmux attach -t"))
+    }
+
+    func testMakeSessionGeneratesDistinctIDsForDifferentLaunches() {
+        let launch = NativeTerminalLaunch(
+            worktreeId: "wt_1",
+            branch: "main",
+            path: "/tmp/repo",
+            shellCommand: "tmux attach -t wm"
+        )
+        let profile = ConnectionProfile(
+            id: "local",
+            name: "Local",
+            mode: .local,
+            apiBaseURL: URL(string: "http://127.0.0.1:5111")!,
+            ssh: nil
+        )
+
+        let firstSession = TerminalCommandFactory.makeSession(
+            for: launch,
+            profile: profile,
+            workingDirectory: launch.path
+        )
+        let secondSession = TerminalCommandFactory.makeSession(
+            for: launch,
+            profile: profile,
+            workingDirectory: launch.path
+        )
+
+        XCTAssertNotEqual(firstSession.id, secondSession.id)
     }
 }

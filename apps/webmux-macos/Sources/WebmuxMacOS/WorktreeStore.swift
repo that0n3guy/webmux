@@ -15,6 +15,7 @@ final class WorktreeStore: ObservableObject {
 
     private var connection: (any WebmuxConnection)?
     private var terminalResolutionTask: Task<Void, Never>?
+    private var terminalSessionCache: [String: TerminalSessionDescriptor] = [:]
 
     init() {}
 
@@ -149,6 +150,8 @@ final class WorktreeStore: ObservableObject {
     ) {
         project = snapshot.project
         worktrees = snapshot.worktrees
+        let openBranches = Set(snapshot.worktrees.filter(\.mux).map(\.branch))
+        terminalSessionCache = terminalSessionCache.filter { openBranches.contains($0.key) }
         selectedBranch = resolvedSelection(
             in: snapshot.worktrees,
             preferredSelection: preferredSelection
@@ -199,6 +202,14 @@ final class WorktreeStore: ObservableObject {
 
         let branch = selectedWorktree.branch
         let profile = connection.profile
+
+        if let cachedSession = terminalSessionCache[branch] {
+            terminalSession = cachedSession
+            terminalMessage = nil
+            isResolvingTerminal = false
+            return
+        }
+
         isResolvingTerminal = true
         terminalSession = nil
         terminalMessage = nil
@@ -213,7 +224,9 @@ final class WorktreeStore: ObservableObject {
                     return
                 }
 
-                terminalSession = connection.makeTerminalSession(for: launch)
+                let session = connection.makeTerminalSession(for: launch)
+                terminalSessionCache[branch] = session
+                terminalSession = session
                 terminalMessage = nil
                 isResolvingTerminal = false
                 terminalResolutionTask = nil
@@ -229,6 +242,7 @@ final class WorktreeStore: ObservableObject {
 
                 isResolvingTerminal = false
                 terminalSession = nil
+                terminalSessionCache.removeValue(forKey: branch)
                 switch error {
                 case .requestFailed(let status, let message) where status == 409:
                     terminalMessage = message
@@ -246,6 +260,7 @@ final class WorktreeStore: ObservableObject {
 
                 isResolvingTerminal = false
                 terminalSession = nil
+                terminalSessionCache.removeValue(forKey: branch)
                 terminalMessage = error.localizedDescription
                 terminalResolutionTask = nil
             }
@@ -265,6 +280,7 @@ final class WorktreeStore: ObservableObject {
         selectedBranch = nil
         terminalSession = nil
         terminalMessage = nil
+        terminalSessionCache = [:]
         alertMessage = nil
         isLoading = false
         isResolvingTerminal = false

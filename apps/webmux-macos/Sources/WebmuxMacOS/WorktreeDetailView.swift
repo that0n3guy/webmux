@@ -96,21 +96,32 @@ private struct TerminalPanelView: View {
     let isResolvingTerminal: Bool
     let terminalSession: TerminalSessionDescriptor?
     let terminalMessage: String?
+    private let maxCachedSessions = 3
+    @State private var cachedSessions: [String: TerminalSessionDescriptor] = [:]
+    @State private var cachedSessionOrder: [String] = []
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color(nsColor: .windowBackgroundColor))
 
-            if isResolvingTerminal {
+            if !cachedSessionOrder.isEmpty {
+                ForEach(cachedSessionOrder, id: \.self) { sessionID in
+                    if let session = cachedSessions[sessionID] {
+                        GhosttyTerminalContainer(session: session)
+                            .id(session.id)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .opacity(session.id == terminalSession?.id ? 1 : 0)
+                            .allowsHitTesting(session.id == terminalSession?.id)
+                    }
+                }
+            }
+
+            if isResolvingTerminal && terminalSession == nil {
                 ProgressView("Attaching terminal…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let terminalSession {
-                GhosttyTerminalContainer(session: terminalSession)
-                    .id(terminalSession.id)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-            } else {
+            } else if terminalSession == nil {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Terminal")
                         .font(.headline)
@@ -121,9 +132,31 @@ private struct TerminalPanelView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            cacheCurrentSession()
+        }
+        .onChange(of: terminalSession?.id) {
+            cacheCurrentSession()
+        }
+        .onDisappear {
+            cachedSessions.removeAll()
+            cachedSessionOrder.removeAll()
+        }
         .overlay {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+        }
+    }
+
+    private func cacheCurrentSession() {
+        guard let terminalSession else { return }
+        cachedSessions[terminalSession.id] = terminalSession
+        cachedSessionOrder.removeAll { $0 == terminalSession.id }
+        cachedSessionOrder.append(terminalSession.id)
+
+        while cachedSessionOrder.count > maxCachedSessions {
+            let evictedSessionID = cachedSessionOrder.removeFirst()
+            cachedSessions.removeValue(forKey: evictedSessionID)
         }
     }
 }

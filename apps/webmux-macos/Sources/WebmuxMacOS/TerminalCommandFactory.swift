@@ -7,7 +7,7 @@ enum TerminalCommandFactory {
         workingDirectory: String
     ) -> TerminalSessionDescriptor {
         return TerminalSessionDescriptor(
-            id: "\(profile.id):\(launch.worktreeId)",
+            id: UUID().uuidString,
             command: buildAttachCommand(
                 for: launch,
                 profile: profile
