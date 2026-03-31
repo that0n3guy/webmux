@@ -70,9 +70,10 @@ export function getWorktreeCommandUsage(command: WorktreeSubcommand): string {
     case "add":
       return [
         "Usage:",
-        "  webmux add [branch] [--base <branch>] [--profile <name>] [--agent <claude|codex>] [--prompt <text>] [--env KEY=VALUE] [--detach]",
+        "  webmux add [branch] [--existing] [--base <branch>] [--profile <name>] [--agent <claude|codex>] [--prompt <text>] [--env KEY=VALUE] [--detach]",
         "",
         "Options:",
+        "  --existing               Use an existing local or remote branch instead of creating a new one",
         "  --base <branch>         Base branch for a new worktree (defaults to config)",
         "  --profile <name>         Worktree profile from .webmux.yaml",
         "  --agent <claude|codex>   Agent to launch in the worktree",
@@ -157,6 +158,11 @@ export function parseAddCommandArgs(args: string[]): ParsedAddCommand | null {
 
     if (arg === "--help" || arg === "-h") {
       return null;
+    }
+
+    if (arg === "--existing") {
+      input.mode = "existing";
+      continue;
     }
 
     if (arg === "--detach" || arg === "-d") {

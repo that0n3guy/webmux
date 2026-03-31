@@ -89,6 +89,20 @@ describe("parseAddCommandArgs", () => {
     } satisfies ParsedAddCommand);
   });
 
+  it("parses --existing flag", () => {
+    expect(parseAddCommandArgs(["feature/search", "--existing"])).toEqual({
+      input: { branch: "feature/search", mode: "existing" },
+      detach: false,
+    });
+  });
+
+  it("parses --existing with other flags", () => {
+    expect(parseAddCommandArgs(["feature/search", "--existing", "--agent", "claude", "--detach"])).toEqual({
+      input: { branch: "feature/search", mode: "existing", agent: "claude" },
+      detach: true,
+    });
+  });
+
   it("parses --detach flag", () => {
     expect(parseAddCommandArgs(["feature/search", "--detach"])).toEqual({
       input: { branch: "feature/search" },
@@ -203,6 +217,37 @@ describe("runWorktreeCommand", () => {
     expect(stdout).toEqual(["Created worktree feature/search"]);
     expect(stderr).toEqual([]);
     expect(switchCalls).toEqual([{ projectDir: "/repo", branch: "feature/search" }]);
+  });
+
+  it("dispatches add --existing with mode existing", async () => {
+    const { runtime, calls } = makeRuntime();
+    const stdout: string[] = [];
+
+    const exitCode = await runWorktreeCommand(
+      {
+        command: "add",
+        args: ["feature/remote-branch", "--existing"],
+        projectDir: "/repo",
+        port: 5111,
+      },
+      {
+        createRuntime: () => runtime,
+        stdout: (message) => stdout.push(message),
+        switchToTmuxWindow: () => {},
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(calls).toEqual([
+      {
+        method: "createWorktree",
+        value: {
+          branch: "feature/remote-branch",
+          mode: "existing",
+        },
+      },
+    ]);
+    expect(stdout).toEqual(["Created worktree feature/remote-branch"]);
   });
 
   it("skips tmux switch when --detach is passed to add", async () => {
