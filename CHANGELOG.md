@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.24.0](https://github.com/windmill-labs/webmux/compare/v0.23.0...v0.24.0) (2026-03-31)
+
+
+### Features
+
+* add paired claude and codex worktrees ([#193](https://github.com/windmill-labs/webmux/issues/193)) ([004404f](https://github.com/windmill-labs/webmux/commit/004404f5769633e09ce64529ce165eeee4e74dd1))
+* improve auto-name error reporting and speed ([3c8c984](https://github.com/windmill-labs/webmux/commit/3c8c984717f4f6826bb9f1fed92b5f08cd043333))
+* improve auto-name error reporting and speed ([3c8c984](https://github.com/windmill-labs/webmux/commit/3c8c984717f4f6826bb9f1fed92b5f08cd043333))
+* improve auto-name error reporting and speed ([b6b51d2](https://github.com/windmill-labs/webmux/commit/b6b51d2cad6a08c17e5b856e5f654f28d2cec7af))
+* show git status in diff dialog ([#192](https://github.com/windmill-labs/webmux/issues/192)) ([4d587f5](https://github.com/windmill-labs/webmux/commit/4d587f56d0ea3e01a386fd06467f5c5c8c90e9b7))
+
+
+### Bug Fixes
+
+* soften review comment prompt ([#194](https://github.com/windmill-labs/webmux/issues/194)) ([53b952e](https://github.com/windmill-labs/webmux/commit/53b952e7157fe9f2d860ac99bf80324e19215250))
+
 ## [0.23.0](https://github.com/windmill-labs/webmux/compare/v0.22.1...v0.23.0) (2026-03-27)
 
 
