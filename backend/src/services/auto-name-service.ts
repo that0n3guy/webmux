@@ -11,7 +11,6 @@ type SpawnLike = (args: string[]) => Promise<SpawnResult>;
 
 const MAX_BRANCH_LENGTH = 40;
 const DEFAULT_AUTO_NAME_MODEL = "claude-haiku-4-5-20251001";
-const AUTO_NAME_MAX_TOKENS = 50;
 
 const DEFAULT_SYSTEM_PROMPT = [
   "Generate a concise git branch name from the task description.",
@@ -68,7 +67,7 @@ function buildClaudeArgs(model: string | undefined, systemPrompt: string, prompt
     "--output-format", "text",
     "--no-session-persistence",
     "--model", model || DEFAULT_AUTO_NAME_MODEL,
-    "--max-tokens", String(AUTO_NAME_MAX_TOKENS),
+    "--effort", "low",
   ];
   args.push(prompt);
   return args;

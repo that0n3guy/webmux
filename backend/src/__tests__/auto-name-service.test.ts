@@ -1,6 +1,17 @@
 import { describe, expect, it } from "bun:test";
 import { AutoNameService } from "../services/auto-name-service";
 
+async function getClaudeCliFlags(): Promise<Set<string>> {
+  const proc = Bun.spawn(["claude", "--help"], { stdout: "pipe", stderr: "pipe" });
+  const output = await new Response(proc.stdout).text();
+  await proc.exited;
+  const flags = new Set<string>();
+  for (const match of output.matchAll(/--[\w-]+/g)) {
+    flags.add(match[0]);
+  }
+  return flags;
+}
+
 function fakeSpawn(stdout: string, exitCode = 0, stderr = "") {
   const calls: string[][] = [];
   const spawnImpl = async (args: string[]) => {
@@ -28,7 +39,7 @@ describe("AutoNameService", () => {
       "--output-format", "text",
       "--no-session-persistence",
       "--model", "claude-haiku-4-5-20251001",
-      "--max-tokens", "50",
+      "--effort", "low",
       "Here is the task description: Fix the login flow. You MUST return the branch name only, no other text or comments. Be fast, make it simple, and concise.",
     ]);
   });
@@ -179,6 +190,19 @@ describe("AutoNameService", () => {
 
     expect(branch.length).toBeLessThanOrEqual(40);
     expect(branch).not.toMatch(/-$/);
+  });
+
+  it("only uses flags supported by the claude CLI", async () => {
+    const { calls, spawnImpl } = fakeSpawn("test-branch");
+    const service = new AutoNameService({ spawnImpl });
+
+    await service.generateBranchName({ provider: "claude" }, "Test task");
+
+    const cliFlags = await getClaudeCliFlags();
+    const usedFlags = calls[0].filter((arg) => arg.startsWith("--"));
+    for (const flag of usedFlags) {
+      expect(cliFlags.has(flag)).toBe(true);
+    }
   });
 
   it("escapes special characters in system prompt for codex TOML config", async () => {
