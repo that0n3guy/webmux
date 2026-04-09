@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { AutoNameService } from "../services/auto-name-service";
 
 async function getClaudeCliFlags(): Promise<Set<string>> {
@@ -103,6 +106,24 @@ describe("AutoNameService", () => {
     expect(calls[0]).toContain("gpt-4.1");
   });
 
+  it("passes the configured timeout to the spawn implementation", async () => {
+    const timeouts: Array<number | undefined> = [];
+    const service = new AutoNameService({
+      timeoutMs: 1234,
+      spawnImpl: async (_args, options) => {
+        timeouts.push(options?.timeoutMs);
+        return { exitCode: 0, stdout: "test-branch", stderr: "" };
+      },
+    });
+
+    await service.generateBranchName(
+      { provider: "claude" },
+      "Test timeout wiring",
+    );
+
+    expect(timeouts).toEqual([1234]);
+  });
+
   it("omits -m from codex when model is not specified", async () => {
     const { calls, spawnImpl } = fakeSpawn("add-bulk-actions");
     const service = new AutoNameService({ spawnImpl });
@@ -154,6 +175,42 @@ describe("AutoNameService", () => {
     await expect(
       service.generateBranchName({ provider: "codex" }, "Fix bug"),
     ).rejects.toThrow(/codex failed \(command: .*\): authentication required/);
+  });
+
+  it("returns a change-prefixed fallback branch when the real spawn path times out", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "webmux-auto-name-"));
+    const claudePath = join(tempDir, "claude");
+    await Bun.write(
+      claudePath,
+      "#!/bin/sh\ntrap '' TERM\nwhile true; do sleep 1; done\n",
+    );
+    await chmod(claudePath, 0o755);
+
+    const originalPath = Bun.env.PATH;
+    const timeoutMs = 50;
+    const deadlineMs = 1_000;
+    Bun.env.PATH = originalPath ? `${tempDir}:${originalPath}` : tempDir;
+    process.env.PATH = Bun.env.PATH;
+
+    try {
+      const startedAt = Date.now();
+      const branch = await Promise.race([
+        new AutoNameService({ timeoutMs }).generateBranchName(
+          { provider: "claude" },
+          "Fix bug",
+        ),
+        Bun.sleep(deadlineMs).then(() => {
+          throw new Error("timed out waiting for auto-name timeout fallback");
+        }),
+      ]);
+
+      expect(Date.now() - startedAt).toBeLessThan(deadlineMs);
+      expect(branch).toMatch(/^change-[a-f0-9]{8}$/);
+    } finally {
+      Bun.env.PATH = originalPath;
+      process.env.PATH = originalPath;
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("throws on empty output", async () => {
