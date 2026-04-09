@@ -37,6 +37,7 @@ function run(args: string[], cwd: string): string {
 
 class FakeTmuxGateway implements TmuxGateway {
   private readonly windows = new Map<string, TmuxWindowSummary>();
+  readonly createdWindows: Array<{ sessionName: string; windowName: string; cwd: string; command?: string }> = [];
   readonly commands: Array<{ target: string; command: string }> = [];
 
   ensureServer(): void {}
@@ -52,6 +53,7 @@ class FakeTmuxGateway implements TmuxGateway {
   }
 
   createWindow(opts: { sessionName: string; windowName: string; cwd: string; command?: string }): void {
+    this.createdWindows.push({ ...opts });
     this.windows.set(this.key(opts.sessionName, opts.windowName), {
       sessionName: opts.sessionName,
       windowName: opts.windowName,
@@ -970,6 +972,27 @@ describe("LifecycleService", () => {
     const state = runtime.getWorktreeByBranch("feature-sandbox");
     expect(state?.agent.runtime).toBe("docker");
     expect(state?.session.exists).toBe(true);
+  });
+
+  it("starts one-pane docker agent sessions without nesting docker exec inside the container shell", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const docker = new FakeDockerGateway();
+    const lifecycle = makeLifecycleService(repoRoot, tmux, runtime, docker);
+
+    await lifecycle.createWorktree({
+      branch: "feature-sandbox-agent",
+      profile: "sandbox",
+    });
+
+    const windowCommand = tmux.createdWindows[0]?.command;
+    const agentCommand = tmux.commands[0]?.command;
+
+    expect(windowCommand).toContain("docker exec -it");
+    expect(windowCommand).toContain("wm-feature-sandbox-agent-container");
+    expect(agentCommand).toContain("claude");
+    expect(agentCommand).not.toContain("docker exec");
   });
 
   it("reports backend creation phases in order until the worktree is ready", async () => {
