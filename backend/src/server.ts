@@ -21,6 +21,7 @@ import { loadControlToken } from "./adapters/control-token";
 import { getDefaultProfileName, persistLocalLinearConfig, persistLocalGitHubConfig, type ProjectConfig } from "./adapters/config";
 import { jsonResponse, errorResponse } from "./lib/http";
 import { hasRecentDashboardActivity, touchDashboardActivity } from "./services/dashboard-activity";
+import { buildArchivedWorktreePathSet, normalizeArchivePath } from "./services/archive-service";
 import {
   branchMatchesIssue,
   buildLinearIssuesResponse,
@@ -49,6 +50,7 @@ const runtime = createWebmuxRuntime({
 const PROJECT_DIR = runtime.projectDir;
 const config: ProjectConfig = runtime.config;
 const git = runtime.git;
+const archiveStateService = runtime.archiveStateService;
 const tmux = runtime.tmux;
 const projectRuntime = runtime.projectRuntime;
 const worktreeCreationTracker = runtime.worktreeCreationTracker;
@@ -332,10 +334,10 @@ async function apiGetProject(): Promise<Response> {
   const linearIssuesPromise = config.integrations.linear.enabled && linearApiKey?.trim()
     ? fetchAssignedIssues()
     : Promise.resolve({ ok: true as const, data: [] });
-  const [, linearResult] = await Promise.all([
-    reconciliationService.reconcile(PROJECT_DIR),
-    linearIssuesPromise,
-  ]);
+  await reconciliationService.reconcile(PROJECT_DIR);
+  const archiveState = await archiveStateService.prune(projectRuntime.listWorktrees().map((worktree) => worktree.path));
+  const linearResult = await linearIssuesPromise;
+  const archivedPaths = buildArchivedWorktreePathSet(archiveState);
   const linearIssues = linearResult.ok ? linearResult.data : [];
   return jsonResponse(buildProjectSnapshot({
     projectName: config.name,
@@ -343,6 +345,7 @@ async function apiGetProject(): Promise<Response> {
     runtime: projectRuntime,
     creatingWorktrees: worktreeCreationTracker.list(),
     notifications: runtimeNotifications.list(),
+    isArchived: (path) => archivedPaths.has(normalizeArchivePath(path)),
     findLinearIssue: (branch) => {
       const match = linearIssues.find((issue) => branchMatchesIssue(branch, issue.branchName));
       return match
@@ -556,6 +559,23 @@ async function apiCloseWorktree(name: string): Promise<Response> {
   await lifecycleService.closeWorktree(name);
   log.debug(`[worktree:close] done name=${name}`);
   return jsonResponse({ ok: true });
+}
+
+async function apiSetWorktreeArchived(name: string, req: Request): Promise<Response> {
+  ensureBranchNotBusy(name);
+  const raw: unknown = await req.json();
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return errorResponse("Invalid request body", 400);
+  }
+  const body = raw as Record<string, unknown>;
+  if (typeof body.archived !== "boolean") {
+    return errorResponse("Missing boolean 'archived' field", 400);
+  }
+
+  log.info(`[worktree:archive] name=${name} archived=${body.archived}`);
+  await lifecycleService.setWorktreeArchived(name, body.archived);
+  log.debug(`[worktree:archive] done name=${name} archived=${body.archived}`);
+  return jsonResponse({ ok: true, archived: body.archived });
 }
 
 async function apiSendPrompt(name: string, req: Request): Promise<Response> {
@@ -827,6 +847,14 @@ Bun.serve({
         const name = decodeURIComponent(req.params.name);
         if (!isValidWorktreeName(name)) return errorResponse("Invalid worktree name", 400);
         return catching(`POST /api/worktrees/${name}/close`, () => apiCloseWorktree(name));
+      },
+    },
+
+    "/api/worktrees/:name/archive": {
+      PUT: (req) => {
+        const name = decodeURIComponent(req.params.name);
+        if (!isValidWorktreeName(name)) return errorResponse("Invalid worktree name", 400);
+        return catching(`PUT /api/worktrees/${name}/archive`, () => apiSetWorktreeArchived(name, req));
       },
     },
 

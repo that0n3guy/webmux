@@ -28,6 +28,7 @@ import {
 } from "./agent-service";
 import type { ReconciliationService } from "./reconciliation-service";
 import { ensureSessionLayout, planSessionLayout } from "./session-service";
+import { ArchiveStateService } from "./archive-state-service";
 import {
   createManagedWorktree,
   initializeManagedWorktree,
@@ -89,6 +90,7 @@ export interface LifecycleServiceDependencies {
   controlBaseUrl: string;
   getControlToken: () => Promise<string>;
   config: ProjectConfig;
+  archiveState: ArchiveStateService;
   git: GitGateway;
   tmux: TmuxGateway;
   docker: DockerGateway;
@@ -237,12 +239,8 @@ export class LifecycleService {
 
   async closeWorktree(branch: string): Promise<void> {
     try {
-      const resolved = await this.resolveExistingWorktree(branch);
-      this.deps.tmux.killWindow(
-        buildProjectSessionName(this.deps.projectRoot),
-        buildWorktreeWindowName(branch),
-      );
-      await this.deps.reconciliation.reconcile(this.deps.projectRoot, { force: true });
+      await this.resolveExistingWorktree(branch);
+      await this.closeBranchWindow(branch);
     } catch (error) {
       throw this.wrapOperationError(error);
     }
@@ -296,6 +294,18 @@ export class LifecycleService {
           500,
         );
       }
+    } catch (error) {
+      throw this.wrapOperationError(error);
+    }
+  }
+
+  async setWorktreeArchived(branch: string, archived: boolean): Promise<void> {
+    try {
+      const resolved = await this.resolveExistingWorktree(branch);
+      if (archived) {
+        await this.closeBranchWindow(branch);
+      }
+      await this.updateWorktreeArchivedState(resolved.entry.path, archived);
     } catch (error) {
       throw this.wrapOperationError(error);
     }
@@ -543,6 +553,18 @@ export class LifecycleService {
     };
   }
 
+  private async updateWorktreeArchivedState(path: string, archived: boolean): Promise<void> {
+    await this.deps.archiveState.setArchived(path, archived);
+  }
+
+  private async closeBranchWindow(branch: string): Promise<void> {
+    this.deps.tmux.killWindow(
+      buildProjectSessionName(this.deps.projectRoot),
+      buildWorktreeWindowName(branch),
+    );
+    await this.deps.reconciliation.reconcile(this.deps.projectRoot, { force: true });
+  }
+
   private async materializeRuntimeSession(input: {
     branch: string;
     profile: ProfileConfig;
@@ -733,6 +755,7 @@ export class LifecycleService {
       },
       this.deps.git,
     );
+    await this.updateWorktreeArchivedState(resolved.entry.path, false);
 
     await this.deps.reconciliation.reconcile(this.deps.projectRoot, { force: true });
   }

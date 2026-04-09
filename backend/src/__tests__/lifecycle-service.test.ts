@@ -7,10 +7,11 @@ import { BunGitGateway, type GitGateway } from "../adapters/git";
 import type { LifecycleHookRunner, RunLifecycleHookInput } from "../adapters/hooks";
 import type { PortProbe } from "../adapters/port-probe";
 import { buildProjectSessionName, buildWorktreeWindowName, type TmuxGateway, type TmuxWindowSummary } from "../adapters/tmux";
-import { getWorktreeStoragePaths, readWorktreeMeta } from "../adapters/fs";
+import { getWorktreeStoragePaths, readWorktreeArchiveState, readWorktreeMeta } from "../adapters/fs";
 import type { DockerGateway, LaunchContainerOpts } from "../adapters/docker";
 import type { AutoNameConfig } from "../domain/config";
 import { ProjectRuntime } from "../services/project-runtime";
+import { ArchiveStateService } from "../services/archive-state-service";
 import type { AutoNameGenerator } from "../services/auto-name-service";
 import { ReconciliationService } from "../services/reconciliation-service";
 import {
@@ -260,6 +261,7 @@ function makeLifecycleService(
     controlBaseUrl: "http://127.0.0.1:5111",
     getControlToken: async () => "secret-token",
     config,
+    archiveState: new ArchiveStateService(git.resolveWorktreeGitDir(repoRoot)),
     git,
     tmux,
     docker,
@@ -920,6 +922,24 @@ describe("LifecycleService", () => {
     expect(new BunGitGateway().listWorktrees(repoRoot).some((entry) => entry.branch === "feature-close")).toBe(true);
     expect(run(["git", "branch", "--list", "feature-close"], repoRoot)).toContain("feature-close");
     expect(runtime.getWorktreeByBranch("feature-close")?.session.exists).toBe(false);
+  });
+
+  it("closes a worktree before archiving it", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const lifecycle = makeLifecycleService(repoRoot, tmux, runtime);
+
+    await lifecycle.createWorktree({ branch: "feature-archive" });
+    await lifecycle.setWorktreeArchived("feature-archive", true);
+
+    expect(tmux.listWindows()).toEqual([]);
+    expect(runtime.getWorktreeByBranch("feature-archive")?.session.exists).toBe(false);
+
+    const archiveState = await readWorktreeArchiveState(join(repoRoot, ".git"));
+
+    expect(archiveState.entries).toHaveLength(1);
+    expect(archiveState.entries[0]?.path).toBe(join(repoRoot, "__worktrees", "feature-archive"));
   });
 
   it("creates a managed docker worktree through the container runtime path", async () => {
