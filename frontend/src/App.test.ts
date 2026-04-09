@@ -1,6 +1,6 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppConfig, LinearIssuesResponse, WorktreeInfo } from "./lib/types";
+import type { AppConfig, AppNotification, LinearIssuesResponse, WorktreeInfo } from "./lib/types";
 
 vi.mock("./lib/api", () => ({
   closeWorktree: vi.fn(),
@@ -15,6 +15,7 @@ vi.mock("./lib/api", () => ({
   fetchWorktrees: vi.fn(),
   mergeWorktree: vi.fn(),
   openWorktree: vi.fn(),
+  pullMain: vi.fn(),
   removeWorktree: vi.fn(),
   setWorktreeArchived: vi.fn(),
   sendWorktreePrompt: vi.fn(),
@@ -40,7 +41,6 @@ class MockNotification {
 
 const originalMatchMedia = window.matchMedia;
 const originalNotification = globalThis.Notification;
-const originalAlert = window.alert;
 const originalDialogShowModal = HTMLDialogElement.prototype.showModal;
 const originalDialogClose = HTMLDialogElement.prototype.close;
 
@@ -103,6 +103,20 @@ function createLinearIssuesResponse(
   };
 }
 
+function createAppNotification(
+  overrides: Partial<AppNotification> = {},
+): AppNotification {
+  return {
+    id: 1,
+    branch: "feature/toast",
+    type: "runtime_error",
+    message: "Notification text",
+    url: "https://example.com/notifications/1",
+    timestamp: Date.UTC(2026, 3, 9, 11, 30, 0),
+    ...overrides,
+  };
+}
+
 function setupBrowserMocks(): void {
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
@@ -123,11 +137,6 @@ function setupBrowserMocks(): void {
     writable: true,
     value: MockNotification,
   });
-  Object.defineProperty(window, "alert", {
-    configurable: true,
-    writable: true,
-    value: vi.fn(),
-  });
   HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement): void {
     this.open = true;
   });
@@ -146,11 +155,6 @@ function restoreBrowserMocks(): void {
     configurable: true,
     writable: true,
     value: originalNotification,
-  });
-  Object.defineProperty(window, "alert", {
-    configurable: true,
-    writable: true,
-    value: originalAlert,
   });
   HTMLDialogElement.prototype.showModal = originalDialogShowModal;
   HTMLDialogElement.prototype.close = originalDialogClose;
@@ -200,6 +204,7 @@ describe("App create selection", () => {
     vi.mocked(api.removeWorktree).mockResolvedValue(undefined);
     vi.mocked(api.setWorktreeArchived).mockResolvedValue({ ok: true, archived: true });
     vi.mocked(api.mergeWorktree).mockResolvedValue(undefined);
+    vi.mocked(api.pullMain).mockResolvedValue({ status: "updated" });
     vi.mocked(api.dismissNotification).mockResolvedValue(undefined);
     vi.mocked(api.fetchCiLogs).mockResolvedValue("");
     vi.mocked(api.sendWorktreePrompt).mockResolvedValue(undefined);
@@ -274,6 +279,63 @@ describe("App create selection", () => {
       expect(api.fetchWorktrees).toHaveBeenCalledTimes(3);
     });
     expect(screen.getByTitle("feature/new")).toBeInTheDocument();
+  });
+
+  it("shows an error toast when worktree creation fails", async () => {
+    vi.mocked(api.fetchWorktrees).mockResolvedValue([]);
+    vi.mocked(api.createWorktree).mockRejectedValueOnce(new Error("branch exists"));
+
+    render(App);
+
+    await screen.findByText("Select a worktree");
+    await openCreateDialogAndSubmit("feature/new");
+
+    const toast = await screen.findByRole("alert");
+    expect(toast).toHaveTextContent("Failed to create: branch exists");
+  });
+
+  it("dismisses notification toasts through the notification API", async () => {
+    let onNotification: ((notification: AppNotification) => void) | undefined;
+
+    vi.mocked(api.fetchWorktrees).mockResolvedValue([]);
+    vi.mocked(api.subscribeNotifications).mockImplementation((handleNotification) => {
+      onNotification = handleNotification;
+      return () => {};
+    });
+
+    render(App);
+
+    await screen.findByText("Select a worktree");
+    onNotification?.(createAppNotification({ id: 42, message: "Background error" }));
+
+    const toast = await screen.findByRole("alert");
+    const dismissButton = Array.from(toast.querySelectorAll("button")).find(
+      (button) => button.textContent === "\u00d7",
+    );
+
+    expect(dismissButton).toBeDefined();
+    await fireEvent.click(dismissButton!);
+
+    expect(api.dismissNotification).toHaveBeenCalledWith(42);
+  });
+
+  it("shows a success toast when pulling main succeeds", async () => {
+    vi.mocked(api.fetchConfig).mockResolvedValue(createConfig({
+      projectDir: "/repo",
+      mainBranch: "main",
+    }));
+    vi.mocked(api.fetchWorktrees).mockResolvedValue([]);
+    vi.mocked(api.pullMain).mockResolvedValueOnce({ status: "updated" });
+
+    render(App);
+
+    await screen.findByText("Select a worktree");
+    await screen.findByText("main");
+    await fireEvent.click(screen.getByRole("button", { name: "Pull" }));
+    await fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Pull" }));
+
+    expect(api.pullMain).toHaveBeenCalledWith(false);
+    expect(await screen.findByRole("alert")).toHaveTextContent('Pulled latest "main" from remote');
   });
 
   it("selects the primary paired worktree when Both is created without a prior selection", async () => {

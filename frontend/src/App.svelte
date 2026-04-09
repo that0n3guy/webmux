@@ -10,7 +10,7 @@
   import CommentReviewDialog from "./lib/CommentReviewDialog.svelte";
   import DiffDialog from "./lib/DiffDialog.svelte";
   import PaneBar from "./lib/PaneBar.svelte";
-  import NotificationToast from "./lib/NotificationToast.svelte";
+  import ToastStack from "./lib/ToastStack.svelte";
   import LinearPanel from "./lib/LinearPanel.svelte";
   import LinearDetailDialog from "./lib/LinearDetailDialog.svelte";
   import SidebarRepoRow from "./lib/SidebarRepoRow.svelte";
@@ -23,6 +23,9 @@
     PrEntry,
     LinearIssueAvailability,
     LinearIssue,
+    ToastInput,
+    ToastItem,
+    UiToastItem,
     WorktreeInfo,
   } from "./lib/types";
   import {
@@ -46,6 +49,7 @@
   } from "./lib/worktree-list";
   import { getTheme } from "./lib/themes";
   import type { ThemeKey } from "./lib/themes";
+  import { setToastController } from "./lib/toast-context";
   import * as api from "./lib/api";
 
   let config = $state<AppConfig>({
@@ -113,12 +117,30 @@
 
   // Notifications
   let notifications = $state<AppNotification[]>([]);
+  let uiToasts = $state<UiToastItem[]>([]);
   let notificationHistory = $state<AppNotification[]>([]);
   let unreadCount = $state(0);
   const AUTO_DISMISS_MS = 4000;
   const MAX_HISTORY = 10;
+  let nextToastId = 0;
 
   let notifiedBranches = $state<Set<string>>(new Set());
+  let toasts = $derived([
+    ...notifications.map((notification): ToastItem => ({
+      id: `notification:${notification.id}`,
+      source: "notification",
+      notificationId: notification.id,
+      tone: notification.type === "runtime_error"
+        ? "error"
+        : notification.type === "agent_stopped" || notification.type === "worktree_auto_removed"
+          ? "success"
+          : "info",
+      message: notification.message,
+      ...(notification.url ? { detail: notification.url } : {}),
+      branch: notification.branch,
+    })),
+    ...uiToasts,
+  ]);
 
   function getAvailableBranchCacheKey(includeRemote: boolean): BranchCacheKey {
     return includeRemote ? "remote" : "local";
@@ -189,6 +211,14 @@
     }
   }
 
+  function showToast(toast: ToastInput): void {
+    const id = `ui:${nextToastId++}`;
+    uiToasts = [...uiToasts, { id, source: "ui", ...toast }];
+    setTimeout(() => {
+      uiToasts = uiToasts.filter((item) => item.id !== id);
+    }, AUTO_DISMISS_MS);
+  }
+
   function handleInitialNotification(n: AppNotification): void {
     if (notificationHistory.some((x) => x.id === n.id)) return;
     notificationHistory = [n, ...notificationHistory].slice(0, MAX_HISTORY);
@@ -202,6 +232,35 @@
   function handleSseDismiss(id: number): void {
     notifications = notifications.filter((n) => n.id !== id);
   }
+
+  function handleDismissToast(id: string): void {
+    const toast = toasts.find((item) => item.id === id);
+    if (!toast) return;
+
+    if (toast.source === "notification") {
+      handleDismissNotification(toast.notificationId);
+      return;
+    }
+
+    uiToasts = uiToasts.filter((item) => item.id !== id);
+  }
+
+  function handleSelectToast(id: string): void {
+    const toast = toasts.find((item) => item.id === id);
+    if (!toast || toast.source !== "notification") return;
+
+    handleDismissToast(id);
+    selectedBranch = toast.branch;
+    notifiedBranches = new Set([...notifiedBranches].filter((branch) => branch !== toast.branch));
+    if (isMobile) sidebarOpen = false;
+  }
+
+  setToastController({
+    show: showToast,
+    info: (message, detail) => showToast({ tone: "info", message, ...(detail ? { detail } : {}) }),
+    success: (message, detail) => showToast({ tone: "success", message, ...(detail ? { detail } : {}) }),
+    error: (message, detail) => showToast({ tone: "error", message, ...(detail ? { detail } : {}) }),
+  });
 
   function handleBellOpen(): void {
     unreadCount = 0;
@@ -493,7 +552,7 @@
         if (isMobile) sidebarOpen = false;
       }
     } catch (err) {
-      alert(`Failed to create: ${errorMessage(err)}`);
+      showToast({ tone: "error", message: `Failed to create: ${errorMessage(err)}` });
     } finally {
       pendingCreateCount = Math.max(0, pendingCreateCount - expectedCreatedCount);
       if (shouldAutoSelectCreatedWorktree && requestId === latestAutoSelectCreateId) {
@@ -546,7 +605,7 @@
       invalidateBranchCaches();
       await refresh();
     } catch (err) {
-      alert(`Failed to remove: ${errorMessage(err)}`);
+      showToast({ tone: "error", message: `Failed to remove: ${errorMessage(err)}` });
     } finally {
       removingBranches = new Set(
         [...removingBranches].filter((b) => b !== branch),
@@ -566,7 +625,7 @@
       invalidateBranchCaches();
       await refresh();
     } catch (err) {
-      alert(`Failed to merge: ${errorMessage(err)}`);
+      showToast({ tone: "error", message: `Failed to merge: ${errorMessage(err)}` });
     } finally {
       removingBranches = new Set(
         [...removingBranches].filter((b) => b !== branch),
@@ -582,6 +641,12 @@
       if (result.status === "updated" || result.status === "already_up_to_date") {
         pullMainConfirm = false;
         pullMainForce = false;
+        showToast({
+          tone: result.status === "updated" ? "success" : "info",
+          message: result.status === "updated"
+            ? `Pulled latest "${config.mainBranch ?? "main"}" from remote`
+            : `"${config.mainBranch ?? "main"}" is already up to date`,
+        });
       } else if (result.status === "merge_failed" && !pullMainForce) {
         pullMainForce = true;
         pullMainError = `Fast-forward failed: ${result.error ?? "unknown error"}.\nForce pull will reset main to match remote.`;
@@ -625,7 +690,7 @@
       await api.openWorktree(branch);
       await refresh();
     } catch (err) {
-      alert(`Failed to open worktree: ${errorMessage(err)}`);
+      showToast({ tone: "error", message: `Failed to open worktree: ${errorMessage(err)}` });
     } finally {
       openingBranches = new Set([...openingBranches].filter((x) => x !== branch));
     }
@@ -654,7 +719,7 @@
       await api.closeWorktree(branch);
       await refresh();
     } catch (err) {
-      alert(`Failed to close worktree: ${errorMessage(err)}`);
+      showToast({ tone: "error", message: `Failed to close worktree: ${errorMessage(err)}` });
     }
   }
 
@@ -1171,8 +1236,8 @@
   />
 {/if}
 
-<NotificationToast
-  {notifications}
-  ondismiss={handleDismissNotification}
-  onselect={handleSelectWorktree}
+<ToastStack
+  {toasts}
+  ondismiss={handleDismissToast}
+  onselect={handleSelectToast}
 />
