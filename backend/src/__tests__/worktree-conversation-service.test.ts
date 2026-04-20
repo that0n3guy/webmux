@@ -449,6 +449,102 @@ describe("WorktreeConversationService", () => {
     );
   });
 
+  it("switches to the newest discovered thread when saved metadata points to an older thread", async () => {
+    const metaStore = new Map<string, WorktreeMeta>();
+    const worktree = makeWorktree();
+    const gitDir = `${worktree.path}/.git`;
+    metaStore.set(gitDir, {
+      ...makeMeta(),
+      conversation: makeCodexConversationMeta("thread-old", worktree.path),
+    });
+
+    const appServer = new FakeCodexAppServer();
+    const olderThread = makeThread({
+      id: "thread-old",
+      cwd: worktree.path,
+      updatedAt: 200,
+      statusType: "idle",
+      source: "cli",
+      turns: [
+        makeTurn({
+          id: "turn-old",
+          status: "completed",
+          startedAt: 111,
+          items: [
+            {
+              type: "userMessage",
+              id: "user-old",
+              content: [{ type: "text", text: "Old prompt" }],
+            },
+            {
+              type: "agentMessage",
+              id: "assistant-old",
+              text: "Old reply",
+              phase: "final_answer",
+              memoryCitation: null,
+            },
+          ],
+        }),
+      ],
+    });
+    const newestThread = makeThread({
+      id: "thread-new",
+      cwd: worktree.path,
+      updatedAt: 250,
+      statusType: "idle",
+      source: "cli",
+      turns: [
+        makeTurn({
+          id: "turn-new",
+          status: "completed",
+          startedAt: 222,
+          items: [
+            {
+              type: "userMessage",
+              id: "user-new",
+              content: [{ type: "text", text: "Latest prompt" }],
+            },
+            {
+              type: "agentMessage",
+              id: "assistant-new",
+              text: "Latest reply",
+              phase: "final_answer",
+              memoryCitation: null,
+            },
+          ],
+        }),
+      ],
+    });
+    appServer.listedThreads = [olderThread, newestThread];
+    appServer.threads.set(olderThread.id, structuredClone(olderThread));
+    appServer.threads.set(newestThread.id, structuredClone(newestThread));
+
+    const service = new WorktreeConversationService({
+      appServer,
+      git: new FakeGitGateway(),
+      now: () => new Date("2026-04-16T09:00:00.000Z"),
+      readMeta: async (path) => structuredClone(metaStore.get(path) ?? null),
+      writeMeta: async (path, meta) => {
+        metaStore.set(path, structuredClone(meta));
+      },
+    });
+
+    const result = await service.readWorktreeConversation(worktree);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.data.worktree.conversation?.conversationId).toBe("thread-new");
+    expect(result.data.conversation.messages.at(-1)?.text).toBe("Latest reply");
+    expect(appServer.calls).toEqual([
+      "threadList",
+      "threadRead:thread-new:false",
+      "threadRead:thread-new:true",
+    ]);
+    expect(metaStore.get(gitDir)?.conversation).toEqual(
+      makeCodexConversationMeta("thread-new", worktree.path, "2026-04-16T09:00:00.000Z"),
+    );
+  });
+
   it("does not create a new thread when reading history without an existing conversation", async () => {
     const metaStore = new Map<string, WorktreeMeta>();
     const worktree = makeWorktree();
@@ -477,164 +573,4 @@ describe("WorktreeConversationService", () => {
     expect(metaStore.get(gitDir)?.conversation).toBeUndefined();
   });
 
-  it("starts a new turn on the resolved thread", async () => {
-    const metaStore = new Map<string, WorktreeMeta>();
-    const worktree = makeWorktree();
-    const gitDir = `${worktree.path}/.git`;
-    metaStore.set(gitDir, {
-      ...makeMeta(),
-      conversation: makeCodexConversationMeta("thread-existing", worktree.path),
-    });
-
-    const existingThread = makeThread({
-      id: "thread-existing",
-      cwd: worktree.path,
-      updatedAt: 300,
-      statusType: "idle",
-      source: "cli",
-      turns: [],
-    });
-    const appServer = new FakeCodexAppServer();
-    appServer.threads.set(existingThread.id, structuredClone(existingThread));
-
-    const service = new WorktreeConversationService({
-      appServer,
-      git: new FakeGitGateway(),
-      readMeta: async (path) => structuredClone(metaStore.get(path) ?? null),
-      writeMeta: async (path, meta) => {
-        metaStore.set(path, structuredClone(meta));
-      },
-    });
-
-    const result = await service.sendWorktreeMessage(worktree, "Apply the patch");
-    expect(result).toEqual({
-      ok: true,
-      data: {
-        conversationId: "thread-existing",
-        turnId: "turn-created",
-        running: true,
-      },
-    });
-    expect(appServer.calls).toEqual([
-      "threadRead:thread-existing:false",
-      "threadRead:thread-existing:true",
-      "turnStart:thread-existing:Apply the patch",
-    ]);
-  });
-
-  it("starts a new turn when the latest historical turn was interrupted", async () => {
-    const metaStore = new Map<string, WorktreeMeta>();
-    const worktree = makeWorktree();
-    const gitDir = `${worktree.path}/.git`;
-    metaStore.set(gitDir, {
-      ...makeMeta(),
-      conversation: makeCodexConversationMeta("thread-interrupted", worktree.path),
-    });
-
-    const interruptedThread = makeThread({
-      id: "thread-interrupted",
-      cwd: worktree.path,
-      updatedAt: 301,
-      statusType: "idle",
-      source: "cli",
-      turns: [
-        makeTurn({
-          id: "turn-old",
-          status: "interrupted",
-          startedAt: 223,
-          items: [
-            {
-              type: "userMessage",
-              id: "user-old",
-              content: [{ type: "text", text: "Stop there" }],
-            },
-          ],
-        }),
-      ],
-    });
-    const appServer = new FakeCodexAppServer();
-    appServer.threads.set(interruptedThread.id, structuredClone(interruptedThread));
-
-    const service = new WorktreeConversationService({
-      appServer,
-      git: new FakeGitGateway(),
-      readMeta: async (path) => structuredClone(metaStore.get(path) ?? null),
-      writeMeta: async (path, meta) => {
-        metaStore.set(path, structuredClone(meta));
-      },
-    });
-
-    const result = await service.sendWorktreeMessage(worktree, "Continue from there");
-    expect(result).toEqual({
-      ok: true,
-      data: {
-        conversationId: "thread-interrupted",
-        turnId: "turn-created",
-        running: true,
-      },
-    });
-    expect(appServer.calls).toEqual([
-      "threadRead:thread-interrupted:false",
-      "threadRead:thread-interrupted:true",
-      "turnStart:thread-interrupted:Continue from there",
-    ]);
-  });
-
-  it("interrupts the active turn from the resolved thread", async () => {
-    const metaStore = new Map<string, WorktreeMeta>();
-    const worktree = makeWorktree();
-    const gitDir = `${worktree.path}/.git`;
-    metaStore.set(gitDir, {
-      ...makeMeta(),
-      conversation: makeCodexConversationMeta("thread-running", worktree.path),
-    });
-
-    const runningThread = makeThread({
-      id: "thread-running",
-      cwd: worktree.path,
-      updatedAt: 400,
-      statusType: "active",
-      source: "cli",
-      turns: [
-        makeTurn({
-          id: "turn-live",
-          status: "inProgress",
-          startedAt: 222,
-          items: [
-            {
-              type: "userMessage",
-              id: "user-live",
-              content: [{ type: "text", text: "Keep working" }],
-            },
-          ],
-        }),
-      ],
-    });
-    const appServer = new FakeCodexAppServer();
-    appServer.threads.set(runningThread.id, structuredClone(runningThread));
-
-    const service = new WorktreeConversationService({
-      appServer,
-      git: new FakeGitGateway(),
-      readMeta: async (path) => structuredClone(metaStore.get(path) ?? null),
-      writeMeta: async (path, meta) => {
-        metaStore.set(path, structuredClone(meta));
-      },
-    });
-
-    const result = await service.interruptWorktreeConversation(worktree);
-    expect(result).toEqual({
-      ok: true,
-      data: {
-        conversationId: "thread-running",
-        turnId: "turn-live",
-        interrupted: true,
-      },
-    });
-    expect(appServer.calls).toEqual([
-      "threadRead:thread-running:false",
-      "threadRead:thread-running:true",
-      "turnInterrupt:thread-running:turn-live",
-    ]);
-  });
 });

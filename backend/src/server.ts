@@ -19,6 +19,7 @@ import { log } from "./lib/log";
 import {
   attach,
   detach,
+  interruptPrompt,
   write,
   resize,
   selectPane,
@@ -33,7 +34,6 @@ import {
 import { loadControlToken } from "./adapters/control-token";
 import { ClaudeCliClient } from "./adapters/claude-cli";
 import { CodexAppServerClient } from "./adapters/codex-app-server";
-import { readWorktreeMeta } from "./adapters/fs";
 import { getDefaultProfileName, persistLocalLinearConfig, persistLocalGitHubConfig, type ProjectConfig } from "./adapters/config";
 import { jsonResponse, errorResponse } from "./lib/http";
 import { isRecord, isStringArray } from "./lib/type-guards";
@@ -53,24 +53,26 @@ import { startPrMonitor } from "./services/pr-service";
 import { startLinearAutoCreateMonitor, resetProcessedIssues } from "./services/linear-auto-create-service";
 import { runAutoRemove, type AutoRemoveDependencies } from "./services/auto-remove-service";
 import { pullMainBranch, forcePullMainBranch, startAutoPullMonitor } from "./services/auto-pull-service";
-import { buildAgentsUiBootstrap } from "./services/agents-ui-service";
 import {
   buildAgentsUiMessageDeltaEvent,
   readAgentsNotificationThreadId,
   shouldRefreshAgentsConversationSnapshot,
 } from "./services/agents-ui-stream-service";
+import { classifyAgentsTerminalWorktreeError } from "./services/agents-ui-action-service";
 import { buildProjectSnapshot } from "./services/snapshot-service";
 import { ClaudeConversationService } from "./services/claude-conversation-service";
 import { WorktreeConversationService } from "./services/worktree-conversation-service";
 import { parseRuntimeEvent } from "./domain/events";
 import type { CreateWorktreeAgentSelection } from "./domain/config";
 import type { AgentsUiConversationEvent, AgentsUiWorktreeConversationResponse } from "./domain/agents-ui";
-import type { ProjectSnapshot, WorktreeConversationMeta, WorktreeSnapshot } from "./domain/model";
+import type { ProjectSnapshot, WorktreeSnapshot } from "./domain/model";
 import { isValidBranchName, isValidWorktreeName } from "./domain/policies";
 import { createWebmuxRuntime } from "./runtime";
 
 const PORT = parseInt(Bun.env.PORT || "5111", 10);
 const STATIC_DIR = Bun.env.WEBMUX_STATIC_DIR || "";
+// Codex can read Enter before tmux has fully flushed pasted bytes into the pane PTY.
+const CODEX_TMUX_PROMPT_SUBMIT_DELAY_MS = 200;
 const runtime = createWebmuxRuntime({
   port: PORT,
   projectDir: Bun.env.WEBMUX_PROJECT_DIR || process.cwd(),
@@ -206,8 +208,6 @@ type WsOutboundMessage =
   | { type: "error"; message: string }
   | { type: "scrollback"; data: string };
 
-const AGENTS_WORKTREE_API_PREFIX = apiPaths.attachAgentsWorktreeConversation.split(":name")[0];
-
 function parseWsMessage(raw: string | Buffer): WsInboundMessage | null {
   try {
     const str = typeof raw === "string" ? raw : new TextDecoder().decode(raw);
@@ -293,40 +293,6 @@ function ensureBranchNotBusy(branch: string): void {
   ensureBranchNotCreating(branch);
 }
 
-function isAgentsApiPath(pathname: string): boolean {
-  return pathname === apiPaths.fetchAgentsBootstrap || pathname.startsWith(AGENTS_WORKTREE_API_PREFIX);
-}
-
-function withAgentsCors(response: Response): Response {
-  const headers = new Headers(response.headers);
-  headers.set("Access-Control-Allow-Origin", "*");
-  headers.set("Access-Control-Allow-Headers", "Content-Type");
-  headers.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
-}
-
-function agentsPreflightResponse(): Response {
-  return withAgentsCors(new Response(null, { status: 204 }));
-}
-
-function handleAgentsRoute(label: string, fn: () => Promise<Response>): Promise<Response> {
-  return catching(label, fn).then(withAgentsCors);
-}
-
-function handleAgentsWorktreeRoute(
-  req: ParamsRequest,
-  label: string,
-  fn: (name: string) => Promise<Response>,
-): Promise<Response> | Response {
-  const parsed = parseWorktreeNameParam(req.params);
-  if (!parsed.ok) return withAgentsCors(parsed.response);
-  return handleAgentsRoute(label, () => fn(parsed.data));
-}
-
 async function withRemovingBranch<T>(branch: string, fn: () => Promise<T>): Promise<T> {
   ensureBranchNotBusy(branch);
   removingBranches.add(branch);
@@ -361,6 +327,31 @@ async function resolveTerminalWorktree(branch: string): Promise<{
       windowName: state.session.windowName,
     },
   };
+}
+
+async function resolveAgentsTerminalWorktree(branch: string): Promise<{
+  ok: true;
+  data: {
+    worktreeId: string;
+    attachTarget: TerminalAttachTarget;
+  };
+} | {
+  ok: false;
+  response: Response;
+}> {
+  try {
+    return {
+      ok: true,
+      data: await resolveTerminalWorktree(branch),
+    };
+  } catch (error) {
+    const classified = classifyAgentsTerminalWorktreeError(error);
+    if (!classified) throw error;
+    return {
+      ok: false,
+      response: errorResponse(classified.error, classified.status),
+    };
+  }
 }
 
 async function apiGetNativeTerminalLaunch(branch: string): Promise<Response> {
@@ -467,26 +458,6 @@ async function apiGetWorktrees(): Promise<Response> {
   });
 }
 
-async function readAgentsConversations(snapshot: ProjectSnapshot): Promise<Map<string, WorktreeConversationMeta | null>> {
-  const entries = await Promise.all(snapshot.worktrees.map(async (worktree) => {
-    try {
-      const gitDir = git.resolveWorktreeGitDir(worktree.path);
-      const meta = await readWorktreeMeta(gitDir);
-      return [worktree.branch, meta?.conversation ?? null] as const;
-    } catch {
-      return [worktree.branch, null] as const;
-    }
-  }));
-  return new Map(entries);
-}
-
-async function apiGetAgentsBootstrap(): Promise<Response> {
-  touchDashboardActivity();
-  const snapshot = await readProjectSnapshot();
-  const conversations = await readAgentsConversations(snapshot);
-  return jsonResponse(buildAgentsUiBootstrap({ snapshot, conversations }));
-}
-
 function findSnapshotWorktree(snapshot: ProjectSnapshot, branch: string): WorktreeSnapshot | null {
   return snapshot.worktrees.find((worktree) => worktree.branch === branch) ?? null;
 }
@@ -546,26 +517,66 @@ async function apiSendAgentsWorktreeMessage(branch: string, req: Request): Promi
 
   const resolved = await resolveAgentsWorktree(branch);
   if (!resolved.ok) return resolved.response;
+  if (!resolved.worktree.mux) {
+    return errorResponse("Open this worktree in the main dashboard before sending messages here", 409);
+  }
 
-  const result = resolved.worktree.agentName === "claude"
-    ? await claudeConversationService.sendWorktreeMessage(resolved.worktree, parsed.data.text)
-    : await worktreeConversationService.sendWorktreeMessage(resolved.worktree, parsed.data.text);
-  return result.ok
-    ? jsonResponse(result.data)
-    : errorResponse(result.error, result.status);
+  const conversationResult = resolved.worktree.agentName === "claude"
+    ? await claudeConversationService.readWorktreeConversation(resolved.worktree)
+    : await worktreeConversationService.readWorktreeConversation(resolved.worktree);
+  if (!conversationResult.ok) {
+    return errorResponse(conversationResult.error, conversationResult.status);
+  }
+
+  const terminalWorktree = await resolveAgentsTerminalWorktree(branch);
+  if (!terminalWorktree.ok) return terminalWorktree.response;
+  const sendResult = await sendTerminalPrompt(
+    terminalWorktree.data.worktreeId,
+    terminalWorktree.data.attachTarget,
+    parsed.data.text,
+    0,
+    undefined,
+    resolved.worktree.agentName === "codex" ? CODEX_TMUX_PROMPT_SUBMIT_DELAY_MS : 0,
+  );
+  if (!sendResult.ok) {
+    return errorResponse(sendResult.error, 503);
+  }
+
+  // tmux send has no real turn id yet; history replaces this optimistic placeholder on refresh.
+  return jsonResponse({
+    conversationId: conversationResult.data.conversation.conversationId,
+    turnId: `tmux:${crypto.randomUUID()}`,
+    running: true,
+  });
 }
 
 async function apiInterruptAgentsWorktree(branch: string): Promise<Response> {
   touchDashboardActivity();
   const resolved = await resolveAgentsWorktree(branch);
   if (!resolved.ok) return resolved.response;
+  if (!resolved.worktree.mux) {
+    return errorResponse("Open this worktree in the main dashboard before interrupting it here", 409);
+  }
 
-  const result = resolved.worktree.agentName === "claude"
-    ? await claudeConversationService.interruptWorktreeConversation(resolved.worktree)
-    : await worktreeConversationService.interruptWorktreeConversation(resolved.worktree);
-  return result.ok
-    ? jsonResponse(result.data)
-    : errorResponse(result.error, result.status);
+  const conversationResult = resolved.worktree.agentName === "claude"
+    ? await claudeConversationService.readWorktreeConversation(resolved.worktree)
+    : await worktreeConversationService.readWorktreeConversation(resolved.worktree);
+  if (!conversationResult.ok) {
+    return errorResponse(conversationResult.error, conversationResult.status);
+  }
+
+  const terminalWorktree = await resolveAgentsTerminalWorktree(branch);
+  if (!terminalWorktree.ok) return terminalWorktree.response;
+  const interruptResult = await interruptPrompt(terminalWorktree.data.attachTarget, 0);
+  if (!interruptResult.ok) {
+    return errorResponse(interruptResult.error, 503);
+  }
+
+  return jsonResponse({
+    conversationId: conversationResult.data.conversation.conversationId,
+    turnId: conversationResult.data.conversation.activeTurnId ?? `tmux:${crypto.randomUUID()}`,
+    interrupted: true,
+  });
 }
 
 async function loadAgentsConversationSnapshot(
@@ -627,10 +638,7 @@ async function openAgentsSocket(
     data: snapshot.data,
   });
 
-  if (snapshot.data.conversation.provider === "claudeCode") {
-    data.unsubscribe = claudeConversationService.subscribe(data.branch, (event) => {
-      sendAgentsWs(ws, event);
-    });
+  if (snapshot.data.conversation.provider !== "codexAppServer") {
     return;
   }
 
@@ -1122,40 +1130,46 @@ Bun.serve({
       GET: () => catching("GET /api/project", () => apiGetProject()),
     },
 
-    [apiPaths.fetchAgentsBootstrap]: {
-      GET: () => handleAgentsRoute(`GET ${apiPaths.fetchAgentsBootstrap}`, () => apiGetAgentsBootstrap()),
-    },
-
     [apiPaths.attachAgentsWorktreeConversation]: {
-      POST: (req) => handleAgentsWorktreeRoute(
-        req,
-        `POST ${apiPaths.attachAgentsWorktreeConversation}`,
-        (name) => apiAttachAgentsWorktree(name),
-      ),
+      POST: (req) => {
+        const parsed = parseWorktreeNameParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        const name = parsed.data;
+        return catching(`POST ${apiPaths.attachAgentsWorktreeConversation}`, () => apiAttachAgentsWorktree(name));
+      },
     },
 
     [apiPaths.fetchAgentsWorktreeConversationHistory]: {
-      GET: (req) => handleAgentsWorktreeRoute(
-        req,
-        `GET ${apiPaths.fetchAgentsWorktreeConversationHistory}`,
-        (name) => apiGetAgentsWorktreeHistory(name),
-      ),
+      GET: (req) => {
+        const parsed = parseWorktreeNameParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        const name = parsed.data;
+        return catching(`GET ${apiPaths.fetchAgentsWorktreeConversationHistory}`, () => apiGetAgentsWorktreeHistory(name));
+      },
     },
 
     [apiPaths.sendAgentsWorktreeConversationMessage]: {
-      POST: (req) => handleAgentsWorktreeRoute(
-        req,
-        `POST ${apiPaths.sendAgentsWorktreeConversationMessage}`,
-        (name) => apiSendAgentsWorktreeMessage(name, req),
-      ),
+      POST: (req) => {
+        const parsed = parseWorktreeNameParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        const name = parsed.data;
+        return catching(
+          `POST ${apiPaths.sendAgentsWorktreeConversationMessage}`,
+          () => apiSendAgentsWorktreeMessage(name, req),
+        );
+      },
     },
 
     [apiPaths.interruptAgentsWorktreeConversation]: {
-      POST: (req) => handleAgentsWorktreeRoute(
-        req,
-        `POST ${apiPaths.interruptAgentsWorktreeConversation}`,
-        (name) => apiInterruptAgentsWorktree(name),
-      ),
+      POST: (req) => {
+        const parsed = parseWorktreeNameParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        const name = parsed.data;
+        return catching(
+          `POST ${apiPaths.interruptAgentsWorktreeConversation}`,
+          () => apiInterruptAgentsWorktree(name),
+        );
+      },
     },
 
     "/api/runtime/events": {
@@ -1289,10 +1303,6 @@ Bun.serve({
 
   async fetch(req) {
     const url = new URL(req.url);
-    if (req.method === "OPTIONS" && isAgentsApiPath(url.pathname)) {
-      return agentsPreflightResponse();
-    }
-
     // Static frontend files in production mode (fallback for unmatched routes)
     if (STATIC_DIR) {
       const rawPath = url.pathname === "/" ? "index.html" : url.pathname;

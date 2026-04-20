@@ -1,9 +1,9 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import type { AgentsUiConversationState, AgentsUiWorktreeSummary } from "../types";
+  import type { AgentsUiConversationState, WorktreeInfo } from "./types";
 
   interface Props {
-    worktree: AgentsUiWorktreeSummary;
+    worktree: WorktreeInfo;
     conversation: AgentsUiConversationState | null;
     conversationError: string | null;
     conversationLoading: boolean;
@@ -31,7 +31,9 @@
   }: Props = $props();
 
   const agentLabel = $derived(worktree.agentName === "claude" ? "Claude" : "Codex");
-  const chatAvailable = $derived(worktree.agentName === "codex" || worktree.agentName === "claude");
+  const supportsAgentChat = $derived(worktree.agentName === "codex" || worktree.agentName === "claude");
+  const chatAvailable = $derived(supportsAgentChat && worktree.mux === "✓");
+  const showInterrupt = $derived(chatAvailable && (conversation?.running ?? false));
   const canSend = $derived(
     chatAvailable
       && conversation !== null
@@ -50,8 +52,7 @@
   }
 
   function handleComposerKeydown(event: KeyboardEvent): void {
-    if (event.key !== "Enter") return;
-    if (event.shiftKey) return;
+    if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
     if (canSend) {
       onSend();
@@ -80,9 +81,23 @@
   });
 </script>
 
-{#if !chatAvailable}
+{#snippet interruptButton()}
+  <button
+    type="button"
+    class="rounded-md border border-danger px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger/10"
+    onclick={onInterrupt}
+  >
+    Interrupt
+  </button>
+{/snippet}
+
+{#if !supportsAgentChat}
   <div class="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted">
     Chat is not available for this worktree yet.
+  </div>
+{:else if !chatAvailable}
+  <div class="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted">
+    Open this worktree first to use chat.
   </div>
 {:else}
   <section class="flex min-h-0 flex-1 flex-col overflow-hidden bg-surface">
@@ -98,14 +113,8 @@
           >
             {conversation ? "Reconnect" : "Attach"}
           </button>
-          {#if conversation?.running}
-            <button
-              type="button"
-              class="rounded-md border border-danger px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger/10"
-              onclick={onInterrupt}
-            >
-              Interrupt
-            </button>
+          {#if showInterrupt}
+            {@render interruptButton()}
           {/if}
         </div>
       </div>
@@ -120,7 +129,7 @@
       <div bind:this={transcriptViewport} class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden pb-4 pr-1">
         {#if conversationLoading && !conversation}
           <div class="rounded-md border border-edge bg-topbar px-4 py-5 text-sm text-muted">
-            Connecting to the {agentLabel} session…
+            Connecting to the {agentLabel} session...
           </div>
         {:else if !conversation || conversation.messages.length === 0}
           <div class="rounded-md border border-edge bg-topbar px-4 py-5 text-sm text-muted">
@@ -167,14 +176,18 @@
           {conversation?.running ? "Wait for the current turn to finish" : "Enter to send, Shift+Enter for newline"}
         </div>
 
-        <button
-          type="button"
-          class="rounded-md border border-accent bg-accent px-4 py-2 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:border-edge disabled:bg-edge disabled:text-muted"
-          onclick={onSend}
-          disabled={!canSend}
-        >
-          {isSending ? "Sending..." : "Send"}
-        </button>
+        {#if showInterrupt && !conversationError}
+          {@render interruptButton()}
+        {:else}
+          <button
+            type="button"
+            class="rounded-md border border-accent bg-accent px-4 py-2 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:border-edge disabled:bg-edge disabled:text-muted"
+            onclick={onSend}
+            disabled={!canSend}
+          >
+            {isSending ? "Sending..." : "Send"}
+          </button>
+        {/if}
       </div>
     </div>
   </section>
