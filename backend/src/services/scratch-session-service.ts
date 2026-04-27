@@ -23,21 +23,22 @@ interface Deps {
   now?: () => string;
 }
 
+function buildSnapshot(meta: ScratchSessionMeta, byName: Map<string, { windowCount: number; attached: boolean }>): ScratchSessionSnapshot {
+  const summary = byName.get(meta.sessionName);
+  return {
+    ...meta,
+    windowCount: summary?.windowCount ?? 0,
+    attached: summary?.attached ?? false,
+  };
+}
+
 export function createScratchSessionService(deps: Deps): ScratchSessionService {
   const idGen = deps.idGenerator ?? randomUUID;
   const now = deps.now ?? (() => new Date().toISOString());
   const metas = new Map<string, ScratchSessionMeta>();
 
-  function buildSnapshot(meta: ScratchSessionMeta): ScratchSessionSnapshot {
-    const summary = deps.tmux.listAllSessions().find((s) => s.name === meta.sessionName);
-    return {
-      ...meta,
-      windowCount: summary?.windowCount ?? 0,
-      attached: summary?.attached ?? false,
-    };
-  }
-
   return {
+    // `create` is async because future scratch-with-agent variants will spawn and await an agent process.
     async create(input) {
       const id = idGen();
       const sessionName = `${SCRATCH_SESSION_PREFIX}${id}`;
@@ -55,7 +56,9 @@ export function createScratchSessionService(deps: Deps): ScratchSessionService {
       return meta;
     },
     list() {
-      return [...metas.values()].map(buildSnapshot);
+      const live = deps.tmux.listAllSessions();
+      const byName = new Map(live.map((s) => [s.name, { windowCount: s.windowCount, attached: s.attached }] as const));
+      return [...metas.values()].map((m) => buildSnapshot(m, byName));
     },
     remove(id) {
       const meta = metas.get(id);
