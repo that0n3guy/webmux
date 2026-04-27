@@ -480,7 +480,7 @@ export const ScratchSessionListResponseSchema = z.object({
 export const CreateScratchSessionRequestSchema = z.object({
   displayName: z.string().min(1).max(80),
   kind: ScratchSessionKindSchema,
-  agentId: z.string().nullable().optional(),
+  agentId: z.string().optional(),
 });
 
 export const CreateScratchSessionResponseSchema = z.object({

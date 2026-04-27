@@ -1350,7 +1350,7 @@ export function attachedBadge(s: ExternalTmuxSession | ScratchSessionSnapshot): 
       await onCreate({
         displayName: displayName.trim(),
         kind,
-        agentId: kind === "agent" ? agentId : null,
+        agentId: kind === "agent" ? agentId : undefined,
       });
       displayName = "";
       onClose();
