@@ -209,7 +209,22 @@ interface AgentsWsData {
   unsubscribe: (() => void) | null;
 }
 
-type WsData = TerminalWsData | AgentsWsData;
+interface ExternalTerminalWsData {
+  kind: "terminal-external";
+  sessionName: string;
+  attachId: string | null;
+  attached: boolean;
+}
+
+interface ScratchTerminalWsData {
+  kind: "terminal-scratch";
+  scratchId: string;
+  sessionName: string;
+  attachId: string | null;
+  attached: boolean;
+}
+
+type WsData = TerminalWsData | AgentsWsData | ExternalTerminalWsData | ScratchTerminalWsData;
 type ParamsRequest = Request & { params: Record<string, string> };
 
 type WsInboundMessage =
@@ -387,13 +402,10 @@ async function apiGetNativeTerminalLaunch(branch: string): Promise<Response> {
 }
 
 function getAttachedSessionId(
-  data: TerminalWsData,
+  data: TerminalWsData | ExternalTerminalWsData | ScratchTerminalWsData,
   ws: { readyState: number; send: (data: string) => void },
 ): string | null {
-  if (data.attached && data.attachId) {
-    return data.attachId;
-  }
-
+  if (data.attached && data.attachId) return data.attachId;
   sendWs(ws, { type: "error", message: "Terminal not attached" });
   return null;
 }
@@ -1305,6 +1317,32 @@ Bun.serve({
         : new Response("WebSocket upgrade failed", { status: 400 });
     },
 
+    "/ws/external/:sessionName": (req, server) => {
+      const sessionName = decodeURIComponent(req.params.sessionName);
+      return server.upgrade(req, {
+        data: { kind: "terminal-external", sessionName, attachId: null, attached: false },
+      })
+        ? undefined
+        : new Response("WebSocket upgrade failed", { status: 400 });
+    },
+
+    "/ws/scratch/:id": (req, server) => {
+      const id = decodeURIComponent(req.params.id);
+      const meta = scratchSessionService.list().find((s) => s.id === id);
+      if (!meta) return new Response("Scratch session not found", { status: 404 });
+      return server.upgrade(req, {
+        data: {
+          kind: "terminal-scratch",
+          scratchId: id,
+          sessionName: meta.sessionName,
+          attachId: null,
+          attached: false,
+        },
+      })
+        ? undefined
+        : new Response("WebSocket upgrade failed", { status: 400 });
+    },
+
     [apiPaths.fetchConfig]: {
       GET: () => jsonResponse(getFrontendConfig()),
     },
@@ -1567,8 +1605,12 @@ Bun.serve({
 
     open(ws) {
       const data = ws.data;
-      if (data.kind === "terminal") {
-        log.debug(`[ws] open branch=${data.branch}`);
+      if (data.kind === "terminal" || data.kind === "terminal-external" || data.kind === "terminal-scratch") {
+        const label =
+          data.kind === "terminal" ? data.branch :
+          data.kind === "terminal-external" ? data.sessionName :
+          `scratch:${data.scratchId}`;
+        log.debug(`[ws] open ${data.kind} target=${label}`);
         return;
       }
 
@@ -1588,7 +1630,6 @@ Bun.serve({
         sendWs(ws, { type: "error", message: "malformed message" });
         return;
       }
-      const { branch } = data;
 
       switch (msg.type) {
         case "input": {
@@ -1603,51 +1644,55 @@ Bun.serve({
           await sendKeys(attachId, msg.hexBytes);
           break;
         }
-        case "selectPane":
-          {
-            const attachId = getAttachedSessionId(data, ws);
-            if (!attachId) return;
-            log.debug(`[ws] selectPane pane=${msg.pane} branch=${branch} attachId=${attachId}`);
-            await selectPane(attachId, msg.pane);
-          }
+        case "selectPane": {
+          const attachId = getAttachedSessionId(data, ws);
+          if (!attachId) return;
+          log.debug(`[ws] selectPane pane=${msg.pane} kind=${data.kind} attachId=${attachId}`);
+          await selectPane(attachId, msg.pane);
           break;
+        }
         case "resize":
           if (!data.attached) {
-            // First resize = client reporting actual dimensions. Attach now.
             data.attached = true;
-            log.debug(`[ws] first resize (attaching) branch=${branch} cols=${msg.cols} rows=${msg.rows}`);
             try {
-              if (msg.initialPane !== undefined) {
-                log.debug(`[ws] initialPane=${msg.initialPane} branch=${branch}`);
+              let attachTarget: TerminalAttachTarget;
+              let attachIdPrefix: string;
+              if (data.kind === "terminal") {
+                const terminalWorktree = await resolveTerminalWorktree(data.branch);
+                attachTarget = terminalWorktree.attachTarget;
+                attachIdPrefix = terminalWorktree.worktreeId;
+                data.worktreeId = terminalWorktree.worktreeId;
+              } else if (data.kind === "terminal-external") {
+                const windowName = tmux.getFirstWindowName(data.sessionName);
+                if (!windowName) throw new Error(`tmux session not found: ${data.sessionName}`);
+                attachTarget = { ownerSessionName: data.sessionName, windowName };
+                attachIdPrefix = `external-${data.sessionName}`;
+              } else {
+                // terminal-scratch
+                const windowName = tmux.getFirstWindowName(data.sessionName);
+                if (!windowName) throw new Error(`scratch tmux session not found: ${data.sessionName}`);
+                attachTarget = { ownerSessionName: data.sessionName, windowName };
+                attachIdPrefix = `scratch-${data.scratchId}`;
               }
-              const terminalWorktree = await resolveTerminalWorktree(branch);
-              const attachId = `${terminalWorktree.worktreeId}:${randomUUID()}`;
-              data.worktreeId = terminalWorktree.worktreeId;
+
+              const attachId = `${attachIdPrefix}:${randomUUID()}`;
               data.attachId = attachId;
-              await attach(
-                attachId,
-                terminalWorktree.attachTarget,
-                msg.cols,
-                msg.rows,
-                msg.initialPane,
-              );
+              await attach(attachId, attachTarget, msg.cols, msg.rows, msg.initialPane);
               const { onData, onExit } = makeCallbacks(ws);
               setCallbacks(attachId, onData, onExit);
               const scrollback = getScrollback(attachId);
-              log.debug(
-                `[ws] attached branch=${branch} worktreeId=${terminalWorktree.worktreeId} attachId=${attachId} scrollback=${scrollback.length} bytes`,
-              );
+              log.debug(`[ws] attached kind=${data.kind} attachId=${attachId} scrollback=${scrollback.length} bytes`);
               if (scrollback.length > 0) {
                 sendWs(ws, { type: "scrollback", data: scrollback });
               }
             } catch (err: unknown) {
               const errMsg = err instanceof Error ? err.message : String(err);
               data.attached = false;
-              data.worktreeId = null;
               data.attachId = null;
-              log.error(`[ws] attach failed branch=${branch}: ${errMsg}`);
+              if (data.kind === "terminal") data.worktreeId = null;
+              log.error(`[ws] attach failed kind=${data.kind}: ${errMsg}`);
               sendWs(ws, { type: "error", message: errMsg });
-              ws.close(1011, errMsg.slice(0, 123)); // 1011 = Internal Error
+              ws.close(1011, errMsg.slice(0, 123));
             }
           } else {
             const attachId = getAttachedSessionId(data, ws);
@@ -1667,9 +1712,12 @@ Bun.serve({
         return;
       }
 
-      log.debug(
-        `[ws] close branch=${data.branch} code=${code} reason=${reason} attached=${data.attached} worktreeId=${data.worktreeId} attachId=${data.attachId}`,
-      );
+      const label =
+        data.kind === "terminal" ? `branch=${data.branch} worktreeId=${data.worktreeId}` :
+        data.kind === "terminal-external" ? `external=${data.sessionName}` :
+        `scratch=${data.scratchId} session=${data.sessionName}`;
+      log.debug(`[ws] close ${label} code=${code} reason=${reason} attached=${data.attached} attachId=${data.attachId}`);
+
       if (data.attachId) {
         clearCallbacks(data.attachId);
         await detach(data.attachId);
