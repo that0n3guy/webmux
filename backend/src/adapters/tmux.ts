@@ -106,6 +106,7 @@ export function parseWindowSummaries(output: string): TmuxWindowSummary[] {
     .filter((entry) => entry.sessionName.length > 0 && entry.windowName.length > 0);
 }
 
+export const WEBMUX_SESSION_PREFIX = "wm-";
 export const SCRATCH_SESSION_PREFIX = "wm-scratch-";
 
 export function parseSessionSummaries(output: string): TmuxSessionSummary[] {

@@ -1,7 +1,5 @@
-import type { TmuxSessionSummary } from "../adapters/tmux";
+import { type TmuxSessionSummary, WEBMUX_SESSION_PREFIX } from "../adapters/tmux";
 import type { ExternalTmuxSession } from "../domain/model";
-
-const WEBMUX_SESSION_PREFIX = "wm-";
 
 export function listExternalSessions(all: TmuxSessionSummary[]): ExternalTmuxSession[] {
   return all
