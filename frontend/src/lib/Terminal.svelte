@@ -5,14 +5,23 @@
   import { FitAddon } from "@xterm/addon-fit";
   import { WebLinksAddon } from "@xterm/addon-web-links";
   import { uploadFiles } from "./api";
+  import type { Selection } from "./types";
   import "@xterm/xterm/css/xterm.css";
 
-  let { worktree, isMobile = false, initialPane, terminalTheme }: {
-    worktree: string;
+  let { selection, isMobile = false, initialPane, terminalTheme }: {
+    selection: Selection;
     isMobile?: boolean;
     initialPane?: number;
     terminalTheme: ITheme;
   } = $props();
+
+  const wsPath = $derived(
+    selection.kind === "worktree"
+      ? `/ws/${encodeURIComponent(selection.branch)}`
+      : selection.kind === "external"
+        ? `/ws/external/${encodeURIComponent(selection.sessionName)}`
+        : `/ws/scratch/${encodeURIComponent(selection.id)}`
+  );
 
   const DISCONNECTED_NOTICE = "\r\n\x1b[90m[Disconnected]\x1b[0m";
   const RECONNECTED_NOTICE = "\r\n\x1b[32m[Reconnected]\x1b[0m";
@@ -220,8 +229,12 @@
   }
 
   async function uploadAndTypeFiles(files: File[]): Promise<void> {
+    if (selection.kind !== "worktree") {
+      // upload not supported for external/scratch sessions
+      return;
+    }
     try {
-      const result = await uploadFiles(worktree, files);
+      const result = await uploadFiles(selection.branch, files);
       const paths = result.files.map((f) => f.path).join(" ");
       sendInput(paths);
     } catch (err: unknown) {
@@ -261,7 +274,7 @@
   function connect(announceReconnect = false): void {
     if (destroyed || ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const nextWs = new WebSocket(`${protocol}//${location.host}/ws/${encodeURIComponent(worktree)}`);
+    const nextWs = new WebSocket(`${protocol}//${location.host}${wsPath}`);
     ws = nextWs;
 
     nextWs.onmessage = (event) => {

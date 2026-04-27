@@ -15,15 +15,20 @@
   import MobileChatSurface from "./lib/MobileChatSurface.svelte";
   import SidebarRepoRow from "./lib/SidebarRepoRow.svelte";
   import Toggle from "./lib/Toggle.svelte";
+  import SessionList from "./lib/SessionList.svelte";
+  import CreateScratchDialog from "./lib/CreateScratchDialog.svelte";
   import type {
     AvailableBranch,
     AppConfig,
     AppNotification,
     CreateWorktreeRequest,
     DiffDialogProps,
+    ExternalTmuxSession,
     PrEntry,
     LinearIssueAvailability,
     LinearIssue,
+    ScratchSessionSnapshot,
+    Selection,
     ToastInput,
     ToastItem,
     UiToastItem,
@@ -51,7 +56,15 @@
   import { getTheme } from "./lib/themes";
   import type { ThemeKey } from "./lib/themes";
   import { setToastController } from "./lib/toast-context";
-  import { api, fetchWorktrees, subscribeNotifications } from "./lib/api";
+  import {
+    api,
+    fetchWorktrees,
+    subscribeNotifications,
+    fetchExternalSessions,
+    fetchScratchSessions,
+    createScratchSession,
+    removeScratchSession,
+  } from "./lib/api";
 
   function createDefaultConfig(): AppConfig {
     return {
@@ -81,6 +94,11 @@
   let config = $state<AppConfig>(createDefaultConfig());
   let worktrees = $state<WorktreeInfo[]>([]);
   let selectedBranch = $state<string | null>(loadSavedSelectedWorktree());
+  let selectedExternalSession = $state<string | null>(null);
+  let selectedScratchSession = $state<{ id: string; sessionName: string } | null>(null);
+  let externalSessions = $state<ExternalTmuxSession[]>([]);
+  let scratchSessions = $state<ScratchSessionSnapshot[]>([]);
+  let showCreateScratchDialog = $state(false);
   let hasLoadedWorktrees = $state(false);
   let removeBranch = $state<string | null>(null);
   let mergeBranch = $state<string | null>(null);
@@ -300,6 +318,8 @@
 
     handleDismissToast(id);
     selectedBranch = toast.branch;
+    selectedExternalSession = null;
+    selectedScratchSession = null;
     notifiedBranches = new Set([...notifiedBranches].filter((branch) => branch !== toast.branch));
     if (isMobile) sidebarOpen = false;
   }
@@ -408,6 +428,15 @@
       ? worktrees.find((w) => w.branch === selectedBranch)
       : undefined,
   );
+  let selection = $derived<Selection | null>(
+    selectedScratchSession
+      ? { kind: "scratch", id: selectedScratchSession.id, sessionName: selectedScratchSession.sessionName }
+      : selectedExternalSession
+        ? { kind: "external", sessionName: selectedExternalSession }
+        : selectedBranch
+          ? { kind: "worktree", branch: selectedBranch }
+          : null
+  );
   let canConnect = $derived(!!selectedBranch && selectedWorktree?.mux === "✓" && !selectedWorktree?.creating);
   let showMobileChat = $derived(isMobile && canConnect && supportsWorktreeChat(selectedWorktree));
   let isSelectedOpening = $derived(selectedBranch ? openingBranches.has(selectedBranch) : false);
@@ -448,6 +477,8 @@
     if (!target) return;
     revealWorktreeInFilters(target.branch);
     selectedBranch = target.branch;
+    selectedExternalSession = null;
+    selectedScratchSession = null;
     if (isMobile) sidebarOpen = false;
   });
 
@@ -644,6 +675,8 @@
   function handleSelectWorktree(branch: string): void {
     revealWorktreeInFilters(branch);
     selectedBranch = branch;
+    selectedExternalSession = null;
+    selectedScratchSession = null;
     notifiedBranches = new Set([...notifiedBranches].filter((candidate) => candidate !== branch));
     if (isMobile) sidebarOpen = false;
   }
@@ -852,6 +885,53 @@
     terminalRef?.sendSelectPane(pane);
   }
 
+  async function refreshSessions() {
+    try {
+      const [ext, scr] = await Promise.all([fetchExternalSessions(), fetchScratchSessions()]);
+      externalSessions = ext;
+      scratchSessions = scr;
+    } catch (err: unknown) {
+      // best-effort polling — don't blow up the UI on transient errors
+      console.warn("refreshSessions failed", err);
+    }
+  }
+
+  async function handleCreateScratch(req: import("@webmux/api-contract").CreateScratchSessionRequest) {
+    const session = await createScratchSession(req);
+    scratchSessions = [...scratchSessions, session];
+    selectedExternalSession = null;
+    selectedBranch = null;
+    saveSelectedWorktree(null);
+    selectedScratchSession = { id: session.id, sessionName: session.sessionName };
+  }
+
+  async function handleRemoveScratch(id: string) {
+    await removeScratchSession(id);
+    scratchSessions = scratchSessions.filter((s) => s.id !== id);
+    if (selectedScratchSession?.id === id) {
+      selectedScratchSession = null;
+    }
+  }
+
+  function handleSelectExternal(name: string) {
+    selectedScratchSession = null;
+    selectedBranch = null;
+    saveSelectedWorktree(null);
+    selectedExternalSession = name;
+  }
+
+  function handleSelectScratch(id: string, sessionName: string) {
+    selectedExternalSession = null;
+    selectedBranch = null;
+    saveSelectedWorktree(null);
+    selectedScratchSession = { id, sessionName };
+  }
+
+  function handleSessionListSelect(sel: Selection) {
+    if (sel.kind === "external") handleSelectExternal(sel.sessionName);
+    else if (sel.kind === "scratch") handleSelectScratch(sel.id, sel.sessionName);
+  }
+
   onMount(() => {
     applyTheme(currentTheme);
     api
@@ -862,6 +942,8 @@
       .catch(() => {});
     refresh();
     refreshLinear();
+    void refreshSessions();
+    const sessionsPollHandle = setInterval(() => { void refreshSessions(); }, 5000);
     let intervalMs = pollIntervalMs;
     let interval: ReturnType<typeof setInterval> | undefined;
     window.addEventListener("keydown", handleKeydown);
@@ -926,6 +1008,7 @@
 
     return () => {
       if (interval) clearInterval(interval);
+      clearInterval(sessionsPollHandle);
       applyPollInterval = null;
       clearTimeout(idleTimer);
       document.removeEventListener("click", resetIdleTimer);
@@ -1035,6 +1118,23 @@
         }}
         onremove={(b) => (removeBranch = b)}
       />
+
+      <SessionList
+        {externalSessions}
+        {scratchSessions}
+        {selection}
+        onSelect={handleSessionListSelect}
+        onCreateScratch={() => { showCreateScratchDialog = true; }}
+        onRemoveScratch={handleRemoveScratch}
+      />
+
+      <CreateScratchDialog
+        open={showCreateScratchDialog}
+        agentChoices={config.agents.map((a) => ({ id: a.id, label: a.id }))}
+        onClose={() => { showCreateScratchDialog = false; }}
+        onCreate={handleCreateScratch}
+      />
+
       {#if config.projectDir}
         <SidebarRepoRow
           label={config.mainBranch ?? "main"}
@@ -1121,14 +1221,14 @@
       archiving={isSelectedArchiving}
     />
 
-    {#if showMobileChat}
+    {#if showMobileChat && selection?.kind === "worktree"}
       {#key selectedBranch}
         <MobileChatSurface worktree={selectedWorktree!} />
       {/key}
-    {:else if canConnect}
-      {#key selectedBranch}
+    {:else if selection && (selection.kind !== "worktree" || canConnect)}
+      {#key selection.kind === "worktree" ? selection.branch : selection.kind === "external" ? selection.sessionName : selection.id}
         <Terminal
-          worktree={selectedBranch!}
+          {selection}
           {isMobile}
           initialPane={isMobile ? activePane : undefined}
           {terminalTheme}
