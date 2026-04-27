@@ -1653,6 +1653,8 @@ Bun.serve({
         }
         case "resize":
           if (!data.attached) {
+            // Lazy attach: first resize carries initial dimensions. Mark attached
+            // before the async work so a re-entrant resize during attach is a no-op.
             data.attached = true;
             try {
               let attachTarget: TerminalAttachTarget;
