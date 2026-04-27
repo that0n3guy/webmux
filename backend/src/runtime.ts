@@ -12,6 +12,7 @@ import { NotificationService as RuntimeNotificationService } from "./services/no
 import { ProjectRuntime } from "./services/project-runtime";
 import { ReconciliationService } from "./services/reconciliation-service";
 import { WorktreeCreationTracker } from "./services/worktree-creation-service";
+import { createScratchSessionService, type ScratchSessionService } from "./services/scratch-session-service";
 
 export interface WebmuxRuntimeOptions {
   projectDir?: string;
@@ -35,6 +36,7 @@ export interface WebmuxRuntime {
   runtimeNotifications: RuntimeNotificationService;
   reconciliationService: ReconciliationService;
   lifecycleService: LifecycleService;
+  scratchSessionService: ScratchSessionService;
 }
 
 export function createWebmuxRuntime(options: WebmuxRuntimeOptions = {}): WebmuxRuntime {
@@ -79,6 +81,12 @@ export function createWebmuxRuntime(options: WebmuxRuntimeOptions = {}): WebmuxR
     },
   });
 
+  const scratchSessionService = createScratchSessionService({
+    tmux,
+    cwd: projectDir,
+  });
+  scratchSessionService.scan();
+
   return {
     port,
     projectDir,
@@ -95,5 +103,6 @@ export function createWebmuxRuntime(options: WebmuxRuntimeOptions = {}): WebmuxR
     runtimeNotifications,
     reconciliationService,
     lifecycleService,
+    scratchSessionService,
   };
 }

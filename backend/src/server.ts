@@ -7,6 +7,7 @@ import {
   AgentsSendMessageRequestSchema,
   apiPaths,
   AvailableBranchesQuerySchema,
+  CreateScratchSessionRequestSchema,
   CreateWorktreeRequestSchema,
   NotificationIdParamsSchema,
   PullMainRequestSchema,
@@ -17,6 +18,7 @@ import {
   UpsertCustomAgentRequestSchema,
   WorktreeNameParamsSchema,
 } from "@webmux/api-contract";
+import { listExternalSessions } from "./services/external-tmux-service";
 import { log } from "./lib/log";
 import {
   attach,
@@ -110,6 +112,7 @@ const claudeConversationService = new ClaudeConversationService({
 });
 const removingBranches = new Set<string>();
 const lifecycleService = runtime.lifecycleService;
+const scratchSessionService = runtime.scratchSessionService;
 let linearAutoCreateEnabled = config.integrations.linear.autoCreateWorktrees;
 let stopLinearAutoCreate: (() => void) | null = null;
 let autoRemoveOnMergeEnabled = config.integrations.github.autoRemoveOnMerge;
@@ -473,6 +476,39 @@ async function apiGetWorktrees(): Promise<Response> {
   return jsonResponse({
     worktrees: (await readProjectSnapshot()).worktrees,
   });
+}
+
+async function apiListExternalSessions(): Promise<Response> {
+  const all = tmux.listAllSessions();
+  const sessions = listExternalSessions(all);
+  return jsonResponse({ sessions });
+}
+
+async function apiListScratchSessions(): Promise<Response> {
+  return jsonResponse({ sessions: scratchSessionService.list() });
+}
+
+async function apiCreateScratchSession(req: Request): Promise<Response> {
+  const body = CreateScratchSessionRequestSchema.parse(await req.json());
+  const meta = await scratchSessionService.create({
+    displayName: body.displayName,
+    kind: body.kind,
+    agentId: body.agentId ?? null,
+  });
+  const snap = scratchSessionService.list().find((s) => s.id === meta.id);
+  if (!snap) throw new Error("scratch session created but not visible in list");
+  return jsonResponse({ session: snap }, 201);
+}
+
+async function apiRemoveScratchSession(id: string): Promise<Response> {
+  scratchSessionService.remove(id);
+  return jsonResponse({ ok: true });
+}
+
+function parseScratchSessionIdParam(params: Record<string, string>): { ok: true; data: string } | { ok: false; response: Response } {
+  const id = params.id;
+  if (!id || id.length === 0) return { ok: false, response: errorResponse("Missing scratch session id", 400) };
+  return { ok: true, data: id };
 }
 
 function findSnapshotWorktree(snapshot: ProjectSnapshot, branch: string): WorktreeSnapshot | null {
@@ -1351,6 +1387,23 @@ Bun.serve({
 
     "/api/runtime/events": {
       POST: (req) => catching("POST /api/runtime/events", () => apiRuntimeEvent(req)),
+    },
+
+    [apiPaths.fetchExternalSessions]: {
+      GET: () => catching("GET /api/external-sessions", () => apiListExternalSessions()),
+    },
+
+    [apiPaths.fetchScratchSessions]: {
+      GET: () => catching("GET /api/scratch-sessions", () => apiListScratchSessions()),
+      POST: (req) => catching("POST /api/scratch-sessions", () => apiCreateScratchSession(req)),
+    },
+
+    [apiPaths.removeScratchSession]: {
+      DELETE: (req) => {
+        const parsed = parseScratchSessionIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("DELETE /api/scratch-sessions/:id", () => apiRemoveScratchSession(parsed.data));
+      },
     },
 
     [apiPaths.fetchWorktrees]: {
