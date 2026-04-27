@@ -222,3 +222,9 @@ export interface NativeTerminalLaunch {
   path: string;
   shellCommand: string;
 }
+
+export interface ExternalTmuxSession {
+  name: string;
+  windowCount: number;
+  attached: boolean;
+}
