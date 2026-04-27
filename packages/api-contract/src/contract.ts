@@ -31,6 +31,11 @@ import {
   WorktreeNameParamsSchema,
   NotificationIdParamsSchema,
   LinearIssuesResponseSchema,
+  ExternalTmuxSessionListResponseSchema,
+  ScratchSessionListResponseSchema,
+  CreateScratchSessionRequestSchema,
+  CreateScratchSessionResponseSchema,
+  ScratchSessionIdParamsSchema,
 } from "./schemas";
 
 const c = initContract();
@@ -65,6 +70,10 @@ export const apiPaths = {
   pullMain: "/api/pull-main",
   fetchCiLogs: "/api/ci-logs/:runId",
   dismissNotification: "/api/notifications/:id/dismiss",
+  fetchExternalSessions: "/api/external-sessions",
+  fetchScratchSessions: "/api/scratch-sessions",
+  createScratchSession: "/api/scratch-sessions",
+  removeScratchSession: "/api/scratch-sessions/:id",
 } as const;
 
 const commonErrorResponses = {
@@ -344,6 +353,41 @@ export const apiContract = c.router({
       200: OkResponseSchema,
       400: ErrorResponseSchema,
       404: ErrorResponseSchema,
+    },
+  },
+  fetchExternalSessions: {
+    method: "GET",
+    path: apiPaths.fetchExternalSessions,
+    responses: {
+      200: ExternalTmuxSessionListResponseSchema,
+      500: ErrorResponseSchema,
+    },
+  },
+  fetchScratchSessions: {
+    method: "GET",
+    path: apiPaths.fetchScratchSessions,
+    responses: {
+      200: ScratchSessionListResponseSchema,
+      500: ErrorResponseSchema,
+    },
+  },
+  createScratchSession: {
+    method: "POST",
+    path: apiPaths.createScratchSession,
+    body: CreateScratchSessionRequestSchema,
+    responses: {
+      201: CreateScratchSessionResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  removeScratchSession: {
+    method: "DELETE",
+    path: apiPaths.removeScratchSession,
+    pathParams: ScratchSessionIdParamsSchema,
+    body: c.noBody(),
+    responses: {
+      200: OkResponseSchema,
+      ...commonErrorResponses,
     },
   },
 }, {

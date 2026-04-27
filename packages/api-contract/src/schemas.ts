@@ -445,6 +445,50 @@ export const RunIdParamsSchema = z.object({
   runId: NumberLikePathParamSchema,
 });
 
+// ---------------------------------------------------------------------------
+// Non-worktree sessions: external tmux + scratch
+// ---------------------------------------------------------------------------
+
+export const ExternalTmuxSessionSchema = z.object({
+  name: z.string(),
+  windowCount: z.number().int().nonnegative(),
+  attached: z.boolean(),
+});
+
+export const ExternalTmuxSessionListResponseSchema = z.object({
+  sessions: z.array(ExternalTmuxSessionSchema),
+});
+
+export const ScratchSessionKindSchema = z.enum(["shell", "agent"]);
+
+export const ScratchSessionSnapshotSchema = z.object({
+  id: z.string(),
+  displayName: z.string(),
+  sessionName: z.string(),
+  kind: ScratchSessionKindSchema,
+  agentId: z.string().nullable(),
+  cwd: z.string(),
+  createdAt: z.string(),
+  windowCount: z.number().int().nonnegative(),
+  attached: z.boolean(),
+});
+
+export const ScratchSessionListResponseSchema = z.object({
+  sessions: z.array(ScratchSessionSnapshotSchema),
+});
+
+export const CreateScratchSessionRequestSchema = z.object({
+  displayName: z.string().min(1).max(80),
+  kind: ScratchSessionKindSchema,
+  agentId: z.string().nullable().optional(),
+});
+
+export const CreateScratchSessionResponseSchema = z.object({
+  session: ScratchSessionSnapshotSchema,
+});
+
+export const ScratchSessionIdParamsSchema = z.object({ id: z.string().min(1) });
+
 export type BuiltInAgentId = z.infer<typeof BuiltInAgentIdSchema>;
 export type AgentId = z.infer<typeof AgentIdSchema>;
 export type AgentKind = z.infer<typeof AgentKindSchema>;
@@ -511,3 +555,10 @@ export type CiLogsResponse = z.infer<typeof CiLogsResponseSchema>;
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 export type OkResponse = z.infer<typeof OkResponseSchema>;
 export type EnabledResponse = z.infer<typeof EnabledResponseSchema>;
+export type ExternalTmuxSession = z.infer<typeof ExternalTmuxSessionSchema>;
+export type ExternalTmuxSessionListResponse = z.infer<typeof ExternalTmuxSessionListResponseSchema>;
+export type ScratchSessionKind = z.infer<typeof ScratchSessionKindSchema>;
+export type ScratchSessionSnapshot = z.infer<typeof ScratchSessionSnapshotSchema>;
+export type ScratchSessionListResponse = z.infer<typeof ScratchSessionListResponseSchema>;
+export type CreateScratchSessionRequest = z.infer<typeof CreateScratchSessionRequestSchema>;
+export type CreateScratchSessionResponse = z.infer<typeof CreateScratchSessionResponseSchema>;
