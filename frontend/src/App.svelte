@@ -101,6 +101,7 @@
   let showCreateScratchDialog = $state(false);
   let hasLoadedWorktrees = $state(false);
   let removeBranch = $state<string | null>(null);
+  let scratchToRemove = $state<{ id: string; displayName: string } | null>(null);
   let mergeBranch = $state<string | null>(null);
   let removingBranches = $state<Set<string>>(new Set());
   let showCreateDialog = $state(false);
@@ -907,12 +908,19 @@
     selectedScratchSession = { id: session.id, sessionName: session.sessionName };
   }
 
-  async function handleRemoveScratch(id: string) {
-    await removeScratchSession(id);
-    scratchSessions = scratchSessions.filter((s) => s.id !== id);
-    if (selectedScratchSession?.id === id) {
+  function handleRemoveScratch(id: string, displayName: string) {
+    scratchToRemove = { id, displayName };
+  }
+
+  async function confirmRemoveScratch() {
+    const target = scratchToRemove;
+    if (!target) return;
+    await removeScratchSession(target.id);
+    scratchSessions = scratchSessions.filter((s) => s.id !== target.id);
+    if (selectedScratchSession?.id === target.id) {
       selectedScratchSession = null;
     }
+    scratchToRemove = null;
   }
 
   function handleSelectExternal(name: string) {
@@ -1316,6 +1324,14 @@
     message={`Remove worktree "${removeBranch}"? This action cannot be undone.`}
     onconfirm={handleRemove}
     oncancel={() => (removeBranch = null)}
+  />
+{/if}
+
+{#if scratchToRemove}
+  <ConfirmDialog
+    message={`Remove scratch session "${scratchToRemove.displayName}"? The tmux session will be killed.`}
+    onconfirm={() => { void confirmRemoveScratch(); }}
+    oncancel={() => (scratchToRemove = null)}
   />
 {/if}
 

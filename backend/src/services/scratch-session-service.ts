@@ -21,6 +21,7 @@ interface Deps {
   cwd: string;
   idGenerator?: () => string;
   now?: () => string;
+  getAgentLaunchCommand?: (agentId: string) => string | null;
 }
 
 function buildSnapshot(meta: ScratchSessionMeta, byName: Map<string, { windowCount: number; attached: boolean }>): ScratchSessionSnapshot {
@@ -52,6 +53,12 @@ export function createScratchSessionService(deps: Deps): ScratchSessionService {
         createdAt: now(),
       };
       deps.tmux.ensureSession(sessionName, deps.cwd);
+      if (input.kind === "agent" && input.agentId && deps.getAgentLaunchCommand) {
+        const cmd = deps.getAgentLaunchCommand(input.agentId);
+        if (cmd) {
+          deps.tmux.runCommand(sessionName, cmd);
+        }
+      }
       metas.set(id, meta);
       return meta;
     },

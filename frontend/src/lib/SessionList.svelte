@@ -15,7 +15,7 @@
     selection: Selection | null;
     onSelect: (sel: Selection) => void;
     onCreateScratch: () => void;
-    onRemoveScratch: (id: string) => void;
+    onRemoveScratch: (id: string, displayName: string) => void;
   } = $props();
 
   let externalSorted = $derived(sortByName(externalSessions));
@@ -51,7 +51,7 @@
             type="button"
             class="ml-2 opacity-50 hover:opacity-100"
             aria-label="Remove scratch session"
-            onclick={(e) => { e.stopPropagation(); onRemoveScratch(s.id); }}
+            onclick={(e) => { e.stopPropagation(); onRemoveScratch(s.id, s.displayName); }}
           >×</button>
         </li>
       {/each}

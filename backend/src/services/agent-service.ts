@@ -161,6 +161,14 @@ function buildDockerExecCommand(
   return `docker exec -it -w ${quoteShell(worktreePath)} ${quoteShell(containerName)} /bin/sh -c ${quoteShell(command)}`;
 }
 
+export function buildBareAgentInvocation(agent: AgentDefinition, opts: { cwd: string }): string {
+  if (agent.kind === "builtin") {
+    return buildBuiltInAgentInvocation({ agent: agent.implementation.agent });
+  }
+  const rendered = renderCustomCommandTemplate(agent.implementation.config.startCommand);
+  return `WEBMUX_AGENT_PROMPT='' WEBMUX_AGENT_SYSTEM_PROMPT='' WEBMUX_AGENT_WORKTREE_PATH=${quoteShell(opts.cwd)} WEBMUX_AGENT_REPO_PATH=${quoteShell(opts.cwd)} WEBMUX_AGENT_BRANCH='' WEBMUX_AGENT_PROFILE='' ${rendered}`;
+}
+
 export function buildManagedShellCommand(
   runtimeEnvPath: string,
   shellPath = Bun.env.SHELL || "/bin/bash",

@@ -13,6 +13,8 @@ import { ProjectRuntime } from "./services/project-runtime";
 import { ReconciliationService } from "./services/reconciliation-service";
 import { WorktreeCreationTracker } from "./services/worktree-creation-service";
 import { createScratchSessionService, type ScratchSessionService } from "./services/scratch-session-service";
+import { buildBareAgentInvocation } from "./services/agent-service";
+import { getAgentDefinition } from "./services/agent-registry";
 
 export interface WebmuxRuntimeOptions {
   projectDir?: string;
@@ -84,6 +86,11 @@ export function createWebmuxRuntime(options: WebmuxRuntimeOptions = {}): WebmuxR
   const scratchSessionService = createScratchSessionService({
     tmux,
     cwd: projectDir,
+    getAgentLaunchCommand: (agentId) => {
+      const agent = getAgentDefinition(config, agentId);
+      if (!agent) return null;
+      return buildBareAgentInvocation(agent, { cwd: projectDir });
+    },
   });
   scratchSessionService.scan();
 

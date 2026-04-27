@@ -125,4 +125,34 @@ describe("scratch-session-service", () => {
     expect(svc.getBySessionName("wm-scratch-abc")?.id).toBe("abc");
     expect(svc.getBySessionName("does-not-exist")).toBeNull();
   });
+
+  test("create with kind=agent runs the agent launch command", async () => {
+    const { gw, state } = makeFakeGateway();
+    const svc = createScratchSessionService({
+      tmux: gw,
+      cwd: "/tmp",
+      idGenerator: () => "abc",
+      now: () => "2026-04-27T15:00:00Z",
+      getAgentLaunchCommand: (agentId) => agentId === "claude" ? "claude --bare" : null,
+    });
+
+    await svc.create({ displayName: "agent-one", kind: "agent", agentId: "claude" });
+
+    expect(state.commands.some((c) => c === "runCommand wm-scratch-abc claude --bare")).toBe(true);
+  });
+
+  test("create with kind=shell does NOT run an agent launch command", async () => {
+    const { gw, state } = makeFakeGateway();
+    const svc = createScratchSessionService({
+      tmux: gw,
+      cwd: "/tmp",
+      idGenerator: () => "xyz",
+      now: () => "2026-04-27T15:00:00Z",
+      getAgentLaunchCommand: () => "should-not-run",
+    });
+
+    await svc.create({ displayName: "shell-one", kind: "shell", agentId: null });
+
+    expect(state.commands.some((c) => c.startsWith("runCommand"))).toBe(false);
+  });
 });
