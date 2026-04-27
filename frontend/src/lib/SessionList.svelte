@@ -41,8 +41,8 @@
     <ul>
       {#each scratchSorted as s (s.id)}
         <li
-          class="flex items-center justify-between px-3 py-1.5 cursor-pointer hover:bg-[var(--color-bg-3)]"
-          class:bg-[var(--color-bg-3)]={isScratchSelected(s.id)}
+          class="flex items-center justify-between px-3 py-1.5 cursor-pointer hover:bg-hover"
+          class:bg-hover={isScratchSelected(s.id)}
           onclick={() => onSelect({ kind: "scratch", id: s.id, sessionName: s.sessionName })}
         >
           <span class="flex-1 truncate">{s.displayName}</span>
@@ -68,8 +68,8 @@
     <ul>
       {#each externalSorted as s (s.name)}
         <li
-          class="flex items-center justify-between px-3 py-1.5 cursor-pointer hover:bg-[var(--color-bg-3)]"
-          class:bg-[var(--color-bg-3)]={isExternalSelected(s.name)}
+          class="flex items-center justify-between px-3 py-1.5 cursor-pointer hover:bg-hover"
+          class:bg-hover={isExternalSelected(s.name)}
           onclick={() => onSelect({ kind: "external", sessionName: s.name })}
         >
           <span class="flex-1 truncate">{s.name}</span>

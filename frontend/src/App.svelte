@@ -456,6 +456,8 @@
   );
 
   $effect(() => {
+    // Don't auto-select a worktree while a non-worktree session is active
+    if (selectedExternalSession || selectedScratchSession) return;
     const nextSelectedBranch = resolveSelectedBranch(
       selectedBranch,
       trimmedWorktreeSearch ? selectedWorktree : selectedVisibleWorktree,
