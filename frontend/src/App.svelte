@@ -1130,12 +1130,13 @@
         onRemoveScratch={handleRemoveScratch}
       />
 
-      <CreateScratchDialog
-        open={showCreateScratchDialog}
-        agentChoices={config.agents.map((a) => ({ id: a.id, label: a.id }))}
-        onClose={() => { showCreateScratchDialog = false; }}
-        onCreate={handleCreateScratch}
-      />
+      {#if showCreateScratchDialog}
+        <CreateScratchDialog
+          agentChoices={config.agents.map((a) => ({ id: a.id, label: a.id }))}
+          onClose={() => { showCreateScratchDialog = false; }}
+          onCreate={handleCreateScratch}
+        />
+      {/if}
 
       {#if config.projectDir}
         <SidebarRepoRow
