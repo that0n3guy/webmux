@@ -1,4 +1,5 @@
 import { AgentsUiConversationEventSchema, apiPaths, createApi } from "@webmux/api-contract";
+import type { CreateScratchSessionRequest } from "@webmux/api-contract";
 import type {
   AgentDetails,
   AgentResponse,
@@ -8,8 +9,10 @@ import type {
   AgentsUiSendMessageResponse,
   AgentsUiWorktreeConversationResponse,
   AppNotification,
+  ExternalTmuxSession,
   FileUploadResult,
   ProjectWorktreeSnapshot,
+  ScratchSessionSnapshot,
   UpsertCustomAgentRequest,
   ValidateCustomAgentResponse,
   WorktreeInfo,
@@ -200,9 +203,6 @@ export async function uploadFiles(worktree: string, files: File[]): Promise<File
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data as FileUploadResult;
 }
-
-import type { CreateScratchSessionRequest } from "@webmux/api-contract";
-import type { ExternalTmuxSession, ScratchSessionSnapshot } from "./types";
 
 export async function fetchExternalSessions(): Promise<ExternalTmuxSession[]> {
   const r = await api.fetchExternalSessions();
