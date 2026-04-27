@@ -200,3 +200,25 @@ export async function uploadFiles(worktree: string, files: File[]): Promise<File
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data as FileUploadResult;
 }
+
+import type { CreateScratchSessionRequest } from "@webmux/api-contract";
+import type { ExternalTmuxSession, ScratchSessionSnapshot } from "./types";
+
+export async function fetchExternalSessions(): Promise<ExternalTmuxSession[]> {
+  const r = await api.fetchExternalSessions();
+  return r.sessions;
+}
+
+export async function fetchScratchSessions(): Promise<ScratchSessionSnapshot[]> {
+  const r = await api.fetchScratchSessions();
+  return r.sessions;
+}
+
+export async function createScratchSession(body: CreateScratchSessionRequest): Promise<ScratchSessionSnapshot> {
+  const r = await api.createScratchSession({ body });
+  return r.session;
+}
+
+export async function removeScratchSession(id: string): Promise<void> {
+  await api.removeScratchSession({ params: { id } });
+}

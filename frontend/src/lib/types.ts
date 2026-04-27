@@ -1,8 +1,11 @@
 import type {
   AgentId,
   BuiltInAgentId,
+  ExternalTmuxSession,
   LinkedLinearIssue,
   PrEntry,
+  ScratchSessionKind,
+  ScratchSessionSnapshot,
   ServiceStatus,
   WorktreeCreationPhase,
 } from "@webmux/api-contract";
@@ -58,6 +61,13 @@ export type {
   WorktreeListResponse,
 } from "@webmux/api-contract";
 export type { AgentsSendMessageRequest as AgentsUiSendMessageRequest } from "@webmux/api-contract";
+
+export type { ExternalTmuxSession, ScratchSessionSnapshot, ScratchSessionKind };
+
+export type Selection =
+  | { kind: "worktree"; branch: string }
+  | { kind: "external"; sessionName: string }
+  | { kind: "scratch"; id: string; sessionName: string };
 
 export interface FileUploadResult {
   files: Array<{ path: string }>;
