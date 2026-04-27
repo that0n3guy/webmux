@@ -20,6 +20,7 @@ export interface TmuxGateway {
   ensureSession(sessionName: string, cwd: string): void;
   hasWindow(sessionName: string, windowName: string): boolean;
   killWindow(sessionName: string, windowName: string): void;
+  killSession(sessionName: string): void;
   createWindow(opts: {
     sessionName: string;
     windowName: string;
@@ -157,6 +158,13 @@ export class BunTmuxGateway implements TmuxGateway {
     const result = runTmux(["kill-window", "-t", `${sessionName}:${windowName}`]);
     if (result.exitCode !== 0 && !isIgnorableKillWindowError(result.stderr)) {
       throw new Error(`kill tmux window ${sessionName}:${windowName} failed: ${result.stderr}`);
+    }
+  }
+
+  killSession(sessionName: string): void {
+    const result = runTmux(["kill-session", "-t", sessionName]);
+    if (result.exitCode !== 0 && !result.stderr.includes("can't find session") && !result.stderr.includes("no server running")) {
+      throw new Error(`kill tmux session ${sessionName} failed: ${result.stderr}`);
     }
   }
 

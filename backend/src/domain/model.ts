@@ -228,3 +228,27 @@ export interface ExternalTmuxSession {
   windowCount: number;
   attached: boolean;
 }
+
+export type ScratchSessionKind = "shell" | "agent";
+
+export interface ScratchSessionMeta {
+  id: string;
+  displayName: string;
+  sessionName: string;        // tmux session name, e.g., "wm-scratch-abc123"
+  kind: ScratchSessionKind;
+  agentId: string | null;     // present when kind === "agent"
+  cwd: string;
+  createdAt: string;
+}
+
+export interface ScratchSessionSnapshot {
+  id: string;
+  displayName: string;
+  sessionName: string;
+  kind: ScratchSessionKind;
+  agentId: string | null;
+  cwd: string;
+  createdAt: string;
+  windowCount: number;
+  attached: boolean;
+}
