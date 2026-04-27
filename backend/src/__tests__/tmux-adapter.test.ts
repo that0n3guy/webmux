@@ -1,13 +1,35 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildProjectSessionName,
   buildWorktreeWindowName,
+  parseSessionSummaries,
   parseWindowSummaries,
   sanitizeTmuxNameSegment,
 } from "../adapters/tmux";
+
+test("parseSessionSummaries: parses three sessions including attached and grouped", () => {
+  const raw = [
+    "mcpsaa\t1\t1\t",
+    "wm-webmux-test-f01fb94b\t2\t0\twm-webmux-test-f01fb94b",
+    "wm-dash-3100-7\t2\t1\twm-webmux-test-f01fb94b",
+  ].join("\n");
+
+  const out = parseSessionSummaries(raw);
+  expect(out).toEqual([
+    { name: "mcpsaa", windowCount: 1, attached: true, group: null },
+    { name: "wm-webmux-test-f01fb94b", windowCount: 2, attached: false, group: "wm-webmux-test-f01fb94b" },
+    { name: "wm-dash-3100-7", windowCount: 2, attached: true, group: "wm-webmux-test-f01fb94b" },
+  ]);
+});
+
+test("parseSessionSummaries: skips blank lines and malformed rows", () => {
+  const raw = "\nfoo\t1\t0\t\n\n";
+  const out = parseSessionSummaries(raw);
+  expect(out).toEqual([{ name: "foo", windowCount: 1, attached: false, group: null }]);
+});
 
 const isolatedTmuxScriptPath = new URL("../../../scripts/run-with-isolated-tmux.sh", import.meta.url).pathname;
 

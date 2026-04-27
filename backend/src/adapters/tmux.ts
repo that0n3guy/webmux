@@ -8,6 +8,13 @@ export interface TmuxWindowSummary {
   paneCount: number;
 }
 
+export interface TmuxSessionSummary {
+  name: string;
+  windowCount: number;
+  attached: boolean;
+  group: string | null;
+}
+
 export interface TmuxGateway {
   ensureServer(): void;
   ensureSession(sessionName: string, cwd: string): void;
@@ -30,6 +37,8 @@ export interface TmuxGateway {
   runCommand(target: string, command: string): void;
   selectPane(target: string): void;
   listWindows(): TmuxWindowSummary[];
+  listAllSessions(): TmuxSessionSummary[];
+  getFirstWindowName(sessionName: string): string | null;
 }
 
 function runTmux(args: string[]): { stdout: string; stderr: string; exitCode: number } {
@@ -95,6 +104,25 @@ export function parseWindowSummaries(output: string): TmuxWindowSummary[] {
       };
     })
     .filter((entry) => entry.sessionName.length > 0 && entry.windowName.length > 0);
+}
+
+export const SCRATCH_SESSION_PREFIX = "wm-scratch-";
+
+export function parseSessionSummaries(output: string): TmuxSessionSummary[] {
+  return output
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .map((line) => {
+      const [name = "", windowCountRaw = "0", attachedRaw = "0", group = ""] = line.split("\t");
+      return {
+        name,
+        windowCount: parseInt(windowCountRaw, 10) || 0,
+        attached: attachedRaw === "1",
+        group: group.length > 0 ? group : null,
+      };
+    })
+    .filter((entry) => entry.name.length > 0);
 }
 
 export class BunTmuxGateway implements TmuxGateway {
@@ -177,5 +205,26 @@ export class BunTmuxGateway implements TmuxGateway {
       "list tmux windows",
     );
     return parseWindowSummaries(output);
+  }
+
+  listAllSessions(): TmuxSessionSummary[] {
+    const result = runTmux([
+      "list-sessions",
+      "-F",
+      "#{session_name}\t#{session_windows}\t#{session_attached}\t#{session_group}",
+    ]);
+    if (result.exitCode !== 0) {
+      // No tmux server → no sessions, not an error.
+      if (result.stderr.includes("no server running")) return [];
+      throw new Error(`list tmux sessions failed: ${result.stderr}`);
+    }
+    return parseSessionSummaries(result.stdout);
+  }
+
+  getFirstWindowName(sessionName: string): string | null {
+    const result = runTmux(["list-windows", "-t", sessionName, "-F", "#{window_name}"]);
+    if (result.exitCode !== 0) return null;
+    const first = result.stdout.split("\n")[0]?.trim();
+    return first && first.length > 0 ? first : null;
   }
 }
