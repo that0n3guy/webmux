@@ -18,7 +18,6 @@ import {
   UpsertCustomAgentRequestSchema,
   WorktreeNameParamsSchema,
 } from "@webmux/api-contract";
-import { listExternalSessions } from "./services/external-tmux-service";
 import { log } from "./lib/log";
 import {
   attach,
@@ -50,6 +49,7 @@ import { jsonResponse, errorResponse } from "./lib/http";
 import { isRecord, isStringArray } from "./lib/type-guards";
 import { parseJsonBody, parseParams, parseQuery } from "./api-validation";
 import { hasRecentDashboardActivity, touchDashboardActivity } from "./services/dashboard-activity";
+import { listExternalSessions } from "./services/external-tmux-service";
 import { buildArchivedWorktreePathSet, normalizeArchivePath } from "./services/archive-service";
 import { resolveAgentChatSupport } from "./services/agent-chat-service";
 import { validateCustomAgentInput } from "./services/agent-validation-service";
