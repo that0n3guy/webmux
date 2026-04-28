@@ -901,14 +901,17 @@
     if (!openWithMenuOpen) return;
     function onClickOutside(): void { openWithMenuOpen = false; }
     function onScroll(): void { openWithMenuOpen = false; }
+    function onResize(): void { openWithMenuOpen = false; }
     const timer = setTimeout(() => {
       window.addEventListener("click", onClickOutside, { once: true });
       document.addEventListener("scroll", onScroll, { capture: true, once: true });
+      window.addEventListener("resize", onResize);
     }, 0);
     return () => {
       clearTimeout(timer);
       window.removeEventListener("click", onClickOutside);
       document.removeEventListener("scroll", onScroll, { capture: true } as EventListenerOptions);
+      window.removeEventListener("resize", onResize);
     };
   });
 
@@ -1485,22 +1488,25 @@
               style:left="{openWithMenuLeft}px"
               style="transform: translateX(-50%);"
               role="menu"
+              aria-label="Open session with…"
             >
               {#if config.agents.length > 0}
-                <div class="px-3 py-1 text-[11px] text-muted uppercase tracking-wide">Open with another agent</div>
-                {#each config.agents as agent (agent.id)}
-                  {@const isDefault = agent.id === selectedWorktree.agentName}
-                  <button
-                    type="button"
-                    class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-hover disabled:opacity-50 disabled:cursor-not-allowed"
-                    onclick={() => { void openSelectedWorktreeWith({ agentOverride: agent.id }); }}
-                    disabled={isDefault}
-                    role="menuitem"
-                  >
-                    {agent.label}
-                    {#if isDefault}<span class="ml-1 text-muted text-[11px]">(default)</span>{/if}
-                  </button>
-                {/each}
+                <div role="group" aria-label="Open with another agent">
+                  <div class="px-3 py-1 text-[11px] uppercase tracking-wider text-muted/70">Open with another agent</div>
+                  {#each config.agents as agent (agent.id)}
+                    {@const isDefault = agent.id === selectedWorktree.agentName}
+                    <button
+                      type="button"
+                      class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-hover disabled:opacity-50 disabled:cursor-not-allowed"
+                      onclick={() => { void openSelectedWorktreeWith({ agentOverride: agent.id }); }}
+                      disabled={isDefault}
+                      role="menuitem"
+                    >
+                      {agent.label}
+                      {#if isDefault}<span class="ml-1 text-muted text-[11px]">(default)</span>{/if}
+                    </button>
+                  {/each}
+                </div>
                 <div class="my-1 border-t border-edge"></div>
               {/if}
               <button
