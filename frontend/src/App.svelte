@@ -666,13 +666,13 @@
     if (shouldAutoSelectCreatedWorktree) {
       pendingCreateBranchHint = expectedCreatedCount > 1 ? null : request.branch ?? null;
     }
-    showCreateDialog = false;
-    assignIssue = null;
 
     try {
       const createPromise = api.createWorktree({ params: { projectId: currentProjectId! }, body: request });
       void refresh();
       const result = await createPromise;
+      showCreateDialog = false;
+      assignIssue = null;
       if (shouldAutoSelectCreatedWorktree) {
         pendingCreateBranchHint = result.primaryBranch;
       }
@@ -688,6 +688,7 @@
       }
     } catch (err) {
       showToast({ tone: "error", message: `Failed to create: ${errorMessage(err)}` });
+      throw err;
     } finally {
       pendingCreateCount = Math.max(0, pendingCreateCount - expectedCreatedCount);
       if (shouldAutoSelectCreatedWorktree && requestId === latestAutoSelectCreateId) {

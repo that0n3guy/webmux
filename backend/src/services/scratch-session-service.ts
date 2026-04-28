@@ -19,6 +19,7 @@ export interface ScratchSessionService {
 interface Deps {
   tmux: TmuxGateway;
   cwd: string;
+  projectId: string;
   idGenerator?: () => string;
   now?: () => string;
   getAgentLaunchCommand?: (agentId: string) => string | null;
@@ -37,12 +38,13 @@ export function createScratchSessionService(deps: Deps): ScratchSessionService {
   const idGen = deps.idGenerator ?? randomUUID;
   const now = deps.now ?? (() => new Date().toISOString());
   const metas = new Map<string, ScratchSessionMeta>();
+  const projectPrefix = `${SCRATCH_SESSION_PREFIX}${deps.projectId}-`;
 
   return {
     // `create` is async because future scratch-with-agent variants will spawn and await an agent process.
     async create(input) {
       const id = idGen();
-      const sessionName = `${SCRATCH_SESSION_PREFIX}${id}`;
+      const sessionName = `${projectPrefix}${id}`;
       const meta: ScratchSessionMeta = {
         id,
         displayName: input.displayName,
@@ -76,8 +78,8 @@ export function createScratchSessionService(deps: Deps): ScratchSessionService {
     scan() {
       const live = deps.tmux.listAllSessions();
       for (const s of live) {
-        if (!s.name.startsWith(SCRATCH_SESSION_PREFIX)) continue;
-        const id = s.name.slice(SCRATCH_SESSION_PREFIX.length);
+        if (!s.name.startsWith(projectPrefix)) continue;
+        const id = s.name.slice(projectPrefix.length);
         if (metas.has(id)) continue;
         metas.set(id, {
           id,

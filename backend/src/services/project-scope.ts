@@ -85,6 +85,7 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
   const scratchSessionService = createScratchSessionService({
     tmux: deps.tmux,
     cwd: projectDir,
+    projectId,
     getAgentLaunchCommand: (agentId) => {
       const agent = getAgentDefinition(config, agentId);
       if (!agent) return null;

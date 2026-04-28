@@ -59,7 +59,7 @@
     projects?: ProjectInfo[];
     defaultProjectId?: string;
     onProjectChange?: (projectId: string) => void;
-    oncreate: (request: CreateWorktreeRequest) => void;
+    oncreate: (request: CreateWorktreeRequest) => Promise<void>;
     oncancel: () => void;
   } = $props();
 
@@ -145,6 +145,9 @@
   let saveDefault = $state(hasSavedDefaults);
   // svelte-ignore state_referenced_locally
   let envValues = $state<Record<string, string | boolean>>(loadSavedEnvs());
+
+  let error = $state<string | null>(null);
+  let busy = $state(false);
 
   let showLinearTicketOption = $derived(
     linearCreateTicketOption && !openedFromLinearIssue && mode === "new",
@@ -238,9 +241,11 @@
 
 <BaseDialog onclose={oncancel} className="md:max-w-[440px]">
   <form
-    onsubmit={(e) => {
+    onsubmit={async (e) => {
       e.preventDefault();
-      if (!canSubmit) return;
+      if (!canSubmit || busy) return;
+      busy = true;
+      error = null;
       if (saveDefault) {
         localStorage.setItem(STORAGE_KEY, profile);
         localStorage.setItem(AGENT_STORAGE_KEY, JSON.stringify(selectedAgentIds));
@@ -262,17 +267,23 @@
       }
       const trimmedPrompt = prompt.trim();
       const branchName = mode === "existing" ? selectedExistingBranch : newBranchName.trim();
-      oncreate({
-        mode,
-        ...(branchName && !(mode === "new" && createLinearTicket) ? { branch: branchName } : {}),
-        ...(mode === "new" && selectedBaseBranch ? { baseBranch: selectedBaseBranch } : {}),
-        profile,
-        agents: [...selectedAgentIds],
-        ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
-        ...(Object.keys(filteredEnvs).length > 0 ? { envOverrides: filteredEnvs } : {}),
-        ...(createLinearTicket ? { createLinearTicket: true } : {}),
-        ...(createLinearTicket && linearTitle.trim() ? { linearTitle: linearTitle.trim() } : {}),
-      });
+      try {
+        await oncreate({
+          mode,
+          ...(branchName && !(mode === "new" && createLinearTicket) ? { branch: branchName } : {}),
+          ...(mode === "new" && selectedBaseBranch ? { baseBranch: selectedBaseBranch } : {}),
+          profile,
+          agents: [...selectedAgentIds],
+          ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
+          ...(Object.keys(filteredEnvs).length > 0 ? { envOverrides: filteredEnvs } : {}),
+          ...(createLinearTicket ? { createLinearTicket: true } : {}),
+          ...(createLinearTicket && linearTitle.trim() ? { linearTitle: linearTitle.trim() } : {}),
+        });
+      } catch (err: unknown) {
+        error = err instanceof Error ? err.message : String(err);
+      } finally {
+        busy = false;
+      }
     }}
   >
     {#if projects.length > 1}
@@ -506,13 +517,16 @@
         {/if}
       </div>
     {/if}
+    {#if error}
+      <div class="mb-3 text-[12px] text-red-400">{error}</div>
+    {/if}
     <div class="flex justify-end gap-2">
       <Btn type="button" onclick={oncancel}>Cancel</Btn>
       <Btn
         type="submit"
         variant="cta"
-        disabled={!canSubmit}
-        >Create</Btn
+        disabled={!canSubmit || busy}
+        >{busy ? "Creating…" : "Create"}</Btn
       >
     </div>
   </form>

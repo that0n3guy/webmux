@@ -39,6 +39,7 @@ describe("scratch-session-service", () => {
     const svc = createScratchSessionService({
       tmux: gw,
       cwd: "/tmp",
+      projectId: "projA",
       idGenerator: () => "abc",
       now: () => "2026-04-27T15:00:00Z",
     });
@@ -48,13 +49,13 @@ describe("scratch-session-service", () => {
     expect(meta).toEqual({
       id: "abc",
       displayName: "scratch one",
-      sessionName: "wm-scratch-abc",
+      sessionName: "wm-scratch-projA-abc",
       kind: "shell",
       agentId: null,
       cwd: "/tmp",
       createdAt: "2026-04-27T15:00:00Z",
     });
-    expect(state.commands).toContain("ensureSession wm-scratch-abc /tmp");
+    expect(state.commands).toContain("ensureSession wm-scratch-projA-abc /tmp");
   });
 
   test("list returns snapshots merging meta with live tmux state", async () => {
@@ -62,6 +63,7 @@ describe("scratch-session-service", () => {
     const svc = createScratchSessionService({
       tmux: gw,
       cwd: "/tmp",
+      projectId: "projA",
       idGenerator: () => "abc",
       now: () => "2026-04-27T15:00:00Z",
     });
@@ -71,22 +73,23 @@ describe("scratch-session-service", () => {
     expect(snaps).toHaveLength(1);
     expect(snaps[0]).toMatchObject({
       id: "abc",
-      sessionName: "wm-scratch-abc",
+      sessionName: "wm-scratch-projA-abc",
       windowCount: 1,
       attached: false,
     });
   });
 
-  test("scan rebuilds in-memory map from existing wm-scratch-* tmux sessions", async () => {
+  test("scan rebuilds in-memory map from existing wm-scratch-<projectId>-* tmux sessions", async () => {
     const existing: TmuxSessionSummary[] = [
-      { name: "wm-scratch-existing1", windowCount: 1, attached: false, group: null },
-      { name: "mcpsaa",                windowCount: 1, attached: true,  group: null },
-      { name: "wm-foo",                windowCount: 1, attached: false, group: null },
+      { name: "wm-scratch-projA-existing1", windowCount: 1, attached: false, group: null },
+      { name: "mcpsaa",                      windowCount: 1, attached: true,  group: null },
+      { name: "wm-foo",                      windowCount: 1, attached: false, group: null },
     ];
     const { gw } = makeFakeGateway(existing);
     const svc = createScratchSessionService({
       tmux: gw,
       cwd: "/tmp",
+      projectId: "projA",
       idGenerator: () => "new",
       now: () => "2026-04-27T15:00:00Z",
     });
@@ -95,7 +98,7 @@ describe("scratch-session-service", () => {
 
     const snaps = svc.list();
     expect(snaps).toHaveLength(1);
-    expect(snaps[0]).toMatchObject({ id: "existing1", sessionName: "wm-scratch-existing1" });
+    expect(snaps[0]).toMatchObject({ id: "existing1", sessionName: "wm-scratch-projA-existing1" });
   });
 
   test("remove kills tmux session and drops meta", async () => {
@@ -103,6 +106,7 @@ describe("scratch-session-service", () => {
     const svc = createScratchSessionService({
       tmux: gw,
       cwd: "/tmp",
+      projectId: "projA",
       idGenerator: () => "abc",
       now: () => "2026-04-27T15:00:00Z",
     });
@@ -110,7 +114,7 @@ describe("scratch-session-service", () => {
 
     svc.remove("abc");
     expect(svc.list()).toHaveLength(0);
-    expect(state.killed).toContain("wm-scratch-abc");
+    expect(state.killed).toContain("wm-scratch-projA-abc");
   });
 
   test("getByName resolves a tmux session name to its meta", async () => {
@@ -118,11 +122,12 @@ describe("scratch-session-service", () => {
     const svc = createScratchSessionService({
       tmux: gw,
       cwd: "/tmp",
+      projectId: "projA",
       idGenerator: () => "abc",
       now: () => "2026-04-27T15:00:00Z",
     });
     await svc.create({ displayName: "a", kind: "shell", agentId: null });
-    expect(svc.getBySessionName("wm-scratch-abc")?.id).toBe("abc");
+    expect(svc.getBySessionName("wm-scratch-projA-abc")?.id).toBe("abc");
     expect(svc.getBySessionName("does-not-exist")).toBeNull();
   });
 
@@ -131,6 +136,7 @@ describe("scratch-session-service", () => {
     const svc = createScratchSessionService({
       tmux: gw,
       cwd: "/tmp",
+      projectId: "projA",
       idGenerator: () => "abc",
       now: () => "2026-04-27T15:00:00Z",
       getAgentLaunchCommand: (agentId) => agentId === "claude" ? "claude --bare" : null,
@@ -138,7 +144,7 @@ describe("scratch-session-service", () => {
 
     await svc.create({ displayName: "agent-one", kind: "agent", agentId: "claude" });
 
-    expect(state.commands.some((c) => c === "runCommand wm-scratch-abc claude --bare")).toBe(true);
+    expect(state.commands.some((c) => c === "runCommand wm-scratch-projA-abc claude --bare")).toBe(true);
   });
 
   test("create with kind=shell does NOT run an agent launch command", async () => {
@@ -146,6 +152,7 @@ describe("scratch-session-service", () => {
     const svc = createScratchSessionService({
       tmux: gw,
       cwd: "/tmp",
+      projectId: "projA",
       idGenerator: () => "xyz",
       now: () => "2026-04-27T15:00:00Z",
       getAgentLaunchCommand: () => "should-not-run",
@@ -154,5 +161,24 @@ describe("scratch-session-service", () => {
     await svc.create({ displayName: "shell-one", kind: "shell", agentId: null });
 
     expect(state.commands.some((c) => c.startsWith("runCommand"))).toBe(false);
+  });
+
+  test("scan() only adopts sessions matching this project's prefix", () => {
+    const existing: TmuxSessionSummary[] = [
+      { name: "wm-scratch-projA-mine",     windowCount: 1, attached: false, group: null },
+      { name: "wm-scratch-projB-not-mine", windowCount: 1, attached: false, group: null },
+      { name: "wm-scratch-bad-format",     windowCount: 1, attached: false, group: null },
+    ];
+    const { gw } = makeFakeGateway(existing);
+    const svc = createScratchSessionService({
+      tmux: gw,
+      cwd: "/tmp",
+      projectId: "projA",
+      idGenerator: () => "new",
+      now: () => "2026-04-27T15:00:00Z",
+    });
+    svc.scan();
+    const snaps = svc.list();
+    expect(snaps.map((s) => s.id)).toEqual(["mine"]);
   });
 });
