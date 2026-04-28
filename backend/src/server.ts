@@ -531,6 +531,7 @@ async function apiCreateScratchSession(scope: ProjectScope, req: Request): Promi
     displayName: body.displayName,
     kind: body.kind,
     agentId: body.agentId ?? null,
+    ...(body.yolo === undefined ? {} : { yolo: body.yolo }),
   });
   const snap = scope.scratchSessionService.list().find((s) => s.id === meta.id);
   if (!snap) throw new Error("scratch session created but not visible in list");
@@ -976,6 +977,7 @@ async function apiCreateWorktree(scope: ProjectScope, req: Request): Promise<Res
     profile,
     ...(agents && agents.length > 0 ? { agents } : { agent }),
     envOverrides,
+    ...(body.yolo === undefined ? {} : { yolo: body.yolo }),
   });
   log.debug(`[worktree:add] done branches=${result.branches.join(",")}`);
   return jsonResponse({

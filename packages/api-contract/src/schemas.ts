@@ -102,6 +102,7 @@ export const CreateWorktreeRequestSchema = z.object({
   envOverrides: z.record(z.string()).optional(),
   createLinearTicket: z.literal(true).optional(),
   linearTitle: z.string().optional(),
+  yolo: z.boolean().optional(),
 });
 
 export const CreateWorktreeResponseSchema = z.object({
@@ -482,6 +483,7 @@ export const CreateScratchSessionRequestSchema = z.object({
   displayName: z.string().min(1).max(80),
   kind: ScratchSessionKindSchema,
   agentId: z.string().optional(),
+  yolo: z.boolean().optional(),
 });
 
 export const CreateScratchSessionResponseSchema = z.object({

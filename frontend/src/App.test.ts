@@ -20,6 +20,7 @@ vi.mock("./lib/api", () => ({
     setWorktreeArchived: vi.fn(),
     sendWorktreePrompt: vi.fn(),
   },
+  fetchAgents: vi.fn(),
   fetchWorktrees: vi.fn(),
   fetchProjects: vi.fn(),
   fetchExternalSessions: vi.fn(),
@@ -28,7 +29,7 @@ vi.mock("./lib/api", () => ({
 }));
 
 import App from "./App.svelte";
-import { api, fetchWorktrees, fetchProjects, fetchExternalSessions, fetchScratchSessions, subscribeNotifications } from "./lib/api";
+import { api, fetchAgents, fetchWorktrees, fetchProjects, fetchExternalSessions, fetchScratchSessions, subscribeNotifications } from "./lib/api";
 import type { ProjectInfo } from "./lib/types";
 
 interface Deferred<T> {
@@ -245,6 +246,36 @@ describe("App create selection", () => {
     setupBrowserMocks();
 
     vi.mocked(api.fetchConfig).mockResolvedValue(createConfig());
+    vi.mocked(fetchAgents).mockResolvedValue([
+      {
+        id: "claude",
+        label: "Claude",
+        kind: "builtin",
+        capabilities: {
+          terminal: true,
+          inAppChat: true,
+          conversationHistory: true,
+          interrupt: true,
+          resume: true,
+        },
+        startCommand: null,
+        resumeCommand: null,
+      },
+      {
+        id: "codex",
+        label: "Codex",
+        kind: "builtin",
+        capabilities: {
+          terminal: true,
+          inAppChat: true,
+          conversationHistory: true,
+          interrupt: true,
+          resume: true,
+        },
+        startCommand: null,
+        resumeCommand: null,
+      },
+    ]);
     vi.mocked(fetchProjects).mockResolvedValue([createProject()]);
     vi.mocked(fetchWorktrees).mockResolvedValue([]);
     vi.mocked(fetchExternalSessions).mockResolvedValue([]);
@@ -607,6 +638,7 @@ describe("App create selection", () => {
           prompt: "Implement the new flow",
           createLinearTicket: true,
           linearTitle: "Ship Linear-backed worktree creation",
+          yolo: true,
         },
       });
     });
@@ -661,6 +693,7 @@ describe("App create selection", () => {
           branch: "feature/new",
           profile: "default",
           agents: ["claude", "codex"],
+          yolo: true,
         },
       });
     });
@@ -687,6 +720,7 @@ describe("App create selection", () => {
           baseBranch: "release/base",
           profile: "default",
           agents: ["claude"],
+          yolo: true,
         },
       });
     });

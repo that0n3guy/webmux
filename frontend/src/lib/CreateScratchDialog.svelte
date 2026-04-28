@@ -3,6 +3,7 @@
   import type { ProjectInfo } from "./types";
   import BaseDialog from "./BaseDialog.svelte";
   import Btn from "./Btn.svelte";
+  import Toggle from "./Toggle.svelte";
 
   let {
     projectName,
@@ -24,6 +25,8 @@
     onCreate: (req: CreateScratchSessionRequest) => Promise<void>;
   } = $props();
 
+  const YOLO_STORAGE_KEY = "wm-yolo";
+
   let selectedProjectId = $state(defaultProjectId);
   $effect(() => {
     selectedProjectId = defaultProjectId;
@@ -32,6 +35,8 @@
   let displayName = $state("");
   let kind = $state<"shell" | "agent">(lockedKind ?? "shell");
   let agentId = $state<string>(agentChoices[0]?.id ?? "");
+  const savedYolo = localStorage.getItem(YOLO_STORAGE_KEY);
+  let yolo = $state(savedYolo === null ? true : savedYolo === "true");
   let busy = $state(false);
   let error = $state<string | null>(null);
 
@@ -41,10 +46,12 @@
     busy = true;
     error = null;
     try {
+      localStorage.setItem(YOLO_STORAGE_KEY, String(yolo));
       await onCreate({
         displayName: displayName.trim(),
         kind,
         agentId: kind === "agent" ? agentId : undefined,
+        ...(kind === "agent" ? { yolo } : {}),
       });
       displayName = "";
       onClose();
@@ -117,6 +124,15 @@
             <option value={a.id}>{a.label}</option>
           {/each}
         </select>
+      </div>
+      <div class="flex items-center justify-between gap-3 px-3 py-2 rounded-md border border-edge bg-surface">
+        <div>
+          <span class="text-[13px] text-primary">Skip permissions (yolo)</span>
+          <p class="text-[11px] text-muted mt-0.5">
+            Launch with <code class="text-accent/80">--dangerously-skip-permissions</code> / <code class="text-accent/80">--yolo</code>.
+          </p>
+        </div>
+        <Toggle bind:checked={yolo} aria-label="Skip permissions" />
       </div>
     {/if}
 

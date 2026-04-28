@@ -73,8 +73,10 @@
   const AGENT_STORAGE_KEY = "wt-default-agents";
   const MULTI_AGENT_STORAGE_KEY = "wt-default-multi-agents";
   const ENV_STORAGE_KEY = "wt-default-envs";
+  const YOLO_STORAGE_KEY = "wm-yolo";
   const savedProfile = localStorage.getItem(STORAGE_KEY);
   const savedEnvs = localStorage.getItem(ENV_STORAGE_KEY);
+  const savedYolo = localStorage.getItem(YOLO_STORAGE_KEY);
 
   function sameAgentIds(left: AgentId[], right: AgentId[]): boolean {
     return left.length === right.length && left.every((id, index) => id === right[index]);
@@ -138,6 +140,7 @@
   let profile = $state(savedProfile ?? "");
   let createLinearTicket = $state(false);
   let linearTitle = $state("");
+  let yolo = $state(savedYolo === null ? true : savedYolo === "true");
   const hasSavedDefaults = savedProfile != null
     || localStorage.getItem(AGENT_STORAGE_KEY) != null
     || localStorage.getItem(MULTI_AGENT_STORAGE_KEY) != null
@@ -246,6 +249,7 @@
       if (!canSubmit || busy) return;
       busy = true;
       error = null;
+      localStorage.setItem(YOLO_STORAGE_KEY, String(yolo));
       if (saveDefault) {
         localStorage.setItem(STORAGE_KEY, profile);
         localStorage.setItem(AGENT_STORAGE_KEY, JSON.stringify(selectedAgentIds));
@@ -278,6 +282,7 @@
           ...(Object.keys(filteredEnvs).length > 0 ? { envOverrides: filteredEnvs } : {}),
           ...(createLinearTicket ? { createLinearTicket: true } : {}),
           ...(createLinearTicket && linearTitle.trim() ? { linearTitle: linearTitle.trim() } : {}),
+          yolo,
         });
       } catch (err: unknown) {
         error = err instanceof Error ? err.message : String(err);
@@ -490,6 +495,15 @@
       />
       Save as default
     </label>
+    <div class="mb-4 flex items-center justify-between gap-3 px-3 py-2 rounded-md border border-edge bg-surface">
+      <div>
+        <span class="text-[13px] text-primary">Skip permissions (yolo)</span>
+        <p class="text-[11px] text-muted mt-0.5">
+          Launch with <code class="text-accent/80">--dangerously-skip-permissions</code> / <code class="text-accent/80">--yolo</code>.
+        </p>
+      </div>
+      <Toggle bind:checked={yolo} aria-label="Skip permissions" />
+    </div>
     {#if showLinearTicketOption}
       <div class="mb-4 rounded-lg border border-edge bg-surface/40 p-3">
         <div class="flex items-start justify-between gap-3">

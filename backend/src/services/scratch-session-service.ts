@@ -6,6 +6,7 @@ export interface CreateScratchSessionInput {
   displayName: string;
   kind: ScratchSessionKind;
   agentId: string | null;
+  yolo?: boolean;
 }
 
 export interface ScratchSessionService {
@@ -22,7 +23,7 @@ interface Deps {
   projectId: string;
   idGenerator?: () => string;
   now?: () => string;
-  getAgentLaunchCommand?: (agentId: string) => string | null;
+  getAgentLaunchCommand?: (agentId: string, opts: { yolo?: boolean }) => string | null;
 }
 
 function buildSnapshot(meta: ScratchSessionMeta, byName: Map<string, { windowCount: number; attached: boolean }>): ScratchSessionSnapshot {
@@ -60,7 +61,7 @@ export function createScratchSessionService(deps: Deps): ScratchSessionService {
       deps.tmux.setSessionOption(sessionName, "@webmux-agent-id", input.agentId ?? "");
       deps.tmux.setSessionOption(sessionName, "@webmux-created-at", meta.createdAt);
       if (input.kind === "agent" && input.agentId && deps.getAgentLaunchCommand) {
-        const cmd = deps.getAgentLaunchCommand(input.agentId);
+        const cmd = deps.getAgentLaunchCommand(input.agentId, { yolo: input.yolo });
         if (cmd) {
           deps.tmux.runCommand(sessionName, cmd);
         }

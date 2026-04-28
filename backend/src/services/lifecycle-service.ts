@@ -139,6 +139,7 @@ export interface CreateLifecycleWorktreeInput {
   profile?: string;
   agent?: AgentId;
   envOverrides?: Record<string, string>;
+  yolo?: boolean;
 }
 
 export interface CreateLifecycleWorktreesInput extends Omit<CreateLifecycleWorktreeInput, "agent"> {
@@ -257,6 +258,7 @@ export class LifecycleService {
         initialized,
         worktreePath: resolved.entry.path,
         launchMode,
+        ...(initialized.meta.yolo === undefined ? {} : { yolo: initialized.meta.yolo }),
       });
 
       await this.deps.reconciliation.reconcile(this.deps.projectRoot, { force: true });
@@ -621,6 +623,7 @@ export class LifecycleService {
     worktreePath: string;
     prompt?: string;
     launchMode: AgentLaunchMode;
+    yolo?: boolean;
   }): Promise<void> {
     if (input.profile.runtime === "docker") {
       const dockerProfile = this.requireDockerProfile(input.profile);
@@ -641,6 +644,7 @@ export class LifecycleService {
         worktreePath: input.worktreePath,
         prompt: input.prompt,
         launchMode: input.launchMode,
+        yolo: input.yolo,
         containerName,
       }));
       return;
@@ -655,6 +659,7 @@ export class LifecycleService {
       worktreePath: input.worktreePath,
       prompt: input.prompt,
       launchMode: input.launchMode,
+      yolo: input.yolo,
     }));
   }
 
@@ -667,12 +672,14 @@ export class LifecycleService {
     worktreePath: string;
     prompt?: string;
     launchMode: AgentLaunchMode;
+    yolo?: boolean;
     containerName?: string;
   }) {
     const systemPrompt = input.launchMode === "fresh" && input.profile.systemPrompt
       ? expandTemplate(input.profile.systemPrompt, input.initialized.runtimeEnv)
       : undefined;
     const containerName = input.containerName;
+    const yolo = input.yolo ?? input.profile.yolo === true;
 
     return planSessionLayout(
       this.deps.projectRoot,
@@ -690,7 +697,7 @@ export class LifecycleService {
                 worktreePath: input.worktreePath,
                 branch: input.branch,
                 profileName: input.profileName,
-                yolo: input.profile.yolo === true,
+                yolo,
                 systemPrompt,
                 prompt: input.launchMode === "fresh" ? input.prompt : undefined,
                 launchMode: input.launchMode,
@@ -709,7 +716,7 @@ export class LifecycleService {
                 worktreePath: input.worktreePath,
                 branch: input.branch,
                 profileName: input.profileName,
-                yolo: input.profile.yolo === true,
+                yolo,
                 systemPrompt,
                 prompt: input.launchMode === "fresh" ? input.prompt : undefined,
                 launchMode: input.launchMode,
@@ -919,6 +926,7 @@ export class LifecycleService {
           controlUrl: this.controlUrl(profile.runtime),
           controlToken: await this.deps.getControlToken(),
           deleteBranchOnRollback,
+          ...(input.yolo === undefined ? {} : { yolo: input.yolo }),
         },
         {
           git: this.deps.git,
@@ -962,6 +970,7 @@ export class LifecycleService {
         worktreePath,
         prompt: input.prompt,
         launchMode: "fresh",
+        ...(input.yolo === undefined ? {} : { yolo: input.yolo }),
       });
 
       await this.reportCreateProgress({

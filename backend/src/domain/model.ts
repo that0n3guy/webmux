@@ -37,6 +37,7 @@ export interface WorktreeMeta {
   runtime: RuntimeKind;
   startupEnvValues: Record<string, string>;
   allocatedPorts: Record<string, number>;
+  yolo?: boolean;
   conversation?: WorktreeConversationMeta | null;
 }
 

@@ -86,10 +86,10 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
     tmux: deps.tmux,
     cwd: projectDir,
     projectId,
-    getAgentLaunchCommand: (agentId) => {
+    getAgentLaunchCommand: (agentId, opts) => {
       const agent = getAgentDefinition(config, agentId);
       if (!agent) return null;
-      return buildBareAgentInvocation(agent, { cwd: projectDir });
+      return buildBareAgentInvocation(agent, { cwd: projectDir, yolo: opts.yolo });
     },
   });
   scratchSessionService.scan();

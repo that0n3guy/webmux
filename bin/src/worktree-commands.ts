@@ -78,7 +78,7 @@ export function getWorktreeCommandUsage(command: WorktreeSubcommand): string {
     case "add":
       return [
         "Usage:",
-        "  webmux add [branch] [--existing] [--base <branch>] [--profile <name>] [--agent <id>] [--prompt <text>] [--env KEY=VALUE] [--detach]",
+        "  webmux add [branch] [--existing] [--base <branch>] [--profile <name>] [--agent <id>] [--prompt <text>] [--env KEY=VALUE] [--yolo|--no-yolo] [--detach]",
         "",
         "Options:",
         "  --existing               Use an existing local or remote branch instead of creating a new one",
@@ -87,6 +87,8 @@ export function getWorktreeCommandUsage(command: WorktreeSubcommand): string {
         "  --agent <id>              Agent id to launch (repeatable)",
         "  --prompt <text>          Initial agent prompt",
         "  --env KEY=VALUE          Runtime env override (repeatable)",
+        "  --yolo                   Launch the agent with --dangerously-skip-permissions / --yolo",
+        "  --no-yolo                Launch the agent without skip-permissions (overrides profile yolo)",
         "  -d, --detach             Create worktree without switching to it",
         "  --help                   Show this help message",
       ].join("\n");
@@ -229,6 +231,16 @@ export function parseAddCommandArgs(args: string[]): ParsedAddCommand | null {
       }
       envOverrides[value.slice(0, separatorIndex)] = value.slice(separatorIndex + 1);
       index = nextIndex;
+      continue;
+    }
+
+    if (arg === "--yolo") {
+      input.yolo = true;
+      continue;
+    }
+
+    if (arg === "--no-yolo") {
+      input.yolo = false;
       continue;
     }
 

@@ -61,6 +61,7 @@
   import { setToastController } from "./lib/toast-context";
   import {
     api,
+    fetchAgents,
     fetchWorktrees,
     fetchProjects,
     subscribeNotifications,
@@ -497,6 +498,16 @@
     if (nextSelectedBranch !== selectedBranch) {
       selectedBranch = nextSelectedBranch;
     }
+  });
+
+  $effect(() => {
+    const id = currentProjectId;
+    if (!id) return;
+    fetchAgents(id)
+      .then((details) => {
+        config.agents = details.map(({ id, label, kind, capabilities }) => ({ id, label, kind, capabilities }));
+      })
+      .catch(() => {});
   });
 
   $effect(() => {
