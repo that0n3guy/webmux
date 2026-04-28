@@ -80,11 +80,15 @@ export function sanitizeTmuxNameSegment(value: string, maxLength = 24): string {
   return trimmed || "x";
 }
 
+export function computeProjectId(projectRoot: string): string {
+  const resolved = resolve(projectRoot);
+  return createHash("sha1").update(resolved).digest("hex").slice(0, 8);
+}
+
 export function buildProjectSessionName(projectRoot: string): string {
   const resolved = resolve(projectRoot);
   const base = sanitizeTmuxNameSegment(basename(resolved), 18);
-  const hash = createHash("sha1").update(resolved).digest("hex").slice(0, 8);
-  return `wm-${base}-${hash}`;
+  return `wm-${base}-${computeProjectId(resolved)}`;
 }
 
 export function buildWorktreeWindowName(branch: string): string {

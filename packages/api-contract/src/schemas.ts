@@ -240,6 +240,7 @@ export const AppNotificationSchema = z.object({
   type: z.enum(["agent_stopped", "pr_opened", "runtime_error", "worktree_auto_removed"]),
   message: z.string(),
   url: z.string().optional(),
+  projectId: z.string().nullable().optional(),
   timestamp: z.number(),
 });
 
@@ -489,6 +490,53 @@ export const CreateScratchSessionResponseSchema = z.object({
 
 export const ScratchSessionIdParamsSchema = z.object({ id: z.string().min(1) });
 
+// ---------------------------------------------------------------------------
+// Multi-project: registry types
+// ---------------------------------------------------------------------------
+
+export const ProjectInfoSchema = z.object({
+  id: z.string().min(1),
+  path: z.string().min(1),
+  name: z.string(),
+  addedAt: z.string(),
+  mainBranch: z.string(),
+  defaultAgent: z.string(),
+});
+
+export const ProjectListResponseSchema = z.object({
+  projects: z.array(ProjectInfoSchema),
+});
+
+export const CreateProjectRequestSchema = z.object({
+  path: z.string().min(1).max(1024),
+  displayName: z.string().min(1).max(128).optional(),
+  mainBranch: z.string().optional(),
+  defaultAgent: z.string().optional(),
+  worktreeRoot: z.string().optional(),
+});
+
+export const CreateProjectResponseSchema = z.object({
+  project: ProjectInfoSchema,
+});
+
+export const RemoveProjectRequestSchema = z.object({
+  killSessions: z.boolean().optional(),
+});
+
+export const ProjectIdParamsSchema = z.object({
+  projectId: z.string().min(1),
+});
+
+export const ProjectScopedWorktreeNameParamsSchema = z.object({
+  projectId: z.string().min(1),
+  name: z.string().min(1),
+});
+
+export const ProjectScopedScratchIdParamsSchema = z.object({
+  projectId: z.string().min(1),
+  id: z.string().min(1),
+});
+
 export type BuiltInAgentId = z.infer<typeof BuiltInAgentIdSchema>;
 export type AgentId = z.infer<typeof AgentIdSchema>;
 export type AgentKind = z.infer<typeof AgentKindSchema>;
@@ -562,3 +610,8 @@ export type ScratchSessionSnapshot = z.infer<typeof ScratchSessionSnapshotSchema
 export type ScratchSessionListResponse = z.infer<typeof ScratchSessionListResponseSchema>;
 export type CreateScratchSessionRequest = z.infer<typeof CreateScratchSessionRequestSchema>;
 export type CreateScratchSessionResponse = z.infer<typeof CreateScratchSessionResponseSchema>;
+export type ProjectInfo = z.infer<typeof ProjectInfoSchema>;
+export type ProjectListResponse = z.infer<typeof ProjectListResponseSchema>;
+export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;
+export type CreateProjectResponse = z.infer<typeof CreateProjectResponseSchema>;
+export type RemoveProjectRequest = z.infer<typeof RemoveProjectRequestSchema>;
