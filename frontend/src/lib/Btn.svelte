@@ -31,6 +31,7 @@
 </script>
 
 <button
+  type="button"
   class="{base} {sizes[small ? 'small' : 'normal']} {variants[variant]} {extraClass}"
   {...rest}
 >
