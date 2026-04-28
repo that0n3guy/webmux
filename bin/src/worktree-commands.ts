@@ -104,7 +104,15 @@ export function getWorktreeCommandUsage(command: WorktreeSubcommand): string {
         "  --help                   Show this help message",
       ].join("\n");
     case "open":
-      return "Usage:\n  webmux open <branch>";
+      return [
+        "Usage:",
+        "  webmux open <branch> [--agent <id>] [--shell-only]",
+        "",
+        "Options:",
+        "  --agent <id>             Open with this agent for this session only (does not persist)",
+        "  --shell-only             Open the worktree session with only a shell (no agent pane)",
+        "  --help                   Show this help message",
+      ].join("\n");
     case "close":
       return "Usage:\n  webmux close <branch>";
     case "archive":
@@ -164,6 +172,66 @@ function parseAgent(value: string): AgentId {
     throw new CommandUsageError("Agent id cannot be empty");
   }
   return trimmed;
+}
+
+export interface ParsedOpenCommand {
+  branch: string;
+  agentOverride?: AgentId;
+  shellOnly?: boolean;
+}
+
+export function parseOpenCommandArgs(args: string[]): ParsedOpenCommand | null {
+  let branch: string | null = null;
+  let agentOverride: AgentId | undefined;
+  let shellOnly = false;
+
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (!arg) continue;
+
+    if (arg === "--help" || arg === "-h") {
+      return null;
+    }
+
+    if (arg === "--shell-only") {
+      shellOnly = true;
+      continue;
+    }
+
+    if (arg === "--agent" || arg.startsWith("--agent=")) {
+      const { value, nextIndex } = readOptionValue(args, index, "--agent");
+      agentOverride = parseAgent(value);
+      index = nextIndex;
+      continue;
+    }
+
+    if (arg.startsWith("-")) {
+      throw new CommandUsageError(`Unknown option: ${arg}`);
+    }
+
+    if (branch) {
+      throw new CommandUsageError(`Unexpected argument: ${arg}`);
+    }
+
+    branch = arg;
+  }
+
+  if (!branch) {
+    throw new CommandUsageError("Missing required argument: <branch>");
+  }
+
+  if (!isValidWorktreeName(branch)) {
+    throw new CommandUsageError("Invalid worktree name");
+  }
+
+  if (agentOverride !== undefined && shellOnly) {
+    throw new CommandUsageError("Cannot combine --agent with --shell-only");
+  }
+
+  const result: ParsedOpenCommand = { branch };
+  if (agentOverride !== undefined) result.agentOverride = agentOverride;
+  if (shellOnly) result.shellOnly = true;
+  return result;
 }
 
 export interface ParsedAddCommand {
@@ -699,7 +767,30 @@ export async function runWorktreeCommand(
       return 0;
     }
 
-    const command: Exclude<WorktreeSubcommand, "add" | "list" | "send" | "prune"> = context.command;
+    if (context.command === "open") {
+      const parsed = parseOpenCommandArgs(context.args);
+      if (!parsed) {
+        stdout(getWorktreeCommandUsage("open"));
+        return 0;
+      }
+
+      const runtime = createRuntime({
+        projectDir: context.projectDir,
+        port: context.port,
+      });
+
+      const opts = {
+        ...(parsed.agentOverride !== undefined ? { agentOverride: parsed.agentOverride } : {}),
+        ...(parsed.shellOnly ? { shellOnly: parsed.shellOnly } : {}),
+      };
+
+      await runtime.lifecycleService.openWorktree(parsed.branch, Object.keys(opts).length > 0 ? opts : undefined);
+      stdout(`Opened worktree ${parsed.branch}`);
+      switchToTmuxWindow(runtime.projectDir, parsed.branch);
+      return 0;
+    }
+
+    const command: Exclude<WorktreeSubcommand, "add" | "list" | "send" | "prune" | "open"> = context.command;
     const branch = parseBranchCommandArgs(context.args);
     if (!branch) {
       stdout(getWorktreeCommandUsage(command));
@@ -712,11 +803,6 @@ export async function runWorktreeCommand(
     });
 
     switch (command) {
-      case "open":
-        await runtime.lifecycleService.openWorktree(branch);
-        stdout(`Opened worktree ${branch}`);
-        switchToTmuxWindow(runtime.projectDir, branch);
-        return 0;
       case "close":
         await runtime.lifecycleService.closeWorktree(branch);
         stdout(`Closed worktree ${branch}`);
