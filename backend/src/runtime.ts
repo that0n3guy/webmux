@@ -1,20 +1,13 @@
-import { loadConfig, projectRoot, type ProjectConfig } from "./adapters/config";
-import { loadControlToken } from "./adapters/control-token";
+import { projectRoot, type ProjectConfig } from "./adapters/config";
 import { BunDockerGateway } from "./adapters/docker";
 import { BunGitGateway } from "./adapters/git";
 import { BunLifecycleHookRunner } from "./adapters/hooks";
 import { BunPortProbe } from "./adapters/port-probe";
 import { BunTmuxGateway } from "./adapters/tmux";
 import { AutoNameService } from "./services/auto-name-service";
-import { ArchiveStateService } from "./services/archive-state-service";
-import { LifecycleService, type CreateWorktreeProgress } from "./services/lifecycle-service";
 import { NotificationService as RuntimeNotificationService } from "./services/notification-service";
-import { ProjectRuntime } from "./services/project-runtime";
-import { ReconciliationService } from "./services/reconciliation-service";
-import { WorktreeCreationTracker } from "./services/worktree-creation-service";
-import { createScratchSessionService, type ScratchSessionService } from "./services/scratch-session-service";
-import { buildBareAgentInvocation } from "./services/agent-service";
-import { getAgentDefinition } from "./services/agent-registry";
+import { createProjectScope, type ProjectScope } from "./services/project-scope";
+import { type CreateWorktreeProgress } from "./services/lifecycle-service";
 
 export interface WebmuxRuntimeOptions {
   projectDir?: string;
@@ -26,90 +19,52 @@ export interface WebmuxRuntime {
   port: number;
   projectDir: string;
   config: ProjectConfig;
-  archiveStateService: ArchiveStateService;
   git: BunGitGateway;
-  portProbe: BunPortProbe;
   tmux: BunTmuxGateway;
   docker: BunDockerGateway;
+  portProbe: BunPortProbe;
   hooks: BunLifecycleHookRunner;
   autoName: AutoNameService;
-  projectRuntime: ProjectRuntime;
-  worktreeCreationTracker: WorktreeCreationTracker;
   runtimeNotifications: RuntimeNotificationService;
-  reconciliationService: ReconciliationService;
-  lifecycleService: LifecycleService;
-  scratchSessionService: ScratchSessionService;
+  scope: ProjectScope;
 }
 
 export function createWebmuxRuntime(options: WebmuxRuntimeOptions = {}): WebmuxRuntime {
   const port = options.port ?? parseInt(Bun.env.PORT || "5111", 10);
   const projectDir = projectRoot(options.projectDir ?? Bun.env.WEBMUX_PROJECT_DIR ?? process.cwd());
-  const config = loadConfig(projectDir, { resolvedRoot: true });
+
   const git = new BunGitGateway();
-  const archiveStateService = new ArchiveStateService(git.resolveWorktreeGitDir(projectDir));
-  const portProbe = new BunPortProbe();
   const tmux = new BunTmuxGateway();
   const docker = new BunDockerGateway();
+  const portProbe = new BunPortProbe();
   const hooks = new BunLifecycleHookRunner();
   const autoName = new AutoNameService();
-  const projectRuntime = new ProjectRuntime();
-  const worktreeCreationTracker = new WorktreeCreationTracker();
   const runtimeNotifications = new RuntimeNotificationService();
-  const reconciliationService = new ReconciliationService({
-    config,
-    git,
-    tmux,
-    portProbe,
-    runtime: projectRuntime,
-  });
-  const lifecycleService = new LifecycleService({
-    projectRoot: projectDir,
-    controlBaseUrl: `http://127.0.0.1:${port}`,
-    getControlToken: loadControlToken,
-    config,
-    archiveState: archiveStateService,
+
+  const scope = createProjectScope({
+    projectDir,
+    port,
     git,
     tmux,
     docker,
-    reconciliation: reconciliationService,
+    portProbe,
     hooks,
     autoName,
-    onCreateProgress: (progress) => {
-      worktreeCreationTracker.set(progress);
-      options.onCreateProgress?.(progress);
-    },
-    onCreateFinished: (branch) => {
-      worktreeCreationTracker.clear(branch);
-    },
+    runtimeNotifications,
+    onCreateProgress: options.onCreateProgress,
   });
-
-  const scratchSessionService = createScratchSessionService({
-    tmux,
-    cwd: projectDir,
-    getAgentLaunchCommand: (agentId) => {
-      const agent = getAgentDefinition(config, agentId);
-      if (!agent) return null;
-      return buildBareAgentInvocation(agent, { cwd: projectDir });
-    },
-  });
-  scratchSessionService.scan();
 
   return {
     port,
     projectDir,
-    config,
-    archiveStateService,
+    config: scope.config,
     git,
-    portProbe,
     tmux,
     docker,
+    portProbe,
     hooks,
     autoName,
-    projectRuntime,
-    worktreeCreationTracker,
     runtimeNotifications,
-    reconciliationService,
-    lifecycleService,
-    scratchSessionService,
+    scope,
   };
 }

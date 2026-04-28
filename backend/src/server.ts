@@ -91,12 +91,12 @@ const runtime = createWebmuxRuntime({
 const PROJECT_DIR = runtime.projectDir;
 const config: ProjectConfig = runtime.config;
 const git = runtime.git;
-const archiveStateService = runtime.archiveStateService;
+const archiveStateService = runtime.scope.archiveStateService;
 const tmux = runtime.tmux;
-const projectRuntime = runtime.projectRuntime;
-const worktreeCreationTracker = runtime.worktreeCreationTracker;
+const projectRuntime = runtime.scope.projectRuntime;
+const worktreeCreationTracker = runtime.scope.worktreeCreationTracker;
 const runtimeNotifications = runtime.runtimeNotifications;
-const reconciliationService = runtime.reconciliationService;
+const reconciliationService = runtime.scope.reconciliationService;
 const codexAppServerClient = new CodexAppServerClient({
   clientName: "webmux-agents",
   clientVersion: "0.0.0",
@@ -110,9 +110,9 @@ const claudeConversationService = new ClaudeConversationService({
   claude: claudeCliClient,
   git,
 });
-const removingBranches = new Set<string>();
-const lifecycleService = runtime.lifecycleService;
-const scratchSessionService = runtime.scratchSessionService;
+const removingBranches = runtime.scope.removingBranches;
+const lifecycleService = runtime.scope.lifecycleService;
+const scratchSessionService = runtime.scope.scratchSessionService;
 let linearAutoCreateEnabled = config.integrations.linear.autoCreateWorktrees;
 let stopLinearAutoCreate: (() => void) | null = null;
 let autoRemoveOnMergeEnabled = config.integrations.github.autoRemoveOnMerge;
