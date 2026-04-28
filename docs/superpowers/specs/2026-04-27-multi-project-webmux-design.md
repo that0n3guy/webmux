@@ -53,7 +53,7 @@ Globally shared (one per process):
 
 ### Project ID
 
-`projectId = sha1(resolveAbsolute(projectDir)).slice(0, 12)`. Stable across processes. Matches the suffix already used in `wm-<sanitisedBasename>-<sha1>` tmux session naming, so existing tmux sessions auto-pair to their project.
+`projectId = sha1(resolveAbsolute(projectDir)).slice(0, 8)`. Stable across processes. Matches the suffix already used in `wm-<sanitisedBasename>-<sha1>` tmux session naming, so existing tmux sessions auto-pair to their project.
 
 There is **no synthetic "global" project on the wire.** External-tmux endpoints (`/api/external-sessions`, `/ws/external/:name`) remain non-project-scoped. The "External tmux" tree node is a frontend rendering concept only — `ProjectTree` hardcodes it as the first node above the registry-derived nodes.
 
@@ -184,7 +184,7 @@ Server logic:
 
 1. Resolve `path` via `~`/relative-to-`process.cwd()`. If it doesn't exist on disk → 400.
 2. If `path` is already in the registry (by `projectId`) → 409.
-3. Compute `projectId = sha1(absolutePath).slice(0, 12)`.
+3. Compute `projectId = sha1(absolutePath).slice(0, 8)`.
 4. If `path/.webmux.yaml` exists → load it (idempotent — DO NOT overwrite); ignore body's init fields.
 5. Else → write `path/.webmux.yaml` from the body's init fields filled with defaults.
 6. Construct `ProjectScope`. Run `reconciliationService.reconcile(...)` once before returning.

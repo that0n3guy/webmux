@@ -498,7 +498,7 @@ export const ProjectInfoSchema = z.object({
   id: z.string().min(1),
   path: z.string().min(1),
   name: z.string(),
-  addedAt: z.string(),
+  addedAt: z.string().datetime(),
   mainBranch: z.string(),
   defaultAgent: z.string(),
 });
