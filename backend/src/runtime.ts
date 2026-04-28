@@ -31,17 +31,34 @@ export interface MultiProjectRuntime {
 // Backward-compat alias used by older imports (e.g., `import type { WebmuxRuntime }`).
 export type WebmuxRuntime = MultiProjectRuntime;
 
+export interface WebmuxAdapters {
+  git: BunGitGateway;
+  tmux: BunTmuxGateway;
+  docker: BunDockerGateway;
+  portProbe: BunPortProbe;
+  hooks: BunLifecycleHookRunner;
+  autoName: AutoNameService;
+  runtimeNotifications: RuntimeNotificationService;
+}
+
+/** Construct the global adapter bag shared across the runtime and CLI default-factory. */
+export function createWebmuxAdapters(): WebmuxAdapters {
+  return {
+    git: new BunGitGateway(),
+    tmux: new BunTmuxGateway(),
+    docker: new BunDockerGateway(),
+    portProbe: new BunPortProbe(),
+    hooks: new BunLifecycleHookRunner(),
+    autoName: new AutoNameService(),
+    runtimeNotifications: new RuntimeNotificationService(),
+  };
+}
+
 export async function createWebmuxRuntime(options: WebmuxRuntimeOptions = {}): Promise<MultiProjectRuntime> {
   const port = options.port ?? parseInt(Bun.env.PORT || "5111", 10);
   const cwdHint = projectRoot(options.projectDir ?? Bun.env.WEBMUX_PROJECT_DIR ?? process.cwd());
 
-  const git = new BunGitGateway();
-  const tmux = new BunTmuxGateway();
-  const docker = new BunDockerGateway();
-  const portProbe = new BunPortProbe();
-  const hooks = new BunLifecycleHookRunner();
-  const autoName = new AutoNameService();
-  const runtimeNotifications = new RuntimeNotificationService();
+  const { git, tmux, docker, portProbe, hooks, autoName, runtimeNotifications } = createWebmuxAdapters();
 
   const projectRegistry = createProjectRegistry({
     port,

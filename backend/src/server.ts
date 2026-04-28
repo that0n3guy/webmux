@@ -84,15 +84,20 @@ import { createWebmuxRuntime } from "./runtime";
 
 const PORT = parseInt(Bun.env.PORT || "5111", 10);
 const STATIC_DIR = Bun.env.WEBMUX_STATIC_DIR || "";
+const STARTUP_PROJECT_DIR = Bun.env.WEBMUX_PROJECT_DIR || process.cwd();
 const runtime = await createWebmuxRuntime({
   port: PORT,
-  projectDir: Bun.env.WEBMUX_PROJECT_DIR || process.cwd(),
+  projectDir: STARTUP_PROJECT_DIR,
 });
 const projects = runtime.projectRegistry.list();
 if (projects.length === 0) {
-  log.error("[server] no projects registered. Run `webmux init` in a project dir or POST /api/projects.");
+  log.error(
+    `[server] no projects registered (cwd=${STARTUP_PROJECT_DIR} has no .webmux.yaml, and ~/.config/webmux/projects.yaml is empty or missing). Run \`webmux init\` in a project dir, or POST /api/projects with a path.`,
+  );
   process.exit(1);
 }
+// TODO(multi-project): firstProject is a single-project compat shim. Replace when MP-6 wires
+// path-prefixed routes that resolve scope from `:projectId` per request.
 const firstProject = projects[0];
 const scope = runtime.projectRegistry.get(firstProject.id);
 if (!scope) throw new Error("first project scope missing immediately after registration");
