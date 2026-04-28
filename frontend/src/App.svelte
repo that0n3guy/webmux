@@ -590,7 +590,7 @@
   });
 
   $effect(() => {
-    document.title = config.name ? `${config.name} - Dashboard` : "Dev Dashboard";
+    document.title = "webmux";
   });
 
   let paneBarPanes = $derived.by(() => {
@@ -1146,7 +1146,7 @@
     >
       <div class="p-4 border-b border-edge">
         <div class="flex items-center justify-between">
-          <h1 class="text-base font-semibold">{config.name ?? "Dashboard"}</h1>
+          <h1 class="text-base font-semibold">webmux</h1>
           <div class="flex items-center gap-2">
             <button
               type="button"
