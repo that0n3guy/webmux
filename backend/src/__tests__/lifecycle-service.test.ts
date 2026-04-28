@@ -1550,4 +1550,18 @@ describe("LifecycleService", () => {
       lifecycle.openWorktree("feature-conflict-opts", { agentOverride: "claude", shellOnly: true }),
     ).rejects.toMatchObject({ message: "Cannot combine agentOverride with shellOnly", status: 400 });
   });
+
+  it("throws LifecycleError 404 when agentOverride refers to an unknown agent id", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const lifecycle = makeLifecycleService(repoRoot, tmux, runtime);
+
+    await lifecycle.createWorktree({ branch: "feature-unknown-agent" });
+    await lifecycle.closeWorktree("feature-unknown-agent");
+
+    await expect(
+      lifecycle.openWorktree("feature-unknown-agent", { agentOverride: "nonexistent-agent" }),
+    ).rejects.toMatchObject({ message: "Unknown agent: nonexistent-agent", status: 404 });
+  });
 });

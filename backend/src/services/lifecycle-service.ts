@@ -237,18 +237,25 @@ export class LifecycleService {
     branch: string;
     worktreeId: string;
   }> {
-    if (opts?.agentOverride && opts?.shellOnly) {
-      throw new LifecycleError("Cannot combine agentOverride with shellOnly", 400);
-    }
     try {
+      if (opts?.agentOverride && opts?.shellOnly) {
+        throw new LifecycleError("Cannot combine agentOverride with shellOnly", 400);
+      }
       const resolved = await this.resolveExistingWorktree(branch);
       const initialized = resolved.meta
         ? await this.refreshManagedArtifacts(resolved)
         : await this.initializeUnmanagedWorktree(resolved);
       const { profileName, profile } = this.resolveProfile(initialized.meta.profile);
-      const agent = opts?.agentOverride
-        ? this.resolveAgentDefinition(opts.agentOverride)
-        : this.resolveAgentDefinition(initialized.meta.agent);
+      let agent: AgentDefinition;
+      if (opts?.agentOverride) {
+        const overrideAgent = getAgentDefinition(this.deps.config, opts.agentOverride);
+        if (!overrideAgent) {
+          throw new LifecycleError(`Unknown agent: ${opts.agentOverride}`, 404);
+        }
+        agent = overrideAgent;
+      } else {
+        agent = this.resolveAgentDefinition(initialized.meta.agent);
+      }
       const launchMode: AgentLaunchMode = resolved.meta && agent.capabilities.resume ? "resume" : "fresh";
       await ensureAgentRuntimeArtifacts({
         gitDir: initialized.paths.gitDir,
