@@ -55,7 +55,7 @@ Globally shared (one per process):
 
 `projectId = sha1(resolveAbsolute(projectDir)).slice(0, 12)`. Stable across processes. Matches the suffix already used in `wm-<sanitisedBasename>-<sha1>` tmux session naming, so existing tmux sessions auto-pair to their project.
 
-A reserved id `__global__` denotes the synthetic "external tmux" pseudo-project.
+There is **no synthetic "global" project on the wire.** External-tmux endpoints (`/api/external-sessions`, `/ws/external/:name`) remain non-project-scoped. The "External tmux" tree node is a frontend rendering concept only — `ProjectTree` hardcodes it as the first node above the registry-derived nodes.
 
 ### `ProjectRegistry` (new)
 
@@ -82,9 +82,8 @@ Public API:
 - `load(): Promise<void>` — reads YAML, validates each path, constructs `ProjectScope` for each via `Promise.all`. Persisting failures (path no longer exists) log a warning and skip that entry.
 - `add(input: { path: string; init?: ProjectInitInput }): Promise<ProjectScope>` — see Add Flow below.
 - `remove(id: string, opts: { killSessions: boolean }): Promise<void>` — disposes scope; if `killSessions`, also runs `tmux kill-session -t wm-<projectHash>-*`.
-- `list(): { id: string; path: string; addedAt: string }[]` (NOT including the synthetic `__global__`).
-- `get(id: string): ProjectScope | null` (returns `null` for `__global__` since it has no scope).
-- `requireGlobalOrScope(id: string): ProjectScope | "__global__" | null` — for handlers that may operate on either.
+- `list(): { id: string; path: string; addedAt: string }[]`.
+- `get(id: string): ProjectScope | null`.
 
 ### `MultiProjectRuntime` (renamed from `WebmuxRuntime`)
 
@@ -112,9 +111,9 @@ All routes live under `/api/projects/:projectId/...` for per-project endpoints, 
 
 | Method | Path | Body | Description |
 |---|---|---|---|
-| `GET`    | `/api/projects` | — | Lists registered projects: `{ projects: [{ id, path, name, addedAt, mainBranch, defaultAgent }] }` plus an entry for the `__global__` pseudo-project. |
+| `GET`    | `/api/projects` | — | Lists registered projects: `{ projects: [{ id, path, name, addedAt, mainBranch, defaultAgent }] }`. No synthetic entries. |
 | `POST`   | `/api/projects` | `CreateProjectRequest` | Adds a new project. See Add Flow. Returns 201 with the created `ProjectInfo`. |
-| `DELETE` | `/api/projects/:id` | `RemoveProjectRequest` (`{ killSessions?: boolean }`) | Removes a project. 404 if not found, 400 if `:id === "__global__"`. |
+| `DELETE` | `/api/projects/:id` | `RemoveProjectRequest` (`{ killSessions?: boolean }`) | Removes a project. 404 if not found. Default `killSessions` is `false`. |
 
 ### Global (existing, unchanged or extended)
 
@@ -159,11 +158,11 @@ A new helper `parseProjectIdParam(params)` mirroring the existing `parseWorktree
 
 ```ts
 function parseProjectIdParam(params: Record<string, string>):
-  | { ok: true; data: { id: string; scope: ProjectScope | "__global__" } }
+  | { ok: true; data: { id: string; scope: ProjectScope } }
   | { ok: false; response: Response }
 ```
 
-Handlers call it first; on error they return the 4xx response. On `__global__`, only the small set of global-aware handlers proceeds; everything per-project returns 400.
+Handlers call it first; on error they return the 4xx response (404 for unknown id, 400 for missing/empty).
 
 ### Add Flow (`POST /api/projects`)
 
@@ -196,15 +195,14 @@ Server logic:
 
 Request body: `{ killSessions?: boolean }` (default false).
 
-1. If `:id` is `__global__` → 400.
-2. If not found → 404.
-3. Call `scope.dispose()`.
-4. If `killSessions`: kill three classes of tmux session for this project:
+1. If not found → 404.
+2. If `killSessions`: capture the scratch session list from `scope.scratchSessionService.list()` BEFORE disposing, then kill:
    - The project session — name matches `wm-<sanitisedBasename>-<projectId>` (existing `buildProjectSessionName` convention).
-   - Any `wm-dash-*` grouped sessions targeting it (already handled by `cleanupStaleSessions` on next process boot, but we proactively kill any active here).
-   - All scratch sessions tracked by `scope.scratchSessionService.list()`.
-
-   Capture the scratch list **before** calling `scope.dispose()` so the in-memory map is still populated when we enumerate.
+   - Each scratch session captured above.
+   Do NOT touch `wm-dash-*` grouped sessions — those are per-port + counter (not project-scoped); `cleanupStaleSessions` handles them on next process boot.
+3. Call `scope.dispose()`.
+4. Persist registry without that entry.
+5. Return 200.
 5. Persist registry without that entry.
 6. Return 200.
 
@@ -346,7 +344,14 @@ A simple "Project" tab vs "Global" tab split is sufficient.
 
 None. The single-project URL scheme is removed. The CLI's commands continue to work but transparently target the registry's first-registered project (or fail clearly if the registry is empty).
 
-`bin/src/worktree-commands.ts` updated to take an optional `--project <id|path>` flag. If absent and the registry has exactly one project, that one is used. If absent and there are multiple, the CLI errors with a list-and-pick message.
+`bin/src/worktree-commands.ts` updated to take an optional `--project <id|path>` flag. Resolution order:
+
+1. `--project <id|path>` flag → use that.
+2. Else if `cwd` is inside (or equals) any registered project's path → use that project. (Walks up from `cwd` checking each registered path.)
+3. Else if registry has exactly 1 project → use it.
+4. Else → error with the registered-project list and a hint to pass `--project`.
+
+This matches user intuition: `cd ~/projects/foo && webmux list` shows foo's worktrees regardless of how many other projects are registered.
 
 ### Testing strategy
 
@@ -358,20 +363,30 @@ None. The single-project URL scheme is removed. The CLI's commands continue to w
 
 ## Implementation phasing
 
-The plan will sequence as:
+The plan will sequence as 7 phases. **Each phase commits a working, building app** — but two of the merges below are forced by tight coupling (contract changes affect both backend and frontend simultaneously).
 
-1. **Phase 0**: Branch off `main` (after `feat/non-worktree-sessions` lands).
-2. **Phase 1**: Introduce `ProjectScope` type and rename `WebmuxRuntime` constructor (no behavioural change yet — registry holds exactly one scope, `__global__` not yet wired).
-3. **Phase 2**: Introduce `ProjectRegistry` + persistence, including the first-run hydration. Still single-project at the route level.
-4. **Phase 3**: Path-prefix all per-project routes. Update contract package. Update server handlers. Update CLI for the `--project` flag.
-5. **Phase 4**: Frontend api.ts refactor (every call gains projectId). Selection model extension. `Terminal.svelte` wsPath update. App.svelte continues to render the existing single-project sidebar but now wired to projectId.
-6. **Phase 5**: Add `__global__` synthetic project. Wire external tmux into a `ProjectTreeNode` for it.
-7. **Phase 6**: Build `ProjectTree.svelte` + `ProjectTreeNode.svelte`. Replace existing sidebar layout. Per-project polling.
-8. **Phase 7**: `AddProjectDialog.svelte` + project-management UI + project menu actions.
-9. **Phase 8**: Notifications carry projectId; minor UX (no filtering yet).
-10. **Phase 9**: Final regression + browser test with two real projects + push.
+1. **Phase 1 — Scope + Registry + persistence + first-run hydration** *(merges old phases 1+2)*. ProjectScope renamed/extracted; ProjectRegistry built; `~/.config/webmux/projects.yaml` read+write; cwd auto-register if `.webmux.yaml` present. Routes still single-project at this point — the registry exposes its first project as the de-facto "current" one.
 
-Each phase commits independently, builds clean, and yields a working app. Phase 1–4 produce a still-single-project app that just speaks the new URL/contract shape. Phase 5+ introduces the new UI.
+2. **Phase 2 — Path-prefix every route + contract + frontend api.ts + Selection extension + Terminal wsPath** *(merges old phases 3+4; MUST land as one logical change)*. Backend handlers gain `parseProjectIdParam`; contract paths rewritten; frontend api wrappers gain `projectId` arg; Selection includes `projectId`; Terminal.svelte wsPath uses prefixed path. CLI gains `--project` flag with cwd-aware default. Sidebar still renders one project visually — just plumbed through `projectId`.
+
+3. **Phase 3 — Per-service test refactor**. The existing per-service unit tests (lifecycle, reconciliation, archive-state, snapshot, agent-service, agent-validation, scratch, etc.) are migrated to take a `ProjectScopeDeps` constructor argument. This is **mostly mechanical but voluminous (~20 test files)** — sub-tasked accordingly in the plan.
+
+4. **Phase 4 — ProjectTree component + per-project polling**. Replace sidebar layout with `<ProjectTree>` + `<ProjectTreeNode>`. Polling fans out via `Promise.all`. App still single-project in practice (registry has 1 entry until next phase).
+
+5. **Phase 5 — AddProjectDialog + project menus + remove flow**. Genuinely multi-project UI. POST/DELETE `/api/projects` consumed. Project menu (new worktree, settings, remove with kill-sessions option). External-tmux node hardcoded as the first tree entry.
+
+6. **Phase 6 — Notifications carry projectId**. SSE event shape extended; toasts render with project context.
+
+7. **Phase 7 — Regression + push**. Browser test with two real projects (e.g., webmux-test + solidactions-work). Tmux survival across project removes verified. Branch pushed. Spec doc + plan doc remain in branch history.
+
+Phases 1–3 leave a single-project app that speaks the new URL/contract shape (foundation only). Phase 4+ introduces the new UI. Phase 5 unlocks the multi-project UX the user actually wants.
+
+## Cross-cutting concerns
+
+- **`ControlEnvMap.WEBMUX_BRANCH` for scratch sessions.** Today the type is required `string`. Scratch sessions don't have a branch. Set `WEBMUX_BRANCH=""` (empty string) for scratch contexts to avoid widening the type. The notification/event handler should treat empty-string branch as "no branch" (and ignore branch-keyed lookups).
+- **Cross-project port collisions.** Two projects can both declare `services` starting at the same `portStart`. The existing `BunPortProbe` already finds the next free port, so services self-allocate without collision. No spec change required.
+- **Polling load with N projects.** With 5 projects polling every 5s, that's 5× the worktree fetches + 5× the scratch fetches + per-project PR/Linear pulls. Mitigation candidates (out of scope for this spec): pause polling when document.hidden; backoff for inactive projects; longer interval. Track as a follow-up.
+- **`wm-dash-*` grouped sessions.** Per-port + counter, not project-scoped. The existing `cleanupStaleSessions` handles them on next process boot. Project-remove with `killSessions=true` does **not** touch them.
 
 ## Open Questions
 
