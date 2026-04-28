@@ -6,6 +6,8 @@
   import { worktreeCreationPhaseLabel } from "./utils";
 
   let openMenuBranch = $state<string | null>(null);
+  let menuTop = $state(0);
+  let menuRight = $state(0);
 
   let {
     rows,
@@ -35,8 +37,15 @@
     onremove: (branch: string) => void;
   } = $props();
 
-  function toggleMenu(branch: string): void {
-    openMenuBranch = openMenuBranch === branch ? null : branch;
+  function toggleMenu(branch: string, triggerEl: HTMLButtonElement): void {
+    if (openMenuBranch === branch) {
+      openMenuBranch = null;
+      return;
+    }
+    const rect = triggerEl.getBoundingClientRect();
+    menuTop = rect.bottom + 4;
+    menuRight = window.innerWidth - rect.right;
+    openMenuBranch = branch;
   }
 
   function runMenuAction(branch: string, action: (branch: string) => void): void {
@@ -60,11 +69,17 @@
       }
     }
 
+    function handleScroll(): void {
+      openMenuBranch = null;
+    }
+
     document.addEventListener("click", handleDocumentClick);
     document.addEventListener("keydown", handleEscape);
+    document.addEventListener("scroll", handleScroll, { capture: true });
     return () => {
       document.removeEventListener("click", handleDocumentClick);
       document.removeEventListener("keydown", handleEscape);
+      document.removeEventListener("scroll", handleScroll, { capture: true } as EventListenerOptions);
     };
   });
 </script>
@@ -158,7 +173,7 @@
         aria-expanded={openMenuBranch === wt.branch}
         onclick={(event) => {
           event.stopPropagation();
-          toggleMenu(wt.branch);
+          toggleMenu(wt.branch, event.currentTarget as HTMLButtonElement);
         }}
       >
         <svg
@@ -179,7 +194,9 @@
       </button>
       {#if openMenuBranch === wt.branch}
         <div
-          class="absolute top-9 right-2 z-10 min-w-32 rounded-md border border-edge bg-surface shadow-lg p-1"
+          class="fixed z-50 min-w-32 rounded-md border border-edge bg-surface shadow-lg p-1"
+          style:top="{menuTop}px"
+          style:right="{menuRight}px"
           data-worktree-row-menu
         >
           <button
