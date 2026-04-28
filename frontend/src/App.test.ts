@@ -212,8 +212,13 @@ function restoreBrowserMocks(): void {
   HTMLDialogElement.prototype.close = originalDialogClose;
 }
 
+async function openNewWorktreeDialog(): Promise<void> {
+  await fireEvent.click(screen.getByTitle("New… (Cmd+K for worktree)"));
+  await fireEvent.click(await screen.findByText("New worktree…"));
+}
+
 async function openCreateDialogAndSubmit(branch: string): Promise<void> {
-  await fireEvent.click(screen.getByTitle("New Worktree (Cmd+K)"));
+  await openNewWorktreeDialog();
   await screen.findByText("New Worktree");
   await fireEvent.input(screen.getByLabelText(/Branch name/i), {
     target: { value: branch },
@@ -222,7 +227,7 @@ async function openCreateDialogAndSubmit(branch: string): Promise<void> {
 }
 
 async function openCreateDialogWithBaseAndSubmit(branch: string, baseBranch: string): Promise<void> {
-  await fireEvent.click(screen.getByTitle("New Worktree (Cmd+K)"));
+  await openNewWorktreeDialog();
   await screen.findByText("New Worktree");
   await fireEvent.input(screen.getByLabelText(/Branch name/i), {
     target: { value: branch },
@@ -416,7 +421,7 @@ describe("App create selection", () => {
 
     await screen.findByText("Select a worktree");
 
-    await fireEvent.click(screen.getByTitle("New Worktree (Cmd+K)"));
+    await openNewWorktreeDialog();
     await screen.findByText("New Worktree");
     await fireEvent.click(screen.getByRole("switch", { name: /enable multiple agent selection/i }));
     await fireEvent.click(screen.getByRole("checkbox", { name: "Codex" }));
@@ -553,7 +558,7 @@ describe("App create selection", () => {
 
     render(App);
 
-    await fireEvent.click(screen.getByTitle("New Worktree (Cmd+K)"));
+    await openNewWorktreeDialog();
     await screen.findByText("New Worktree");
 
     expect(screen.queryByRole("switch", { name: /create linear ticket/i })).not.toBeInTheDocument();
@@ -571,7 +576,7 @@ describe("App create selection", () => {
 
     render(App);
 
-    await fireEvent.click(screen.getByTitle("New Worktree (Cmd+K)"));
+    await openNewWorktreeDialog();
     await screen.findByText("New Worktree");
 
     const linearToggle = screen.getByRole("switch", { name: /create linear ticket/i });
@@ -612,7 +617,7 @@ describe("App create selection", () => {
 
     render(App);
 
-    await fireEvent.click(screen.getByTitle("New Worktree (Cmd+K)"));
+    await openNewWorktreeDialog();
     await screen.findByText("New Worktree");
 
     await fireEvent.click(screen.getByRole("switch", { name: /enable multiple agent selection/i }));
@@ -634,7 +639,7 @@ describe("App create selection", () => {
 
     render(App);
 
-    await fireEvent.click(screen.getByTitle("New Worktree (Cmd+K)"));
+    await openNewWorktreeDialog();
     await screen.findByText("New Worktree");
 
     await fireEvent.click(screen.getByRole("switch", { name: /enable multiple agent selection/i }));
@@ -696,7 +701,7 @@ describe("App create selection", () => {
 
     render(App);
 
-    await fireEvent.click(screen.getByTitle("New Worktree (Cmd+K)"));
+    await openNewWorktreeDialog();
     await screen.findByText("New Worktree");
 
     await waitFor(() => {
@@ -714,7 +719,7 @@ describe("App create selection", () => {
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    await fireEvent.click(screen.getByTitle("New Worktree (Cmd+K)"));
+    await openNewWorktreeDialog();
     await screen.findByText("New Worktree");
 
     await waitFor(() => {
@@ -741,7 +746,7 @@ describe("App create selection", () => {
 
     render(App);
 
-    await fireEvent.click(screen.getByTitle("New Worktree (Cmd+K)"));
+    await openNewWorktreeDialog();
     await screen.findByText("New Worktree");
     await fireEvent.click(screen.getByRole("button", { name: "Use existing branch" }));
 

@@ -6,17 +6,19 @@
   let {
     projectName,
     agentChoices,
+    lockedKind,
     onClose,
     onCreate,
   }: {
     projectName: string;
     agentChoices: { id: string; label: string }[];
+    lockedKind?: "shell" | "agent";
     onClose: () => void;
     onCreate: (req: CreateScratchSessionRequest) => Promise<void>;
   } = $props();
 
   let displayName = $state("");
-  let kind = $state<"shell" | "agent">("shell");
+  let kind = $state<"shell" | "agent">(lockedKind ?? "shell");
   let agentId = $state<string>(agentChoices[0]?.id ?? "");
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -45,7 +47,7 @@
 <BaseDialog onclose={onClose} className="md:max-w-[420px]">
   <form onsubmit={submit} class="flex flex-col gap-4">
     <div>
-      <h2 class="text-base">New scratch session</h2>
+      <h2 class="text-base">{lockedKind === "agent" ? "New AI session" : "New scratch session"}</h2>
       <p class="text-[12px] text-muted mt-0.5">in <span class="text-primary font-medium">{projectName}</span></p>
     </div>
 
@@ -61,15 +63,17 @@
       />
     </div>
 
-    <fieldset class="flex flex-col gap-2 text-[13px]">
-      <legend class="text-xs text-muted mb-1.5">Type</legend>
-      <label class="flex items-center gap-2">
-        <input type="radio" bind:group={kind} value="shell" /> Shell
-      </label>
-      <label class="flex items-center gap-2">
-        <input type="radio" bind:group={kind} value="agent" disabled={agentChoices.length === 0} /> Agent
-      </label>
-    </fieldset>
+    {#if !lockedKind}
+      <fieldset class="flex flex-col gap-2 text-[13px]">
+        <legend class="text-xs text-muted mb-1.5">Type</legend>
+        <label class="flex items-center gap-2">
+          <input type="radio" bind:group={kind} value="shell" /> Shell
+        </label>
+        <label class="flex items-center gap-2">
+          <input type="radio" bind:group={kind} value="agent" disabled={agentChoices.length === 0} /> Agent
+        </label>
+      </fieldset>
+    {/if}
 
     {#if kind === "agent"}
       <div>

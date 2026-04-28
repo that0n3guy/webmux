@@ -17,6 +17,7 @@
   import Toggle from "./lib/Toggle.svelte";
   import CreateScratchDialog from "./lib/CreateScratchDialog.svelte";
   import AddProjectDialog from "./lib/AddProjectDialog.svelte";
+  import NewMenu from "./lib/NewMenu.svelte";
   import ConfirmRemoveProjectDialog from "./lib/ConfirmRemoveProjectDialog.svelte";
   import type {
     AvailableBranch,
@@ -107,6 +108,7 @@
   let selectedScratchSession = $state<{ id: string; sessionName: string } | null>(null);
   let externalSessions = $state<ExternalTmuxSession[]>([]);
   let showCreateScratchDialog = $state(false);
+  let showCreateAISessionDialog = $state(false);
   let hasLoadedWorktrees = $state(false);
   let removeBranch = $state<string | null>(null);
   let scratchToRemove = $state<{ id: string; displayName: string } | null>(null);
@@ -915,7 +917,7 @@
 
   function handleKeydown(e: KeyboardEvent) {
     // Ignore shortcuts when a dialog is open (let dialog handle its own keys)
-    if (showCreateDialog || removeBranch || mergeBranch || pullMainConfirm || pullLinkedRepoAlias) return;
+    if (showCreateDialog || showCreateAISessionDialog || removeBranch || mergeBranch || pullMainConfirm || pullLinkedRepoAlias) return;
 
     const mod = e.metaKey || e.ctrlKey;
     if (!mod) return;
@@ -1147,11 +1149,17 @@
           <h1 class="text-base font-semibold">{config.name ?? "Dashboard"}</h1>
           <div class="flex items-center gap-2">
             <button
-              class="h-8 px-2 gap-1.5 rounded-md border border-edge bg-surface text-accent text-xs flex items-center justify-center cursor-pointer hover:bg-hover disabled:opacity-50 disabled:cursor-not-allowed"
-              onclick={() => openCreateDialog()}
-              title="New Worktree (Cmd+K)"
-              ><span class="text-lg leading-none">+</span> New</button
+              type="button"
+              class="h-8 px-2 gap-1.5 rounded-md border border-edge bg-surface text-primary text-xs flex items-center justify-center cursor-pointer hover:bg-hover"
+              onclick={() => { showAddProjectDialog = true; }}
+              title="Add an existing project to webmux"
             >
+              <span class="text-lg leading-none">+</span> Project
+            </button>
+            <NewMenu
+              onNewWorktree={() => openCreateDialog()}
+              onNewAISession={() => { showCreateAISessionDialog = true; }}
+            />
             {#if isMobile}
               <button
                 class="h-8 w-8 rounded-md border border-edge bg-surface text-muted text-sm flex items-center justify-center cursor-pointer hover:bg-hover"
@@ -1236,6 +1244,19 @@
           agentChoices={config.agents.map((a) => ({ id: a.id, label: a.id }))}
           onClose={() => { showCreateScratchDialog = false; }}
           onCreate={handleCreateScratch}
+        />
+      {/if}
+
+      {#if showCreateAISessionDialog}
+        <CreateScratchDialog
+          projectName={projects.find((p) => p.id === currentProjectId)?.name ?? "Unknown project"}
+          agentChoices={config.agents.map((a) => ({ id: a.id, label: a.label ?? a.id }))}
+          lockedKind="agent"
+          onClose={() => { showCreateAISessionDialog = false; }}
+          onCreate={async (req) => {
+            await handleCreateScratch(req);
+            showCreateAISessionDialog = false;
+          }}
         />
       {/if}
 
