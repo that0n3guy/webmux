@@ -4,9 +4,14 @@ import { createScratchSessionService } from "../services/scratch-session-service
 
 function makeFakeGateway(initial: TmuxSessionSummary[] = []): {
   gw: TmuxGateway;
-  state: { sessions: TmuxSessionSummary[]; commands: string[]; killed: string[] };
+  state: { sessions: TmuxSessionSummary[]; commands: string[]; killed: string[]; options: Map<string, string> };
 } {
-  const state = { sessions: [...initial], commands: [] as string[], killed: [] as string[] };
+  const state = {
+    sessions: [...initial],
+    commands: [] as string[],
+    killed: [] as string[],
+    options: new Map<string, string>(),
+  };
   const gw: TmuxGateway = {
     ensureServer: () => {},
     ensureSession: (name, cwd) => {
@@ -24,6 +29,12 @@ function makeFakeGateway(initial: TmuxSessionSummary[] = []): {
     createWindow: () => {},
     splitWindow: () => {},
     setWindowOption: () => {},
+    setSessionOption: (sessionName, optionName, value) => {
+      state.options.set(`${sessionName}|${optionName}`, value);
+    },
+    getSessionOption: (sessionName, optionName) => {
+      return state.options.get(`${sessionName}|${optionName}`) ?? null;
+    },
     runCommand: (target, cmd) => { state.commands.push(`runCommand ${target} ${cmd}`); },
     selectPane: () => {},
     listWindows: () => [],
@@ -180,5 +191,50 @@ describe("scratch-session-service", () => {
     svc.scan();
     const snaps = svc.list();
     expect(snaps.map((s) => s.id)).toEqual(["mine"]);
+  });
+
+  test("scan() restores displayName/kind/agentId from tmux user options", () => {
+    const existing: TmuxSessionSummary[] = [
+      { name: "wm-scratch-projA-restored", windowCount: 1, attached: false, group: null },
+    ];
+    const { gw, state } = makeFakeGateway(existing);
+    state.options.set("wm-scratch-projA-restored|@webmux-display-name", "My Important Session");
+    state.options.set("wm-scratch-projA-restored|@webmux-kind", "agent");
+    state.options.set("wm-scratch-projA-restored|@webmux-agent-id", "claude");
+    state.options.set("wm-scratch-projA-restored|@webmux-created-at", "2026-01-01T00:00:00Z");
+
+    const svc = createScratchSessionService({
+      tmux: gw,
+      cwd: "/tmp",
+      projectId: "projA",
+      idGenerator: () => "new",
+      now: () => "2026-04-27T15:00:00Z",
+    });
+    svc.scan();
+    const snaps = svc.list();
+    expect(snaps).toHaveLength(1);
+    expect(snaps[0]).toMatchObject({
+      id: "restored",
+      displayName: "My Important Session",
+      kind: "agent",
+      agentId: "claude",
+      sessionName: "wm-scratch-projA-restored",
+      createdAt: "2026-01-01T00:00:00Z",
+    });
+  });
+
+  test("create persists meta as tmux user options", async () => {
+    const { gw, state } = makeFakeGateway();
+    const svc = createScratchSessionService({
+      tmux: gw,
+      cwd: "/tmp",
+      projectId: "projA",
+      idGenerator: () => "abc",
+      now: () => "2026-04-27T15:00:00Z",
+    });
+    await svc.create({ displayName: "named session", kind: "agent", agentId: "claude" });
+    expect(state.options.get("wm-scratch-projA-abc|@webmux-display-name")).toBe("named session");
+    expect(state.options.get("wm-scratch-projA-abc|@webmux-kind")).toBe("agent");
+    expect(state.options.get("wm-scratch-projA-abc|@webmux-agent-id")).toBe("claude");
   });
 });

@@ -35,6 +35,8 @@ export interface TmuxGateway {
     command?: string;
   }): void;
   setWindowOption(sessionName: string, windowName: string, option: string, value: string): void;
+  setSessionOption(sessionName: string, optionName: string, value: string): void;
+  getSessionOption(sessionName: string, optionName: string): string | null;
   runCommand(target: string, command: string): void;
   selectPane(target: string): void;
   listWindows(): TmuxWindowSummary[];
@@ -201,6 +203,20 @@ export class BunTmuxGateway implements TmuxGateway {
       ["set-window-option", "-t", `${sessionName}:${windowName}`, option, value],
       `set tmux option ${option} on ${sessionName}:${windowName}`,
     );
+  }
+
+  setSessionOption(sessionName: string, optionName: string, value: string): void {
+    assertTmuxOk(
+      ["set-option", "-t", sessionName, optionName, value],
+      `set tmux option ${optionName} on session ${sessionName}`,
+    );
+  }
+
+  getSessionOption(sessionName: string, optionName: string): string | null {
+    const result = runTmux(["show-option", "-t", sessionName, "-v", optionName]);
+    if (result.exitCode !== 0) return null;
+    const trimmed = result.stdout.trim();
+    return trimmed.length > 0 ? trimmed : null;
   }
 
   runCommand(target: string, command: string): void {

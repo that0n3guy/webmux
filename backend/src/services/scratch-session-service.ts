@@ -55,6 +55,10 @@ export function createScratchSessionService(deps: Deps): ScratchSessionService {
         createdAt: now(),
       };
       deps.tmux.ensureSession(sessionName, deps.cwd);
+      deps.tmux.setSessionOption(sessionName, "@webmux-display-name", input.displayName);
+      deps.tmux.setSessionOption(sessionName, "@webmux-kind", input.kind);
+      deps.tmux.setSessionOption(sessionName, "@webmux-agent-id", input.agentId ?? "");
+      deps.tmux.setSessionOption(sessionName, "@webmux-created-at", meta.createdAt);
       if (input.kind === "agent" && input.agentId && deps.getAgentLaunchCommand) {
         const cmd = deps.getAgentLaunchCommand(input.agentId);
         if (cmd) {
@@ -81,14 +85,22 @@ export function createScratchSessionService(deps: Deps): ScratchSessionService {
         if (!s.name.startsWith(projectPrefix)) continue;
         const id = s.name.slice(projectPrefix.length);
         if (metas.has(id)) continue;
+
+        const persistedDisplayName = deps.tmux.getSessionOption(s.name, "@webmux-display-name");
+        const persistedKind = deps.tmux.getSessionOption(s.name, "@webmux-kind");
+        const persistedAgentId = deps.tmux.getSessionOption(s.name, "@webmux-agent-id");
+        const persistedCreatedAt = deps.tmux.getSessionOption(s.name, "@webmux-created-at");
+
+        const kind: ScratchSessionKind = persistedKind === "agent" ? "agent" : "shell";
+
         metas.set(id, {
           id,
-          displayName: id,
+          displayName: persistedDisplayName ?? id,
           sessionName: s.name,
-          kind: "shell",
-          agentId: null,
+          kind,
+          agentId: persistedAgentId && persistedAgentId.length > 0 ? persistedAgentId : null,
           cwd: deps.cwd,
-          createdAt: now(),
+          createdAt: persistedCreatedAt ?? now(),
         });
       }
     },
