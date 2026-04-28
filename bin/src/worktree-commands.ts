@@ -779,12 +779,13 @@ export async function runWorktreeCommand(
         port: context.port,
       });
 
-      const opts = {
-        ...(parsed.agentOverride !== undefined ? { agentOverride: parsed.agentOverride } : {}),
-        ...(parsed.shellOnly ? { shellOnly: parsed.shellOnly } : {}),
-      };
+      const opts = parsed.agentOverride !== undefined
+        ? { agentOverride: parsed.agentOverride }
+        : parsed.shellOnly
+          ? { shellOnly: true as const }
+          : undefined;
 
-      await runtime.lifecycleService.openWorktree(parsed.branch, Object.keys(opts).length > 0 ? opts : undefined);
+      await runtime.lifecycleService.openWorktree(parsed.branch, opts);
       stdout(`Opened worktree ${parsed.branch}`);
       switchToTmuxWindow(runtime.projectDir, parsed.branch);
       return 0;
