@@ -6,6 +6,7 @@
     BuiltInAgentId,
     CreateWorktreeRequest,
     ProfileConfig,
+    ProjectInfo,
     WorktreeCreateMode,
   } from "./types";
   import BaseDialog from "./BaseDialog.svelte";
@@ -32,6 +33,9 @@
     startupEnvs = {},
     linearCreateTicketOption = false,
     openedFromLinearIssue = false,
+    projects = [],
+    defaultProjectId = "",
+    onProjectChange,
     oncreate,
     oncancel,
   }: {
@@ -52,9 +56,18 @@
     startupEnvs?: Record<string, string | boolean>;
     linearCreateTicketOption?: boolean;
     openedFromLinearIssue?: boolean;
+    projects?: ProjectInfo[];
+    defaultProjectId?: string;
+    onProjectChange?: (projectId: string) => void;
     oncreate: (request: CreateWorktreeRequest) => void;
     oncancel: () => void;
   } = $props();
+
+  // svelte-ignore state_referenced_locally
+  let selectedProjectId = $state(defaultProjectId);
+  $effect(() => {
+    selectedProjectId = defaultProjectId;
+  });
 
   const STORAGE_KEY = "wt-default-profile";
   const AGENT_STORAGE_KEY = "wt-default-agents";
@@ -262,6 +275,23 @@
       });
     }}
   >
+    {#if projects.length > 1}
+      <div class="mb-4">
+        <label class="block text-xs text-muted mb-1.5" for="wt-project">Project</label>
+        <select
+          id="wt-project"
+          bind:value={selectedProjectId}
+          onchange={() => onProjectChange?.(selectedProjectId)}
+          class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] outline-none focus:border-accent"
+        >
+          {#each projects as p (p.id)}
+            <option value={p.id}>{p.name}</option>
+          {/each}
+        </select>
+      </div>
+    {:else if projects.length === 1}
+      <p class="text-[12px] text-muted mb-4">in <span class="text-primary font-medium">{projects[0].name}</span></p>
+    {/if}
     <h2 class="text-base mb-4">New Worktree</h2>
     <div class="mb-4">
       <label class="block text-xs text-muted mb-1.5" for="wt-prompt"

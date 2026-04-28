@@ -1421,6 +1421,9 @@
     startupEnvs={config.startupEnvs ?? {}}
     linearCreateTicketOption={config.linearCreateTicketOption}
     openedFromLinearIssue={assignIssue !== null}
+    {projects}
+    defaultProjectId={currentProjectId ?? projects[0]?.id ?? ""}
+    onProjectChange={(id) => { currentProjectId = id; }}
     oncreate={handleCreate}
     oncancel={() => { showCreateDialog = false; assignIssue = null; }}
   />
