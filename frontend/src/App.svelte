@@ -1241,6 +1241,9 @@
       {#if showCreateScratchDialog}
         <CreateScratchDialog
           projectName={projects.find((p) => p.id === currentProjectId)?.name ?? "Unknown project"}
+          projects={projects}
+          defaultProjectId={currentProjectId ?? projects[0]?.id ?? ""}
+          onProjectChange={(id) => { currentProjectId = id; }}
           agentChoices={config.agents.map((a) => ({ id: a.id, label: a.id }))}
           onClose={() => { showCreateScratchDialog = false; }}
           onCreate={handleCreateScratch}
@@ -1250,6 +1253,9 @@
       {#if showCreateAISessionDialog}
         <CreateScratchDialog
           projectName={projects.find((p) => p.id === currentProjectId)?.name ?? "Unknown project"}
+          projects={projects}
+          defaultProjectId={currentProjectId ?? projects[0]?.id ?? ""}
+          onProjectChange={(id) => { currentProjectId = id; }}
           agentChoices={config.agents.map((a) => ({ id: a.id, label: a.label ?? a.id }))}
           lockedKind="agent"
           onClose={() => { showCreateAISessionDialog = false; }}

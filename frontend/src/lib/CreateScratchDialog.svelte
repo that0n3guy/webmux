@@ -1,21 +1,33 @@
 <script lang="ts">
   import type { CreateScratchSessionRequest } from "@webmux/api-contract";
+  import type { ProjectInfo } from "./types";
   import BaseDialog from "./BaseDialog.svelte";
   import Btn from "./Btn.svelte";
 
   let {
     projectName,
+    projects,
+    defaultProjectId,
     agentChoices,
     lockedKind,
+    onProjectChange,
     onClose,
     onCreate,
   }: {
     projectName: string;
+    projects: ProjectInfo[];
+    defaultProjectId: string;
     agentChoices: { id: string; label: string }[];
     lockedKind?: "shell" | "agent";
+    onProjectChange?: (projectId: string) => void;
     onClose: () => void;
     onCreate: (req: CreateScratchSessionRequest) => Promise<void>;
   } = $props();
+
+  let selectedProjectId = $state(defaultProjectId);
+  $effect(() => {
+    selectedProjectId = defaultProjectId;
+  });
 
   let displayName = $state("");
   let kind = $state<"shell" | "agent">(lockedKind ?? "shell");
@@ -48,8 +60,26 @@
   <form onsubmit={submit} class="flex flex-col gap-4">
     <div>
       <h2 class="text-base">{lockedKind === "agent" ? "New AI session" : "New scratch session"}</h2>
-      <p class="text-[12px] text-muted mt-0.5">in <span class="text-primary font-medium">{projectName}</span></p>
+      {#if projects.length === 1}
+        <p class="text-[12px] text-muted mt-0.5">in <span class="text-primary font-medium">{projectName}</span></p>
+      {/if}
     </div>
+
+    {#if projects.length > 1}
+      <div>
+        <label class="block text-xs text-muted mb-1.5" for="scratch-project">Project</label>
+        <select
+          id="scratch-project"
+          bind:value={selectedProjectId}
+          onchange={() => onProjectChange?.(selectedProjectId)}
+          class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] outline-none focus:border-accent"
+        >
+          {#each projects as p (p.id)}
+            <option value={p.id}>{p.name}</option>
+          {/each}
+        </select>
+      </div>
+    {/if}
 
     <div>
       <label class="block text-xs text-muted mb-1.5" for="scratch-name">Name</label>

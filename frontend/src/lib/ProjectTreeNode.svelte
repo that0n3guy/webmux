@@ -52,9 +52,17 @@
   } = $props();
 
   let menuOpen = $state(false);
+  let menuTriggerEl: HTMLButtonElement | null = $state(null);
+  let menuTop = $state(0);
+  let menuRight = $state(0);
 
   function handleMenuClick(e: MouseEvent): void {
     e.stopPropagation();
+    if (!menuOpen && menuTriggerEl) {
+      const rect = menuTriggerEl.getBoundingClientRect();
+      menuTop = rect.bottom + 4;
+      menuRight = window.innerWidth - rect.right;
+    }
     menuOpen = !menuOpen;
   }
 
@@ -78,27 +86,39 @@
 
   $effect(() => {
     if (!menuOpen) return;
-    function onClickOutside() { menuOpen = false; }
-    const timer = setTimeout(() => window.addEventListener("click", onClickOutside, { once: true }), 0);
-    return () => { clearTimeout(timer); window.removeEventListener("click", onClickOutside); };
+    function close(): void { menuOpen = false; }
+    function onClickOutside(): void { menuOpen = false; }
+    const timer = setTimeout(() => {
+      window.addEventListener("click", onClickOutside, { once: true });
+      document.addEventListener("scroll", close, { capture: true, once: true });
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("click", onClickOutside);
+      document.removeEventListener("scroll", close, { capture: true } as EventListenerOptions);
+    };
   });
 </script>
 
 <section class="border-b border-edge">
-  <header class="relative flex items-center px-3 py-2 cursor-pointer hover:bg-hover select-none" onclick={onToggle}>
+  <header class="flex items-center px-3 py-2 cursor-pointer hover:bg-hover select-none" onclick={onToggle}>
     <span class="mr-2 text-xs">{expanded ? "▾" : "▸"}</span>
     <span class="flex-1 truncate font-medium">{project.name}</span>
     <span class="text-xs text-muted ml-2">{rows.length}</span>
-    <button class="ml-2 px-1 opacity-50 hover:opacity-100" aria-label="Project menu" onclick={handleMenuClick} type="button">⋯</button>
-
-    {#if menuOpen}
-      <div class="absolute right-2 top-full mt-1 z-10 rounded-md border border-edge bg-sidebar shadow-md min-w-[180px]">
-        <button class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-hover" onclick={chooseNewWorktree} type="button">New worktree</button>
-        <button class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-hover" onclick={chooseSettings} type="button">Settings…</button>
-        <button class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-hover text-red-400" onclick={chooseRemove} type="button">Remove project…</button>
-      </div>
-    {/if}
+    <button bind:this={menuTriggerEl} class="ml-2 px-1 opacity-50 hover:opacity-100" aria-label="Project menu" onclick={handleMenuClick} type="button">⋯</button>
   </header>
+
+  {#if menuOpen}
+    <div
+      class="fixed z-50 rounded-md border border-edge bg-sidebar shadow-md min-w-[180px]"
+      style:top="{menuTop}px"
+      style:right="{menuRight}px"
+    >
+      <button class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-hover" onclick={chooseNewWorktree} type="button">New worktree</button>
+      <button class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-hover" onclick={chooseSettings} type="button">Settings…</button>
+      <button class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-hover text-red-400" onclick={chooseRemove} type="button">Remove project…</button>
+    </div>
+  {/if}
 
   {#if expanded}
     <div class="pl-2">

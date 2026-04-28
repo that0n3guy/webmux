@@ -8,10 +8,17 @@
   } = $props();
 
   let open = $state(false);
-  let containerEl: HTMLDivElement | null = $state(null);
+  let triggerEl: HTMLButtonElement | null = $state(null);
+  let menuTop = $state(0);
+  let menuRight = $state(0);
 
   function toggle(e: MouseEvent): void {
     e.stopPropagation();
+    if (!open && triggerEl) {
+      const rect = triggerEl.getBoundingClientRect();
+      menuTop = rect.bottom + 4;
+      menuRight = window.innerWidth - rect.right;
+    }
     open = !open;
   }
 
@@ -26,16 +33,23 @@
 
   $effect(() => {
     if (!open) return;
-    function onClickOutside(e: MouseEvent): void {
-      if (containerEl && !containerEl.contains(e.target as Node)) open = false;
-    }
-    const timer = setTimeout(() => window.addEventListener("click", onClickOutside), 0);
-    return () => { clearTimeout(timer); window.removeEventListener("click", onClickOutside); };
+    function close(): void { open = false; }
+    function onClickOutside(): void { open = false; }
+    const timer = setTimeout(() => {
+      window.addEventListener("click", onClickOutside, { once: true });
+      document.addEventListener("scroll", close, { capture: true, once: true });
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("click", onClickOutside);
+      document.removeEventListener("scroll", close, { capture: true } as EventListenerOptions);
+    };
   });
 </script>
 
-<div class="relative" bind:this={containerEl}>
+<div>
   <button
+    bind:this={triggerEl}
     type="button"
     class="h-8 px-2 gap-1.5 rounded-md border border-edge bg-surface text-accent text-xs flex items-center justify-center cursor-pointer hover:bg-hover"
     onclick={toggle}
@@ -46,7 +60,11 @@
   </button>
 
   {#if open}
-    <div class="absolute right-0 top-full mt-1 z-20 rounded-md border border-edge bg-sidebar shadow-md min-w-[200px]">
+    <div
+      class="fixed z-50 rounded-md border border-edge bg-sidebar shadow-md min-w-[200px]"
+      style:top="{menuTop}px"
+      style:right="{menuRight}px"
+    >
       <button class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-hover" onclick={chooseWorktree} type="button">
         New worktree…
         <kbd class="ml-2 opacity-60 text-[10px]">Cmd+K</kbd>
