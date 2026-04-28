@@ -100,6 +100,33 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
     });
   }
 
+  function ensureGitRepo(projectDir: string): void {
+    if (existsSync(join(projectDir, ".git"))) return;
+    const initResult = Bun.spawnSync(["git", "-C", projectDir, "init", "-q"], { stdout: "pipe", stderr: "pipe" });
+    if (initResult.exitCode !== 0) {
+      throw new Error(`git init failed for ${projectDir}: ${new TextDecoder().decode(initResult.stderr).trim()}`);
+    }
+    // Create an empty initial commit so the repo has HEAD; webmux's worktree flows
+    // require at least one commit on the main branch.
+    const commitResult = Bun.spawnSync(
+      ["git", "-C", projectDir, "commit", "--allow-empty", "-q", "-m", "initial commit (auto-created by webmux)"],
+      {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...Bun.env,
+          GIT_AUTHOR_NAME: Bun.env.GIT_AUTHOR_NAME ?? "webmux",
+          GIT_AUTHOR_EMAIL: Bun.env.GIT_AUTHOR_EMAIL ?? "webmux@localhost",
+          GIT_COMMITTER_NAME: Bun.env.GIT_COMMITTER_NAME ?? "webmux",
+          GIT_COMMITTER_EMAIL: Bun.env.GIT_COMMITTER_EMAIL ?? "webmux@localhost",
+        },
+      }
+    );
+    if (commitResult.exitCode !== 0) {
+      throw new Error(`git commit (initial) failed for ${projectDir}: ${new TextDecoder().decode(commitResult.stderr).trim()}`);
+    }
+  }
+
   function ensureWebmuxYaml(projectDir: string, init: AddProjectInput): void {
     const yamlPath = join(projectDir, ".webmux.yaml");
     if (existsSync(yamlPath)) return;
@@ -175,6 +202,7 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
       }
 
       ensureWebmuxYaml(absPath, input);
+      ensureGitRepo(absPath);
       const scope = constructScope(absPath);
       scopes.set(scope.projectId, scope);
       meta.set(scope.projectId, { addedAt: new Date().toISOString() });

@@ -1231,6 +1231,7 @@
 
       {#if showCreateScratchDialog}
         <CreateScratchDialog
+          projectName={projects.find((p) => p.id === currentProjectId)?.name ?? "Unknown project"}
           agentChoices={config.agents.map((a) => ({ id: a.id, label: a.id }))}
           onClose={() => { showCreateScratchDialog = false; }}
           onCreate={handleCreateScratch}

@@ -4,10 +4,12 @@
   import Btn from "./Btn.svelte";
 
   let {
+    projectName,
     agentChoices,
     onClose,
     onCreate,
   }: {
+    projectName: string;
     agentChoices: { id: string; label: string }[];
     onClose: () => void;
     onCreate: (req: CreateScratchSessionRequest) => Promise<void>;
@@ -42,7 +44,10 @@
 
 <BaseDialog onclose={onClose} className="md:max-w-[420px]">
   <form onsubmit={submit} class="flex flex-col gap-4">
-    <h2 class="text-base">New scratch session</h2>
+    <div>
+      <h2 class="text-base">New scratch session</h2>
+      <p class="text-[12px] text-muted mt-0.5">in <span class="text-primary font-medium">{projectName}</span></p>
+    </div>
 
     <div>
       <label class="block text-xs text-muted mb-1.5" for="scratch-name">Name</label>

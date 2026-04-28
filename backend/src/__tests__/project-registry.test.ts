@@ -160,4 +160,17 @@ describe("ProjectRegistry", () => {
     await reg.load();
     expect(reg.list()).toEqual([]);
   });
+
+  test("add() auto-initializes git when path is not a repo", async () => {
+    const reg = createProjectRegistry(buildDeps());
+    await reg.load();
+    // makeProjectDir does git init by default — make a NON-git dir manually
+    const dir = join(workdir, "non-git");
+    mkdirSync(dir, { recursive: true });
+    // No git init, no .webmux.yaml
+    const info = await reg.add({ path: dir });
+    expect(info.path).toBe(resolve(dir));
+    expect(existsSync(join(dir, ".git"))).toBe(true);
+    expect(existsSync(join(dir, ".webmux.yaml"))).toBe(true);
+  });
 });
