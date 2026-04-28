@@ -21,11 +21,15 @@ vi.mock("./lib/api", () => ({
     sendWorktreePrompt: vi.fn(),
   },
   fetchWorktrees: vi.fn(),
+  fetchProjects: vi.fn(),
+  fetchExternalSessions: vi.fn(),
+  fetchScratchSessions: vi.fn(),
   subscribeNotifications: vi.fn(),
 }));
 
 import App from "./App.svelte";
-import { api, fetchWorktrees, subscribeNotifications } from "./lib/api";
+import { api, fetchWorktrees, fetchProjects, fetchExternalSessions, fetchScratchSessions, subscribeNotifications } from "./lib/api";
+import type { ProjectInfo } from "./lib/types";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -54,6 +58,18 @@ function deferred<T>(): Deferred<T> {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+function createProject(overrides: Partial<ProjectInfo> = {}): ProjectInfo {
+  return {
+    id: "test-project-1",
+    name: "repo",
+    path: "/repo",
+    addedAt: "2026-01-01T00:00:00.000Z",
+    mainBranch: "main",
+    defaultAgent: "claude",
+    ...overrides,
+  };
 }
 
 function createConfig(overrides: Partial<AppConfig> = {}): AppConfig {
@@ -224,7 +240,10 @@ describe("App create selection", () => {
     setupBrowserMocks();
 
     vi.mocked(api.fetchConfig).mockResolvedValue(createConfig());
+    vi.mocked(fetchProjects).mockResolvedValue([createProject()]);
     vi.mocked(fetchWorktrees).mockResolvedValue([]);
+    vi.mocked(fetchExternalSessions).mockResolvedValue([]);
+    vi.mocked(fetchScratchSessions).mockResolvedValue([]);
     vi.mocked(api.fetchAvailableBranches).mockResolvedValue({ branches: [] });
     vi.mocked(api.fetchBaseBranches).mockResolvedValue({ branches: [] });
     vi.mocked(api.fetchLinearIssues).mockResolvedValue(createLinearIssuesResponse());
@@ -352,7 +371,7 @@ describe("App create selection", () => {
     expect(dismissButton).toBeDefined();
     await fireEvent.click(dismissButton!);
 
-    expect(api.dismissNotification).toHaveBeenCalledWith({ params: { id: 42 } });
+    expect(api.dismissNotification).toHaveBeenCalledWith({ params: { projectId: "test-project-1", id: 42 } });
   });
 
   it("shows a success toast when pulling main succeeds", async () => {
@@ -370,7 +389,7 @@ describe("App create selection", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Pull" }));
     await fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Pull" }));
 
-    expect(api.pullMain).toHaveBeenCalledWith({ body: {} });
+    expect(api.pullMain).toHaveBeenCalledWith({ params: { projectId: "test-project-1" }, body: {} });
     expect(await screen.findByRole("alert")).toHaveTextContent('Pulled latest "main" from remote');
   });
 
@@ -486,7 +505,7 @@ describe("App create selection", () => {
 
     await waitFor(() => {
       expect(api.setWorktreeArchived).toHaveBeenCalledWith({
-        params: { name: "feature/active" },
+        params: { projectId: "test-project-1", name: "feature/active" },
         body: { archived: true },
       });
     });
@@ -576,6 +595,7 @@ describe("App create selection", () => {
 
     await waitFor(() => {
       expect(api.createWorktree).toHaveBeenCalledWith({
+        params: { projectId: "test-project-1" },
         body: {
           mode: "new",
           profile: "default",
@@ -631,6 +651,7 @@ describe("App create selection", () => {
 
     await waitFor(() => {
       expect(api.createWorktree).toHaveBeenCalledWith({
+        params: { projectId: "test-project-1" },
         body: {
           mode: "new",
           branch: "feature/new",
@@ -655,6 +676,7 @@ describe("App create selection", () => {
 
     await waitFor(() => {
       expect(api.createWorktree).toHaveBeenCalledWith({
+        params: { projectId: "test-project-1" },
         body: {
           mode: "new",
           branch: "feature/from-release",
@@ -680,7 +702,7 @@ describe("App create selection", () => {
 
     await waitFor(() => {
       expect(api.fetchAvailableBranches).toHaveBeenCalledTimes(1);
-      expect(api.fetchAvailableBranches).toHaveBeenCalledWith({ query: { includeRemote: false } });
+      expect(api.fetchAvailableBranches).toHaveBeenCalledWith({ params: { projectId: "test-project-1" }, query: { includeRemote: false } });
       expect(api.fetchBaseBranches).toHaveBeenCalledTimes(1);
     });
 
@@ -689,7 +711,7 @@ describe("App create selection", () => {
 
     await waitFor(() => {
       expect(api.fetchAvailableBranches).toHaveBeenCalledTimes(2);
-      expect(api.fetchAvailableBranches).toHaveBeenLastCalledWith({ query: { includeRemote: true } });
+      expect(api.fetchAvailableBranches).toHaveBeenLastCalledWith({ params: { projectId: "test-project-1" }, query: { includeRemote: true } });
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));

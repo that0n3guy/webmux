@@ -138,6 +138,7 @@ describe("MobileChatSurface", () => {
 
     render(MobileChatSurface, {
       props: {
+        projectId: "test-project-1",
         worktree: createWorktree(),
       },
     });
@@ -150,7 +151,7 @@ describe("MobileChatSurface", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => {
-      expect(sendWorktreeConversationMessage).toHaveBeenCalledWith("feature/mobile-chat", { text: "Ship it" });
+      expect(sendWorktreeConversationMessage).toHaveBeenCalledWith("test-project-1", "feature/mobile-chat", { text: "Ship it" });
     });
     expect(connectWorktreeConversationStream).not.toHaveBeenCalled();
     await screen.findByText("Ship it");
@@ -158,7 +159,7 @@ describe("MobileChatSurface", () => {
     await vi.advanceTimersByTimeAsync(1000);
 
     await waitFor(() => {
-      expect(fetchWorktreeConversationHistory).toHaveBeenCalledWith("feature/mobile-chat");
+      expect(fetchWorktreeConversationHistory).toHaveBeenCalledWith("test-project-1", "feature/mobile-chat");
     });
     await screen.findByText("Done.");
   });
@@ -196,6 +197,7 @@ describe("MobileChatSurface", () => {
 
     render(MobileChatSurface, {
       props: {
+        projectId: "test-project-1",
         worktree: createWorktree({ agentName: "codex" }),
       },
     });
@@ -209,6 +211,7 @@ describe("MobileChatSurface", () => {
 
     await waitFor(() => {
       expect(connectWorktreeConversationStream).toHaveBeenCalledWith(
+        "test-project-1",
         "feature/mobile-chat",
         expect.any(Object),
       );
@@ -264,6 +267,7 @@ describe("MobileChatSurface", () => {
 
     render(MobileChatSurface, {
       props: {
+        projectId: "test-project-1",
         worktree: createWorktree(),
       },
     });

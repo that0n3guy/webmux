@@ -1,5 +1,5 @@
 import { AgentsUiConversationEventSchema, apiPaths, createApi } from "@webmux/api-contract";
-import type { CreateScratchSessionRequest } from "@webmux/api-contract";
+import type { CreateProjectRequest, CreateScratchSessionRequest } from "@webmux/api-contract";
 import type {
   AgentDetails,
   AgentResponse,
@@ -11,6 +11,7 @@ import type {
   AppNotification,
   ExternalTmuxSession,
   FileUploadResult,
+  ProjectInfo,
   ProjectWorktreeSnapshot,
   ScratchSessionSnapshot,
   UpsertCustomAgentRequest,
@@ -62,44 +63,46 @@ function mapWorktree(snapshot: ProjectWorktreeSnapshot): WorktreeInfo {
   };
 }
 
-export async function fetchWorktrees(): Promise<WorktreeInfo[]> {
-  const response = await api.fetchWorktrees();
+export async function fetchWorktrees(projectId: string): Promise<WorktreeInfo[]> {
+  const response = await api.fetchWorktrees({ params: { projectId } });
   return response.worktrees.map((worktree) => mapWorktree(worktree));
 }
 
-export function attachWorktreeConversation(branch: string): Promise<AgentsUiWorktreeConversationResponse> {
+export function attachWorktreeConversation(projectId: string, branch: string): Promise<AgentsUiWorktreeConversationResponse> {
   return api.attachAgentsWorktreeConversation({
-    params: { name: branch },
+    params: { projectId, name: branch },
   });
 }
 
-export function fetchWorktreeConversationHistory(branch: string): Promise<AgentsUiWorktreeConversationResponse> {
+export function fetchWorktreeConversationHistory(projectId: string, branch: string): Promise<AgentsUiWorktreeConversationResponse> {
   return api.fetchAgentsWorktreeConversationHistory({
-    params: { name: branch },
+    params: { projectId, name: branch },
   });
 }
 
 export function sendWorktreeConversationMessage(
+  projectId: string,
   branch: string,
   body: AgentsUiSendMessageRequest,
 ): Promise<AgentsUiSendMessageResponse> {
   return api.sendAgentsWorktreeConversationMessage({
-    params: { name: branch },
+    params: { projectId, name: branch },
     body,
   });
 }
 
-export function interruptWorktreeConversation(branch: string): Promise<AgentsUiInterruptResponse> {
+export function interruptWorktreeConversation(projectId: string, branch: string): Promise<AgentsUiInterruptResponse> {
   return api.interruptAgentsWorktreeConversation({
-    params: { name: branch },
+    params: { projectId, name: branch },
   });
 }
 
-function withWorktreeName(path: string, branch: string): string {
-  return path.replace(":name", encodeURIComponent(branch));
+function withProjectAndWorktree(path: string, projectId: string, branch: string): string {
+  return path.replace(":projectId", encodeURIComponent(projectId)).replace(":name", encodeURIComponent(branch));
 }
 
 export function connectWorktreeConversationStream(
+  projectId: string,
   branch: string,
   callbacks: {
     onEvent: (event: AgentsUiConversationEvent) => void;
@@ -109,7 +112,7 @@ export function connectWorktreeConversationStream(
 ): () => void {
   const socket = new WebSocket(
     `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}${
-      withWorktreeName(apiPaths.streamAgentsWorktreeConversation, branch)
+      withProjectAndWorktree(apiPaths.streamAgentsWorktreeConversation, projectId, branch)
     }`,
   );
   let closedByClient = false;
@@ -139,24 +142,24 @@ export function connectWorktreeConversationStream(
   };
 }
 
-export function fetchAgents(): Promise<AgentDetails[]> {
-  return api.fetchAgents().then((response) => response.agents);
+export function fetchAgents(projectId: string): Promise<AgentDetails[]> {
+  return api.fetchAgents({ params: { projectId } }).then((response) => response.agents);
 }
 
-export function createAgent(body: UpsertCustomAgentRequest): Promise<AgentResponse> {
-  return api.createAgent({ body });
+export function createAgent(projectId: string, body: UpsertCustomAgentRequest): Promise<AgentResponse> {
+  return api.createAgent({ params: { projectId }, body });
 }
 
-export function updateAgent(id: string, body: UpsertCustomAgentRequest): Promise<AgentResponse> {
-  return api.updateAgent({ params: { id }, body });
+export function updateAgent(projectId: string, id: string, body: UpsertCustomAgentRequest): Promise<AgentResponse> {
+  return api.updateAgent({ params: { projectId, id }, body });
 }
 
-export function deleteAgent(id: string): Promise<void> {
-  return api.deleteAgent({ params: { id } }).then(() => undefined);
+export function deleteAgent(projectId: string, id: string): Promise<void> {
+  return api.deleteAgent({ params: { projectId, id } }).then(() => undefined);
 }
 
-export function validateAgent(body: UpsertCustomAgentRequest): Promise<ValidateCustomAgentResponse> {
-  return api.validateAgent({ body });
+export function validateAgent(projectId: string, body: UpsertCustomAgentRequest): Promise<ValidateCustomAgentResponse> {
+  return api.validateAgent({ params: { projectId }, body });
 }
 
 export function subscribeNotifications(
@@ -190,12 +193,12 @@ export function subscribeNotifications(
   return () => es.close();
 }
 
-export async function uploadFiles(worktree: string, files: File[]): Promise<FileUploadResult> {
+export async function uploadFiles(projectId: string, worktree: string, files: File[]): Promise<FileUploadResult> {
   const form = new FormData();
   for (const file of files) {
     form.append("files", file);
   }
-  const res = await fetch(`/api/worktrees/${encodeURIComponent(worktree)}/upload`, {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/worktrees/${encodeURIComponent(worktree)}/upload`, {
     method: "POST",
     body: form,
   });
@@ -209,16 +212,30 @@ export async function fetchExternalSessions(): Promise<ExternalTmuxSession[]> {
   return r.sessions;
 }
 
-export async function fetchScratchSessions(): Promise<ScratchSessionSnapshot[]> {
-  const r = await api.fetchScratchSessions();
+export async function fetchScratchSessions(projectId: string): Promise<ScratchSessionSnapshot[]> {
+  const r = await api.fetchScratchSessions({ params: { projectId } });
   return r.sessions;
 }
 
-export async function createScratchSession(body: CreateScratchSessionRequest): Promise<ScratchSessionSnapshot> {
-  const r = await api.createScratchSession({ body });
+export async function createScratchSession(projectId: string, body: CreateScratchSessionRequest): Promise<ScratchSessionSnapshot> {
+  const r = await api.createScratchSession({ params: { projectId }, body });
   return r.session;
 }
 
-export async function removeScratchSession(id: string): Promise<void> {
-  await api.removeScratchSession({ params: { id } });
+export async function removeScratchSession(projectId: string, id: string): Promise<void> {
+  await api.removeScratchSession({ params: { projectId, id } });
+}
+
+export async function fetchProjects(): Promise<ProjectInfo[]> {
+  const r = await api.fetchProjects();
+  return r.projects;
+}
+
+export async function createProject(body: CreateProjectRequest): Promise<ProjectInfo> {
+  const r = await api.createProject({ body });
+  return r.project;
+}
+
+export async function removeProject(id: string, killSessions: boolean): Promise<void> {
+  await api.removeProject({ params: { projectId: id }, body: { killSessions } });
 }

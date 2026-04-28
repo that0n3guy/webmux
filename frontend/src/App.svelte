@@ -27,6 +27,7 @@
     PrEntry,
     LinearIssueAvailability,
     LinearIssue,
+    ProjectInfo,
     ScratchSessionSnapshot,
     Selection,
     ToastInput,
@@ -59,6 +60,7 @@
   import {
     api,
     fetchWorktrees,
+    fetchProjects,
     subscribeNotifications,
     fetchExternalSessions,
     fetchScratchSessions,
@@ -92,6 +94,8 @@
   }
 
   let config = $state<AppConfig>(createDefaultConfig());
+  let projects = $state<ProjectInfo[]>([]);
+  let currentProjectId = $state<string | null>(null);
   let worktrees = $state<WorktreeInfo[]>([]);
   let selectedBranch = $state<string | null>(loadSavedSelectedWorktree());
   let selectedExternalSession = $state<string | null>(null);
@@ -186,7 +190,7 @@
     return includeRemote ? "remote" : "local";
   }
 
-  function fetchAvailableBranchesCached(includeRemote: boolean): Promise<AvailableBranch[]> {
+  function fetchAvailableBranchesCached(projectId: string, includeRemote: boolean): Promise<AvailableBranch[]> {
     const key = getAvailableBranchCacheKey(includeRemote);
     const cached = availableBranchCache[key];
     if (cached) return Promise.resolve(cached);
@@ -194,7 +198,7 @@
     const inFlight = availableBranchRequests[key];
     if (inFlight) return inFlight;
 
-    const request = api.fetchAvailableBranches({ query: { includeRemote } })
+    const request = api.fetchAvailableBranches({ params: { projectId }, query: { includeRemote } })
       .then((data) => {
         availableBranchCache[key] = data.branches;
         return data.branches;
@@ -207,11 +211,11 @@
     return request;
   }
 
-  function fetchBaseBranchesCached(): Promise<AvailableBranch[]> {
+  function fetchBaseBranchesCached(projectId: string): Promise<AvailableBranch[]> {
     if (baseBranchCache) return Promise.resolve(baseBranchCache);
     if (baseBranchRequest) return baseBranchRequest;
 
-    baseBranchRequest = api.fetchBaseBranches()
+    baseBranchRequest = api.fetchBaseBranches({ params: { projectId } })
       .then((data) => {
         baseBranchCache = data.branches;
         return data.branches;
@@ -294,7 +298,9 @@
 
   function handleDismissNotification(id: number): void {
     notifications = notifications.filter((n) => n.id !== id);
-    api.dismissNotification({ params: { id } }).catch(() => {});
+    if (currentProjectId) {
+      api.dismissNotification({ params: { projectId: currentProjectId, id } }).catch(() => {});
+    }
   }
 
   function handleSseDismiss(id: number): void {
@@ -430,13 +436,15 @@
       : undefined,
   );
   let selection = $derived<Selection | null>(
-    selectedScratchSession
-      ? { kind: "scratch", id: selectedScratchSession.id, sessionName: selectedScratchSession.sessionName }
-      : selectedExternalSession
-        ? { kind: "external", sessionName: selectedExternalSession }
-        : selectedBranch
-          ? { kind: "worktree", branch: selectedBranch }
-          : null
+    currentProjectId === null
+      ? null
+      : selectedScratchSession
+        ? { kind: "scratch", projectId: currentProjectId, id: selectedScratchSession.id, sessionName: selectedScratchSession.sessionName }
+        : selectedExternalSession
+          ? { kind: "external", sessionName: selectedExternalSession }
+          : selectedBranch
+            ? { kind: "worktree", projectId: currentProjectId, branch: selectedBranch }
+            : null
   );
   let canConnect = $derived(!!selectedBranch && selectedWorktree?.mux === "✓" && !selectedWorktree?.creating);
   let showMobileChat = $derived(isMobile && canConnect && supportsWorktreeChat(selectedWorktree));
@@ -501,7 +509,7 @@
   });
 
   $effect(() => {
-    if (!showCreateDialog) return;
+    if (!showCreateDialog || !currentProjectId) return;
 
     const cached = availableBranchCache[getAvailableBranchCacheKey(includeRemoteBranches)];
     if (cached) {
@@ -515,7 +523,7 @@
     availableBranchesLoading = true;
     availableBranchesError = null;
 
-    fetchAvailableBranchesCached(includeRemoteBranches)
+    fetchAvailableBranchesCached(currentProjectId, includeRemoteBranches)
       .then((branches) => {
         if (fetchId !== nextAvailableBranchFetchId) return;
         availableBranches = branches;
@@ -531,7 +539,7 @@
   });
 
   $effect(() => {
-    if (!showCreateDialog) return;
+    if (!showCreateDialog || !currentProjectId) return;
 
     if (baseBranchCache) {
       baseBranches = baseBranchCache;
@@ -545,7 +553,7 @@
     baseBranchesLoading = true;
     baseBranchesError = null;
 
-    fetchBaseBranchesCached()
+    fetchBaseBranchesCached(currentProjectId)
       .then((branches) => {
         if (fetchId !== nextBaseBranchFetchId) return;
         baseBranches = branches;
@@ -575,18 +583,28 @@
   let showPaneBar = $derived(isMobile && canConnect && !showMobileChat && paneBarPanes.length > 0);
 
   function refreshLinear(): void {
+    if (!currentProjectId) return;
     const now = Date.now();
     if (now - linearLastFetch < LINEAR_THROTTLE_MS) return;
     linearLastFetch = now;
-    api.fetchLinearIssues().then((data) => {
+    api.fetchLinearIssues({ params: { projectId: currentProjectId } }).then((data) => {
       linearAvailability = data.availability;
       linearIssues = data.issues;
     }).catch((err: unknown) => console.warn("[linear]", err));
   }
 
+  async function bootstrapProjects(): Promise<void> {
+    const list = await fetchProjects();
+    projects = list;
+    if (list.length > 0 && !currentProjectId) {
+      currentProjectId = list[0].id;
+    }
+  }
+
   async function refresh() {
+    if (!currentProjectId) return;
     try {
-      worktrees = await fetchWorktrees();
+      worktrees = await fetchWorktrees(currentProjectId);
       hasLoadedWorktrees = true;
     } catch (err) {
       console.error("Failed to refresh:", err);
@@ -624,7 +642,7 @@
     assignIssue = null;
 
     try {
-      const createPromise = api.createWorktree({ body: request });
+      const createPromise = api.createWorktree({ params: { projectId: currentProjectId! }, body: request });
       void refresh();
       const result = await createPromise;
       if (shouldAutoSelectCreatedWorktree) {
@@ -692,7 +710,7 @@
 
     removingBranches = new Set([...removingBranches, branch]);
     try {
-      await api.removeWorktree({ params: { name: branch } });
+      await api.removeWorktree({ params: { projectId: currentProjectId!, name: branch } });
       invalidateBranchCaches();
       await refresh();
     } catch (err) {
@@ -712,7 +730,7 @@
 
     removingBranches = new Set([...removingBranches, branch]);
     try {
-      await api.mergeWorktree({ params: { name: branch } });
+      await api.mergeWorktree({ params: { projectId: currentProjectId!, name: branch } });
       invalidateBranchCaches();
       await refresh();
     } catch (err) {
@@ -729,6 +747,7 @@
     pullMainError = "";
     try {
       const result = await api.pullMain({
+        params: { projectId: currentProjectId! },
         body: { ...(pullMainForce ? { force: true } : {}) },
       });
       if (result.status === "updated" || result.status === "already_up_to_date") {
@@ -759,6 +778,7 @@
     pullLinkedRepoError = "";
     try {
       const result = await api.pullMain({
+        params: { projectId: currentProjectId! },
         body: {
           ...(pullLinkedRepoForce ? { force: true } : {}),
           ...(pullLinkedRepoAlias ? { repo: pullLinkedRepoAlias } : {}),
@@ -785,7 +805,7 @@
     if (!branch) return;
     openingBranches = new Set([...openingBranches, branch]);
     try {
-      await api.openWorktree({ params: { name: branch } });
+      await api.openWorktree({ params: { projectId: currentProjectId!, name: branch } });
       await refresh();
     } catch (err) {
       showToast({ tone: "error", message: `Failed to open worktree: ${errorMessage(err)}` });
@@ -803,7 +823,7 @@
     archivingBranches = new Set([...archivingBranches, branch]);
     try {
       await api.setWorktreeArchived({
-        params: { name: branch },
+        params: { projectId: currentProjectId!, name: branch },
         body: { archived: nextArchived },
       });
       await refresh();
@@ -817,7 +837,7 @@
   async function closeWorktree(branch: string): Promise<void> {
     selectNeighborOf(branch);
     try {
-      await api.closeWorktree({ params: { name: branch } });
+      await api.closeWorktree({ params: { projectId: currentProjectId!, name: branch } });
       await refresh();
     } catch (err) {
       showToast({ tone: "error", message: `Failed to close worktree: ${errorMessage(err)}` });
@@ -889,8 +909,9 @@
   }
 
   async function refreshSessions() {
+    if (!currentProjectId) return;
     try {
-      const [ext, scr] = await Promise.all([fetchExternalSessions(), fetchScratchSessions()]);
+      const [ext, scr] = await Promise.all([fetchExternalSessions(), fetchScratchSessions(currentProjectId)]);
       externalSessions = ext;
       scratchSessions = scr;
     } catch (err: unknown) {
@@ -900,7 +921,7 @@
   }
 
   async function handleCreateScratch(req: import("@webmux/api-contract").CreateScratchSessionRequest) {
-    const session = await createScratchSession(req);
+    const session = await createScratchSession(currentProjectId!, req);
     scratchSessions = [...scratchSessions, session];
     selectedExternalSession = null;
     selectedBranch = null;
@@ -915,7 +936,7 @@
   async function confirmRemoveScratch() {
     const target = scratchToRemove;
     if (!target) return;
-    await removeScratchSession(target.id);
+    await removeScratchSession(currentProjectId!, target.id);
     scratchSessions = scratchSessions.filter((s) => s.id !== target.id);
     if (selectedScratchSession?.id === target.id) {
       selectedScratchSession = null;
@@ -950,9 +971,11 @@
         config = c;
       })
       .catch(() => {});
-    refresh();
-    refreshLinear();
-    void refreshSessions();
+    void bootstrapProjects().then(() => {
+      refresh();
+      refreshLinear();
+      void refreshSessions();
+    });
     const sessionsPollHandle = setInterval(() => { void refreshSessions(); }, 5000);
     let intervalMs = pollIntervalMs;
     let interval: ReturnType<typeof setInterval> | undefined;
@@ -1130,6 +1153,7 @@
       />
 
       <SessionList
+        projectId={currentProjectId ?? ""}
         {externalSessions}
         {scratchSessions}
         {selection}
@@ -1234,7 +1258,7 @@
 
     {#if showMobileChat && selection?.kind === "worktree"}
       {#key selectedBranch}
-        <MobileChatSurface worktree={selectedWorktree!} />
+        <MobileChatSurface projectId={currentProjectId!} worktree={selectedWorktree!} />
       {/key}
     {:else if selection && (selection.kind !== "worktree" || canConnect)}
       {#key selection.kind === "worktree" ? selection.branch : selection.kind === "external" ? selection.sessionName : selection.id}
@@ -1375,6 +1399,7 @@
 
 {#if showSettingsDialog}
   <SettingsDialog
+    projectId={currentProjectId!}
     {currentTheme}
     linearAutoCreate={config.linearAutoCreateWorktrees ?? false}
     autoRemoveOnMerge={config.autoRemoveOnMerge ?? false}

@@ -3,6 +3,7 @@
   import { sortByName, attachedBadge } from "./session-utils";
 
   let {
+    projectId,
     externalSessions,
     scratchSessions,
     selection,
@@ -10,6 +11,7 @@
     onCreateScratch,
     onRemoveScratch,
   }: {
+    projectId: string;
     externalSessions: ExternalTmuxSession[];
     scratchSessions: ScratchSessionSnapshot[];
     selection: Selection | null;
@@ -43,7 +45,7 @@
         <li
           class="flex items-center justify-between px-3 py-1.5 cursor-pointer hover:bg-hover"
           class:bg-hover={isScratchSelected(s.id)}
-          onclick={() => onSelect({ kind: "scratch", id: s.id, sessionName: s.sessionName })}
+          onclick={() => onSelect({ kind: "scratch", projectId, id: s.id, sessionName: s.sessionName })}
         >
           <span class="flex-1 truncate">{s.displayName}</span>
           <span class="text-xs opacity-60 ml-2">{attachedBadge(s)}</span>

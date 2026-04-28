@@ -77,6 +77,7 @@ function createConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 
 function renderDialog() {
   return render(SettingsDialog, {
+    projectId: "test-project-1",
     currentTheme: "github-dark",
     linearAutoCreate: false,
     autoRemoveOnMerge: false,
@@ -156,6 +157,7 @@ describe("SettingsDialog agent management", () => {
       .mockResolvedValueOnce(createConfig({ agents: [] }));
 
     render(SettingsDialog, {
+      projectId: "test-project-1",
       currentTheme: "github-dark",
       linearAutoCreate: false,
       autoRemoveOnMerge: false,
@@ -174,7 +176,7 @@ describe("SettingsDialog agent management", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Test" }));
 
     await waitFor(() => {
-      expect(validateAgent).toHaveBeenCalledWith({
+      expect(validateAgent).toHaveBeenCalledWith("test-project-1", {
         label: "Gemini CLI",
         startCommand: 'gemini --prompt "${PROMPT}"',
       });
@@ -184,7 +186,7 @@ describe("SettingsDialog agent management", () => {
     await fireEvent.click(screen.getAllByRole("button", { name: "Save" }).at(-1)!);
 
     await waitFor(() => {
-      expect(createAgent).toHaveBeenCalledWith({
+      expect(createAgent).toHaveBeenCalledWith("test-project-1", {
         label: "Gemini CLI",
         startCommand: 'gemini --prompt "${PROMPT}"',
       });
@@ -197,7 +199,7 @@ describe("SettingsDialog agent management", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Remove" }));
 
     await waitFor(() => {
-      expect(deleteAgent).toHaveBeenCalledWith("gemini");
+      expect(deleteAgent).toHaveBeenCalledWith("test-project-1", "gemini");
     });
     await waitFor(() => {
       expect(onagentschange).toHaveBeenCalledWith([]);

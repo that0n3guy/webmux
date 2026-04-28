@@ -17,10 +17,10 @@
 
   const wsPath = $derived(
     selection.kind === "worktree"
-      ? `/ws/${encodeURIComponent(selection.branch)}`
+      ? `/ws/projects/${encodeURIComponent(selection.projectId)}/${encodeURIComponent(selection.branch)}`
       : selection.kind === "external"
         ? `/ws/external/${encodeURIComponent(selection.sessionName)}`
-        : `/ws/scratch/${encodeURIComponent(selection.id)}`
+        : `/ws/projects/${encodeURIComponent(selection.projectId)}/scratch/${encodeURIComponent(selection.id)}`
   );
 
   const DISCONNECTED_NOTICE = "\r\n\x1b[90m[Disconnected]\x1b[0m";
@@ -234,7 +234,7 @@
       return;
     }
     try {
-      const result = await uploadFiles(selection.branch, files);
+      const result = await uploadFiles(selection.projectId, selection.branch, files);
       const paths = result.files.map((f) => f.path).join(" ");
       sendInput(paths);
     } catch (err: unknown) {

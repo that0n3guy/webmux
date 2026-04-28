@@ -22,6 +22,7 @@
   }
 
   let {
+    projectId,
     currentTheme,
     linearAutoCreate,
     autoRemoveOnMerge,
@@ -32,6 +33,7 @@
     onsave,
     onclose,
   }: {
+    projectId: string;
     currentTheme: ThemeKey;
     linearAutoCreate: boolean;
     autoRemoveOnMerge: boolean;
@@ -66,7 +68,7 @@
     agentsError = null;
 
     try {
-      agents = await fetchAgents();
+      agents = await fetchAgents(projectId);
     } catch (err) {
       agentsError = errorMessage(err);
     } finally {
@@ -91,7 +93,7 @@
   function handleAutoCreateToggle(enabled: boolean) {
     pendingAutoCreate = enabled;
     autoCreateSaving = true;
-    api.setLinearAutoCreate({ body: { enabled } })
+    api.setLinearAutoCreate({ params: { projectId }, body: { enabled } })
       .then((result) => {
         onlinearautocreatechange(result.enabled);
       })
@@ -104,7 +106,7 @@
   function handleAutoRemoveToggle(enabled: boolean) {
     pendingAutoRemove = enabled;
     autoRemoveSaving = true;
-    api.setAutoRemoveOnMerge({ body: { enabled } })
+    api.setAutoRemoveOnMerge({ params: { projectId }, body: { enabled } })
       .then((result) => {
         onautoremovechange(result.enabled);
       })
@@ -170,9 +172,9 @@
     if (!editor) return;
 
     if (editor.mode === "edit" && editor.agentId) {
-      await updateAgent(editor.agentId, input);
+      await updateAgent(projectId, editor.agentId, input);
     } else {
-      await createAgent(input);
+      await createAgent(projectId, input);
     }
 
     await loadAgentList();
@@ -181,7 +183,7 @@
   }
 
   function handleValidateAgent(input: UpsertCustomAgentRequest) {
-    return validateAgent(input);
+    return validateAgent(projectId, input);
   }
 
   async function handleDeleteAgent(): Promise<void> {
@@ -189,7 +191,7 @@
     deletingAgentId = deleteCandidate.id;
 
     try {
-      await deleteAgent(deleteCandidate.id);
+      await deleteAgent(projectId, deleteCandidate.id);
       await loadAgentList();
       syncAgentSummaries();
       deleteCandidate = null;

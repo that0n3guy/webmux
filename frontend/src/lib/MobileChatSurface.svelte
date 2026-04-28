@@ -21,10 +21,11 @@
   import WorktreeConversationPanel from "./WorktreeConversationPanel.svelte";
 
   interface Props {
+    projectId: string;
     worktree: WorktreeInfo;
   }
 
-  const { worktree }: Props = $props();
+  const { projectId, worktree }: Props = $props();
 
   let conversation = $state<AgentsUiConversationState | null>(null);
   let conversationError = $state<string | null>(null);
@@ -107,7 +108,7 @@
     }
 
     closeConversationStream();
-    const disconnect = connectWorktreeConversationStream(worktree.branch, {
+    const disconnect = connectWorktreeConversationStream(projectId, worktree.branch, {
       onEvent: (event) => {
         handleConversationStreamEvent(conversationId, event);
       },
@@ -123,8 +124,8 @@
 
   function requestConversation(mode: "attach" | "history"): Promise<AgentsUiWorktreeConversationResponse> {
     return mode === "attach"
-      ? attachWorktreeConversation(worktree.branch)
-      : fetchWorktreeConversationHistory(worktree.branch);
+      ? attachWorktreeConversation(projectId, worktree.branch)
+      : fetchWorktreeConversationHistory(projectId, worktree.branch);
   }
 
   async function loadConversation(mode: "attach" | "history"): Promise<void> {
@@ -190,7 +191,7 @@
     isSending = true;
     conversationError = null;
     try {
-      const response = await sendWorktreeConversationMessage(worktree.branch, { text });
+      const response = await sendWorktreeConversationMessage(projectId, worktree.branch, { text });
       composerText = "";
       if (conversation.conversationId !== response.conversationId) {
         conversation = {
@@ -212,7 +213,7 @@
     const baselineConversation = conversation;
     conversationError = null;
     try {
-      await interruptWorktreeConversation(worktree.branch);
+      await interruptWorktreeConversation(projectId, worktree.branch);
       startRefreshPolling(baselineConversation);
     } catch (error) {
       conversationError = error instanceof Error ? error.message : String(error);

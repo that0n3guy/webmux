@@ -4,6 +4,7 @@ import type {
   ExternalTmuxSession,
   LinkedLinearIssue,
   PrEntry,
+  ProjectInfo,
   ScratchSessionKind,
   ScratchSessionSnapshot,
   ServiceStatus,
@@ -62,12 +63,12 @@ export type {
 } from "@webmux/api-contract";
 export type { AgentsSendMessageRequest as AgentsUiSendMessageRequest } from "@webmux/api-contract";
 
-export type { ExternalTmuxSession, ScratchSessionSnapshot, ScratchSessionKind };
+export type { ExternalTmuxSession, ProjectInfo, ScratchSessionSnapshot, ScratchSessionKind };
 
 export type Selection =
-  | { kind: "worktree"; branch: string }
-  | { kind: "external"; sessionName: string }
-  | { kind: "scratch"; id: string; sessionName: string };
+  | { kind: "worktree"; projectId: string; branch: string }
+  | { kind: "scratch"; projectId: string; id: string; sessionName: string }
+  | { kind: "external"; sessionName: string };
 
 export interface FileUploadResult {
   files: Array<{ path: string }>;
