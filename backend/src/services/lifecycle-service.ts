@@ -238,7 +238,7 @@ export class LifecycleService {
     worktreeId: string;
   }> {
     try {
-      if (opts?.agentOverride && opts?.shellOnly) {
+      if (opts?.agentOverride && opts?.shellOnly === true) {
         throw new LifecycleError("Cannot combine agentOverride with shellOnly", 400);
       }
       const resolved = await this.resolveExistingWorktree(branch);

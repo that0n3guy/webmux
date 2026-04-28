@@ -10,10 +10,10 @@
 The full plan in `2026-04-27-multi-project-webmux.md` (MP-1 through MP-19) is **shipped**. On top of that, ~10 follow-up fixes from live UX testing are also shipped. webmux is running as a **systemd user service** with `loginctl enable-linger` so it survives reboots.
 
 ### Test suites — all green
-- backend: 267 / 0
-- frontend: 61 / 0
-- contract: 4 / 0
-- bin: 68 / 0
+- backend: 274 / 0
+- frontend: 66 / 0
+- contract: 9 / 0
+- bin: 78 / 0
 
 ### Service state
 - Unit file: `~/.config/systemd/user/webmux.service`
@@ -55,6 +55,8 @@ Both pushed to the fork. If shipping upstream, consider splitting into two PRs.
 ## Open follow-ups (not shipped, may come up next)
 
 ### Real but deferred
+
+- **"Open Worktree With Override" shipped** — strict boolean conflict guard, agentOverride+resume launch mode test, and updated test counts (backend 274, frontend 66, contract 9, bin 78).
 
 1. **Per-project agent registry in CreateScratchDialog** — when user changes the project selector inside the AI Session dialog, `agentChoices` doesn't refetch. Currently uses the startup project's agent list. Low impact unless agents differ across projects, but the user may hit it.
 2. **Project-aware notifications filtering** — `AppNotification` carries `projectId` (Phase 6) but the frontend doesn't filter the toast surface by current project. Notifications from inactive projects appear in the global toast stream.

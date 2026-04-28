@@ -1537,6 +1537,38 @@ describe("LifecycleService", () => {
     expect(meta?.agent).toBe("claude");
   });
 
+  it("opens a managed worktree with agentOverride and uses the override's resume command when capabilities.resume === true", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const lifecycle = makeLifecycleService(
+      repoRoot,
+      tmux,
+      runtime,
+      new FakeDockerGateway(),
+      new FakeHookRunner(),
+      {
+        ...TEST_CONFIG,
+        agents: {
+          myagent: {
+            label: "My Agent",
+            startCommand: 'myagent start --branch "${BRANCH}"',
+            resumeCommand: 'myagent resume-session --branch "${BRANCH}"',
+          },
+        },
+      },
+    );
+
+    await lifecycle.createWorktree({ branch: "feature-override-resume" });
+    tmux.commands.length = 0;
+    await lifecycle.closeWorktree("feature-override-resume");
+    await lifecycle.openWorktree("feature-override-resume", { agentOverride: "myagent" });
+
+    const agentCommand = tmux.commands.at(-1)?.command;
+    expect(agentCommand).toContain("myagent resume-session");
+    expect(agentCommand).not.toContain("myagent start");
+  });
+
   it("throws LifecycleError 400 when agentOverride and shellOnly are both set", async () => {
     const repoRoot = await initRepo();
     const runtime = new ProjectRuntime();
