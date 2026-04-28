@@ -59,19 +59,6 @@
     document.body.removeChild(ta);
   }
 
-  async function pasteFromClipboard(): Promise<void> {
-    if (!navigator.clipboard?.readText) return;
-    if (ws?.readyState !== WebSocket.OPEN) return;
-    try {
-      const text = await navigator.clipboard.readText();
-      if (text.length > 0) {
-        ws.send(JSON.stringify({ type: "input", data: text }));
-      }
-    } catch {
-      // permission denied or no clipboard text — silently no-op
-    }
-  }
-
   export function sendSelectPane(pane: number) {
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "selectPane", pane }));
@@ -413,13 +400,13 @@
         }
         return true;
       }
-      // Paste: Cmd+V (Mac) or Ctrl+V / Ctrl+Shift+V (Linux/Windows). Note: plain
-      // Ctrl+V used to send literal control char to the PTY; that conflicts with
-      // CLI agents (e.g. Claude Code) that treat \x16 as image-paste. Webmux now
-      // intercepts plain Ctrl+V as text-paste — use `Ctrl+Q Ctrl+V` if you need
-      // the literal control character (most shells provide that escape).
+      // Paste: block xterm's literal-\x16 emission for Cmd+V / Ctrl+V / Ctrl+Shift+V.
+      // The browser's native paste event still fires on xterm's textarea and forwards
+      // the pasted text via onData — so we don't need to manually re-send. Without
+      // this guard, xterm sends \x16 BEFORE the paste text, which confuses CLI agents
+      // (e.g. Claude Code) that treat \x16 as image-paste. Power users who want a
+      // literal control character can use `Ctrl+Q Ctrl+V` (bash quoted-insert).
       if (mod && (e.key === "v" || e.key === "V")) {
-        void pasteFromClipboard();
         return false;
       }
       if (mod && (e.key === "ArrowUp" || e.key === "ArrowDown")) return false;
