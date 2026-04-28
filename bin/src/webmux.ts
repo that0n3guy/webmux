@@ -311,8 +311,16 @@ async function main(args: string[] = process.argv.slice(2)): Promise<void> {
     process.exit(0);
   }
 
-  if (!existsSync(resolve(process.cwd(), ".webmux.yaml"))) {
-    console.error("No .webmux.yaml found in this directory.\nRun `webmux init` to set up your project.");
+  // Multi-project: serve is OK if either the cwd has a .webmux.yaml (first-run hydration
+  // will auto-add it) OR the user-global registry already has projects.
+  const hasCwdConfig = existsSync(resolve(process.cwd(), ".webmux.yaml"));
+  const registryPath = resolve(process.env.HOME ?? "/tmp", ".config", "webmux", "projects.yaml");
+  const hasRegistry = existsSync(registryPath);
+  if (!hasCwdConfig && !hasRegistry) {
+    console.error(
+      "No .webmux.yaml in cwd and no projects registered in ~/.config/webmux/projects.yaml.\n"
+        + "Run `webmux init` in a project directory, or add a project via the dashboard.",
+    );
     process.exit(1);
   }
 
