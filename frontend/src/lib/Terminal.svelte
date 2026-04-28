@@ -59,6 +59,19 @@
     document.body.removeChild(ta);
   }
 
+  async function pasteFromClipboard(): Promise<void> {
+    if (!navigator.clipboard?.readText) return;
+    if (ws?.readyState !== WebSocket.OPEN) return;
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text.length > 0) {
+        ws.send(JSON.stringify({ type: "input", data: text }));
+      }
+    } catch {
+      // permission denied or no clipboard text — silently no-op
+    }
+  }
+
   export function sendSelectPane(pane: number) {
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "selectPane", pane }));
@@ -399,6 +412,13 @@
           return false;
         }
         return true;
+      }
+      // Paste: Cmd+V on Mac, Ctrl+Shift+V on Linux/Windows (Ctrl+V alone is reserved
+      // for sending the literal Ctrl+V control character to the PTY).
+      if ((e.metaKey && (e.key === "v" || e.key === "V"))
+        || (e.ctrlKey && e.shiftKey && (e.key === "v" || e.key === "V"))) {
+        void pasteFromClipboard();
+        return false;
       }
       if (mod && (e.key === "ArrowUp" || e.key === "ArrowDown")) return false;
       if (mod && (e.key === "k" || e.key === "K")) return false;
