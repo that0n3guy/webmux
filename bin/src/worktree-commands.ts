@@ -27,7 +27,7 @@ type WorktreeListMode = "active" | "all" | "archived";
 interface LifecycleServiceLike {
   createWorktree(input: CreateLifecycleWorktreeInput): Promise<{ branch: string; worktreeId: string }>;
   createWorktrees(input: CreateLifecycleWorktreesInput): Promise<CreateLifecycleWorktreesResult>;
-  openWorktree(branch: string): Promise<{ branch: string; worktreeId: string }>;
+  openWorktree(branch: string, opts?: { agentOverride?: AgentId; shellOnly?: boolean }): Promise<{ branch: string; worktreeId: string }>;
   closeWorktree(branch: string): Promise<void>;
   setWorktreeArchived(branch: string, archived: boolean): Promise<void>;
   removeWorktree(branch: string): Promise<void>;

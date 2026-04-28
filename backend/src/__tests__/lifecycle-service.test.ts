@@ -1483,4 +1483,71 @@ describe("LifecycleService", () => {
     expect(run(["git", "branch", "--list", "feature-merge-ahead"], repoRoot)).toBe("");
     expect(await Bun.file(join(repoRoot, "README.md")).text()).toContain("merged ahead change");
   });
+
+  it("opens a worktree with no opts and uses the persisted meta agent", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const lifecycle = makeLifecycleService(repoRoot, tmux, runtime);
+
+    await lifecycle.createWorktree({ branch: "feature-open-noopts" });
+    tmux.commands.length = 0;
+    await lifecycle.closeWorktree("feature-open-noopts");
+    await lifecycle.openWorktree("feature-open-noopts");
+
+    const agentCommand = tmux.commands.at(-1)?.command;
+    expect(agentCommand).toContain("claude");
+  });
+
+  it("opens a worktree with agentOverride and uses the overridden agent command, not meta.agent", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const lifecycle = makeLifecycleService(
+      repoRoot,
+      tmux,
+      runtime,
+      new FakeDockerGateway(),
+      new FakeHookRunner(),
+      {
+        ...TEST_CONFIG,
+        agents: {
+          gemini: {
+            label: "Gemini CLI",
+            startCommand: 'gemini --task "${PROMPT}" --branch "${BRANCH}"',
+            resumeCommand: 'gemini resume --branch "${BRANCH}"',
+          },
+        },
+      },
+    );
+
+    await lifecycle.createWorktree({ branch: "feature-override-agent" });
+    tmux.commands.length = 0;
+    await lifecycle.closeWorktree("feature-override-agent");
+    await lifecycle.openWorktree("feature-override-agent", { agentOverride: "gemini" });
+
+    const agentCommand = tmux.commands.at(-1)?.command;
+    expect(agentCommand).toContain("gemini");
+    expect(agentCommand).not.toContain("claude");
+
+    const gitDir = new BunGitGateway().resolveWorktreeGitDir(
+      join(repoRoot, "__worktrees", "feature-override-agent"),
+    );
+    const meta = await readWorktreeMeta(gitDir);
+    expect(meta?.agent).toBe("claude");
+  });
+
+  it("throws LifecycleError 400 when agentOverride and shellOnly are both set", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const lifecycle = makeLifecycleService(repoRoot, tmux, runtime);
+
+    await lifecycle.createWorktree({ branch: "feature-conflict-opts" });
+    await lifecycle.closeWorktree("feature-conflict-opts");
+
+    await expect(
+      lifecycle.openWorktree("feature-conflict-opts", { agentOverride: "claude", shellOnly: true }),
+    ).rejects.toMatchObject({ message: "Cannot combine agentOverride with shellOnly", status: 400 });
+  });
 });

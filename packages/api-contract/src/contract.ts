@@ -38,6 +38,7 @@ import {
   CreateProjectRequestSchema,
   CreateProjectResponseSchema,
   RemoveProjectRequestSchema,
+  OpenWorktreeRequestSchema,
 } from "./schemas";
 import { z } from "zod";
 
@@ -294,7 +295,7 @@ export const apiContract = c.router({
     method: "POST",
     path: apiPaths.openWorktree,
     pathParams: ProjectScopedWorktreeNameParamsSchema,
-    body: c.noBody(),
+    body: OpenWorktreeRequestSchema,
     responses: {
       200: OkResponseSchema,
       ...commonErrorResponses,

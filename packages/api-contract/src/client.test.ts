@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createApi } from "./client";
+import { OpenWorktreeRequestSchema } from "./schemas";
 
 function success(body: unknown): { status: number; body: unknown; headers: Headers } {
   return {
@@ -70,5 +71,27 @@ describe("createApi", () => {
     });
 
     await expect(api.fetchCiLogs({ params: { projectId: "proj1", runId: 99 } })).rejects.toThrow("Gateway unavailable");
+  });
+});
+
+describe("OpenWorktreeRequestSchema", () => {
+  it("accepts an empty object (no overrides)", () => {
+    expect(OpenWorktreeRequestSchema.safeParse({}).success).toBe(true);
+  });
+
+  it("accepts agentOverride only", () => {
+    expect(OpenWorktreeRequestSchema.safeParse({ agentOverride: "gemini" }).success).toBe(true);
+  });
+
+  it("accepts shellOnly only", () => {
+    expect(OpenWorktreeRequestSchema.safeParse({ shellOnly: true }).success).toBe(true);
+  });
+
+  it("accepts both agentOverride and shellOnly", () => {
+    expect(OpenWorktreeRequestSchema.safeParse({ agentOverride: "gemini", shellOnly: true }).success).toBe(true);
+  });
+
+  it("rejects an empty agentOverride string", () => {
+    expect(OpenWorktreeRequestSchema.safeParse({ agentOverride: "" }).success).toBe(false);
   });
 });

@@ -539,6 +539,11 @@ export const ProjectScopedScratchIdParamsSchema = z.object({
   id: z.string().min(1),
 });
 
+export const OpenWorktreeRequestSchema = z.object({
+  agentOverride: AgentIdSchema.optional(),
+  shellOnly: z.boolean().optional(),
+});
+
 export type BuiltInAgentId = z.infer<typeof BuiltInAgentIdSchema>;
 export type AgentId = z.infer<typeof AgentIdSchema>;
 export type AgentKind = z.infer<typeof AgentKindSchema>;
@@ -617,3 +622,4 @@ export type ProjectListResponse = z.infer<typeof ProjectListResponseSchema>;
 export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;
 export type CreateProjectResponse = z.infer<typeof CreateProjectResponseSchema>;
 export type RemoveProjectRequest = z.infer<typeof RemoveProjectRequestSchema>;
+export type OpenWorktreeRequest = z.infer<typeof OpenWorktreeRequestSchema>;

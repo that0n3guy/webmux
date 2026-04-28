@@ -10,6 +10,7 @@ import {
   CreateScratchSessionRequestSchema,
   CreateWorktreeRequestSchema,
   NotificationIdParamsSchema,
+  OpenWorktreeRequestSchema,
   PullMainRequestSchema,
   RemoveProjectRequestSchema,
   RunIdParamsSchema,
@@ -995,10 +996,26 @@ async function apiDeleteWorktree(scope: ProjectScope, name: string): Promise<Res
   });
 }
 
-async function apiOpenWorktree(scope: ProjectScope, name: string): Promise<Response> {
+async function apiOpenWorktree(scope: ProjectScope, name: string, req: Request): Promise<Response> {
   ensureBranchNotBusy(scope, name);
+  let rawBody: unknown = {};
+  try {
+    rawBody = await req.json();
+  } catch {
+    // empty or missing body — treat as no overrides
+  }
+  const parsed = OpenWorktreeRequestSchema.safeParse(rawBody);
+  if (!parsed.success) {
+    return errorResponse(`Invalid request body: ${parsed.error.issues[0]?.message ?? "Invalid request"}`, 400);
+  }
+  const body = parsed.data;
+  const agentOverride = body.agentOverride;
+  const shellOnly = body.shellOnly;
   log.info(`[worktree:open] name=${name}`);
-  const result = await scope.lifecycleService.openWorktree(name);
+  const result = await scope.lifecycleService.openWorktree(name, {
+    ...(agentOverride !== undefined ? { agentOverride } : {}),
+    ...(shellOnly !== undefined ? { shellOnly } : {}),
+  });
   log.debug(`[worktree:open] done name=${name} worktreeId=${result.worktreeId}`);
   return jsonResponse({ ok: true });
 }
@@ -1635,7 +1652,7 @@ Bun.serve({
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`POST /api/projects/:projectId/worktrees/${name}/open`, () => apiOpenWorktree(parsedProject.data.scope, name));
+        return catching(`POST /api/projects/:projectId/worktrees/${name}/open`, () => apiOpenWorktree(parsedProject.data.scope, name, req));
       },
     },
 

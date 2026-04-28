@@ -233,17 +233,22 @@ export class LifecycleService {
     });
   }
 
-  async openWorktree(branch: string): Promise<{
+  async openWorktree(branch: string, opts?: { agentOverride?: AgentId; shellOnly?: boolean }): Promise<{
     branch: string;
     worktreeId: string;
   }> {
+    if (opts?.agentOverride && opts?.shellOnly) {
+      throw new LifecycleError("Cannot combine agentOverride with shellOnly", 400);
+    }
     try {
       const resolved = await this.resolveExistingWorktree(branch);
       const initialized = resolved.meta
         ? await this.refreshManagedArtifacts(resolved)
         : await this.initializeUnmanagedWorktree(resolved);
       const { profileName, profile } = this.resolveProfile(initialized.meta.profile);
-      const agent = this.resolveAgentDefinition(initialized.meta.agent);
+      const agent = opts?.agentOverride
+        ? this.resolveAgentDefinition(opts.agentOverride)
+        : this.resolveAgentDefinition(initialized.meta.agent);
       const launchMode: AgentLaunchMode = resolved.meta && agent.capabilities.resume ? "resume" : "fresh";
       await ensureAgentRuntimeArtifacts({
         gitDir: initialized.paths.gitDir,
@@ -259,6 +264,7 @@ export class LifecycleService {
         worktreePath: resolved.entry.path,
         launchMode,
         ...(initialized.meta.yolo === undefined ? {} : { yolo: initialized.meta.yolo }),
+        ...(opts?.shellOnly !== undefined ? { shellOnly: opts.shellOnly } : {}),
       });
 
       await this.deps.reconciliation.reconcile(this.deps.projectRoot, { force: true });
@@ -624,6 +630,7 @@ export class LifecycleService {
     prompt?: string;
     launchMode: AgentLaunchMode;
     yolo?: boolean;
+    shellOnly?: boolean;
   }): Promise<void> {
     if (input.profile.runtime === "docker") {
       const dockerProfile = this.requireDockerProfile(input.profile);
@@ -645,6 +652,7 @@ export class LifecycleService {
         prompt: input.prompt,
         launchMode: input.launchMode,
         yolo: input.yolo,
+        shellOnly: input.shellOnly,
         containerName,
       }));
       return;
@@ -660,6 +668,7 @@ export class LifecycleService {
       prompt: input.prompt,
       launchMode: input.launchMode,
       yolo: input.yolo,
+      shellOnly: input.shellOnly,
     }));
   }
 
@@ -673,8 +682,10 @@ export class LifecycleService {
     prompt?: string;
     launchMode: AgentLaunchMode;
     yolo?: boolean;
+    shellOnly?: boolean;
     containerName?: string;
   }) {
+    // TODO Task 2: honor shellOnly to omit agent pane.
     const systemPrompt = input.launchMode === "fresh" && input.profile.systemPrompt
       ? expandTemplate(input.profile.systemPrompt, input.initialized.runtimeEnv)
       : undefined;
