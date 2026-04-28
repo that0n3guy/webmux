@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, type Component } from "svelte";
-  import WorktreeList from "./lib/WorktreeList.svelte";
+  import ProjectTree from "./lib/ProjectTree.svelte";
   import TopBar from "./lib/TopBar.svelte";
   import Terminal from "./lib/Terminal.svelte";
   import ConfirmDialog from "./lib/ConfirmDialog.svelte";
@@ -15,7 +15,6 @@
   import MobileChatSurface from "./lib/MobileChatSurface.svelte";
   import SidebarRepoRow from "./lib/SidebarRepoRow.svelte";
   import Toggle from "./lib/Toggle.svelte";
-  import SessionList from "./lib/SessionList.svelte";
   import CreateScratchDialog from "./lib/CreateScratchDialog.svelte";
   import type {
     AvailableBranch,
@@ -96,12 +95,12 @@
   let config = $state<AppConfig>(createDefaultConfig());
   let projects = $state<ProjectInfo[]>([]);
   let currentProjectId = $state<string | null>(null);
-  let worktrees = $state<WorktreeInfo[]>([]);
+  let worktreesByProject = $state<Map<string, WorktreeInfo[]>>(new Map());
+  let scratchByProject = $state<Map<string, ScratchSessionSnapshot[]>>(new Map());
   let selectedBranch = $state<string | null>(loadSavedSelectedWorktree());
   let selectedExternalSession = $state<string | null>(null);
   let selectedScratchSession = $state<{ id: string; sessionName: string } | null>(null);
   let externalSessions = $state<ExternalTmuxSession[]>([]);
-  let scratchSessions = $state<ScratchSessionSnapshot[]>([]);
   let showCreateScratchDialog = $state(false);
   let hasLoadedWorktrees = $state(false);
   let removeBranch = $state<string | null>(null);
@@ -404,18 +403,31 @@
   let openingBranches = $state<Set<string>>(new Set());
   let archivingBranches = $state<Set<string>>(new Set());
   let trimmedWorktreeSearch = $derived(searchQuery.trim());
-  let archivedWorktreeCount = $derived(worktrees.filter((w) => w.archived).length);
+  // Current project's worktree list (flat, for single-project operations)
+  let currentWorktrees = $derived(currentProjectId ? (worktreesByProject.get(currentProjectId) ?? []) : []);
+  // Per-project rows (filtered + built) for the tree
+  let rowsByProject = $derived(
+    new Map(
+      [...worktreesByProject].map(([id, ws]) => [
+        id,
+        buildWorktreeListRows(
+          filterWorktrees(ws, { query: id === currentProjectId ? trimmedWorktreeSearch : "", showArchived: id === currentProjectId ? showArchivedWorktrees : false }),
+        ),
+      ]),
+    ),
+  );
+  let archivedWorktreeCount = $derived(currentWorktrees.filter((w) => w.archived).length);
   let hiddenArchivedMatchCount = $derived(
-    showArchivedWorktrees ? 0 : countArchivedMatches(worktrees, trimmedWorktreeSearch),
+    showArchivedWorktrees ? 0 : countArchivedMatches(currentWorktrees, trimmedWorktreeSearch),
   );
   let visibleWorktrees = $derived(
-    filterWorktrees(worktrees, {
+    filterWorktrees(currentWorktrees, {
       query: trimmedWorktreeSearch,
       showArchived: showArchivedWorktrees,
     }),
   );
   let visibleWorktreeRows = $derived(buildWorktreeListRows(visibleWorktrees));
-  let creatingWorktrees = $derived(worktrees.filter((w) => w.creating));
+  let creatingWorktrees = $derived(currentWorktrees.filter((w) => w.creating));
   let backendCreatingCount = $derived(creatingWorktrees.length);
   let activeCreateCount = $derived(Math.max(pendingCreateCount, backendCreatingCount));
   let hasCreatingWorktrees = $derived(activeCreateCount > 0);
@@ -431,8 +443,8 @@
       : undefined,
   );
   let selectedWorktree = $derived(
-    selectedBranch && !removingBranches.has(selectedBranch)
-      ? worktrees.find((w) => w.branch === selectedBranch)
+    currentProjectId && selectedBranch && !removingBranches.has(selectedBranch)
+      ? worktreesByProject.get(currentProjectId)?.find((w) => w.branch === selectedBranch)
       : undefined,
   );
   let selection = $derived<Selection | null>(
@@ -481,7 +493,7 @@
   $effect(() => {
     if (pendingCreateCount === 0 || latestAutoSelectCreateId === -1) return;
     const target = pendingCreateBranchHint
-      ? worktrees.find((w) => w.branch === pendingCreateBranchHint)
+      ? currentWorktrees.find((w) => w.branch === pendingCreateBranchHint)
       : creatingWorktrees.length === 1
         ? creatingWorktrees[0]
         : undefined;
@@ -593,23 +605,32 @@
     }).catch((err: unknown) => console.warn("[linear]", err));
   }
 
-  async function bootstrapProjects(): Promise<void> {
-    const list = await fetchProjects();
-    projects = list;
-    if (list.length > 0 && !currentProjectId) {
-      currentProjectId = list[0].id;
-    }
-  }
-
-  async function refresh() {
-    if (!currentProjectId) return;
+  async function refreshAll(): Promise<void> {
     try {
-      worktrees = await fetchWorktrees(currentProjectId);
+      const list = await fetchProjects();
+      projects = list;
+      if (list.length > 0 && !currentProjectId) {
+        currentProjectId = list[0].id;
+      }
+
+      const ids = list.map((p) => p.id);
+      const [worktreesPairs, scratchPairs, ext] = await Promise.all([
+        Promise.all(ids.map(async (id) => [id, await fetchWorktrees(id)] as const)),
+        Promise.all(ids.map(async (id) => [id, await fetchScratchSessions(id)] as const)),
+        fetchExternalSessions(),
+      ]);
+      worktreesByProject = new Map(worktreesPairs);
+      scratchByProject = new Map(scratchPairs);
+      externalSessions = ext;
       hasLoadedWorktrees = true;
     } catch (err) {
-      console.error("Failed to refresh:", err);
+      console.warn("refreshAll failed", err);
     }
     refreshLinear();
+  }
+
+  async function refresh(): Promise<void> {
+    await refreshAll();
   }
 
   function openCreateDialog(issue: LinearIssue | null = null): void {
@@ -683,7 +704,7 @@
   }
 
   function revealWorktreeInFilters(branch: string): void {
-    const worktree = worktrees.find((candidate) => candidate.branch === branch);
+    const worktree = currentWorktrees.find((candidate) => candidate.branch === branch);
     if (!worktree) return;
     if (worktree.archived) {
       showArchivedWorktrees = true;
@@ -693,11 +714,22 @@
     }
   }
 
-  function handleSelectWorktree(branch: string): void {
+  function handleSelectWorktreeByBranch(branch: string): void {
     revealWorktreeInFilters(branch);
     selectedBranch = branch;
     selectedExternalSession = null;
     selectedScratchSession = null;
+    notifiedBranches = new Set([...notifiedBranches].filter((candidate) => candidate !== branch));
+    if (isMobile) sidebarOpen = false;
+  }
+
+  function handleSelectWorktree(projectId: string, branch: string): void {
+    currentProjectId = projectId;
+    revealWorktreeInFilters(branch);
+    selectedBranch = branch;
+    selectedExternalSession = null;
+    selectedScratchSession = null;
+    saveSelectedWorktree(branch);
     notifiedBranches = new Set([...notifiedBranches].filter((candidate) => candidate !== branch));
     if (isMobile) sidebarOpen = false;
   }
@@ -815,7 +847,7 @@
   }
 
   async function toggleWorktreeArchived(branch: string): Promise<void> {
-    const worktree = worktrees.find((candidate) => candidate.branch === branch);
+    const worktree = currentWorktrees.find((candidate) => candidate.branch === branch);
     if (!worktree || worktree.creating) return;
     const nextArchived = !worktree.archived;
     const actionLabel = nextArchived ? "archive" : "restore";
@@ -908,21 +940,10 @@
     terminalRef?.sendSelectPane(pane);
   }
 
-  async function refreshSessions() {
-    if (!currentProjectId) return;
-    try {
-      const [ext, scr] = await Promise.all([fetchExternalSessions(), fetchScratchSessions(currentProjectId)]);
-      externalSessions = ext;
-      scratchSessions = scr;
-    } catch (err: unknown) {
-      // best-effort polling — don't blow up the UI on transient errors
-      console.warn("refreshSessions failed", err);
-    }
-  }
-
   async function handleCreateScratch(req: import("@webmux/api-contract").CreateScratchSessionRequest) {
     const session = await createScratchSession(currentProjectId!, req);
-    scratchSessions = [...scratchSessions, session];
+    const existing = scratchByProject.get(currentProjectId!) ?? [];
+    scratchByProject = new Map([...scratchByProject, [currentProjectId!, [...existing, session]]]);
     selectedExternalSession = null;
     selectedBranch = null;
     saveSelectedWorktree(null);
@@ -937,30 +958,27 @@
     const target = scratchToRemove;
     if (!target) return;
     await removeScratchSession(currentProjectId!, target.id);
-    scratchSessions = scratchSessions.filter((s) => s.id !== target.id);
+    const existing = scratchByProject.get(currentProjectId!) ?? [];
+    scratchByProject = new Map([...scratchByProject, [currentProjectId!, existing.filter((s) => s.id !== target.id)]]);
     if (selectedScratchSession?.id === target.id) {
       selectedScratchSession = null;
     }
     scratchToRemove = null;
   }
 
-  function handleSelectExternal(name: string) {
+  function handleSelectExternal(name: string): void {
     selectedScratchSession = null;
     selectedBranch = null;
     saveSelectedWorktree(null);
     selectedExternalSession = name;
   }
 
-  function handleSelectScratch(id: string, sessionName: string) {
+  function handleSelectScratch(projectId: string, id: string, sessionName: string): void {
     selectedExternalSession = null;
     selectedBranch = null;
     saveSelectedWorktree(null);
+    currentProjectId = projectId;
     selectedScratchSession = { id, sessionName };
-  }
-
-  function handleSessionListSelect(sel: Selection) {
-    if (sel.kind === "external") handleSelectExternal(sel.sessionName);
-    else if (sel.kind === "scratch") handleSelectScratch(sel.id, sel.sessionName);
   }
 
   onMount(() => {
@@ -971,12 +989,8 @@
         config = c;
       })
       .catch(() => {});
-    void bootstrapProjects().then(() => {
-      refresh();
-      refreshLinear();
-      void refreshSessions();
-    });
-    const sessionsPollHandle = setInterval(() => { void refreshSessions(); }, 5000);
+    void refreshAll();
+    const sessionsPollHandle = setInterval(() => { void refreshAll(); }, 5000);
     let intervalMs = pollIntervalMs;
     let interval: ReturnType<typeof setInterval> | undefined;
     window.addEventListener("keydown", handleKeydown);
@@ -1135,31 +1149,27 @@
           </div>
         </div>
       </div>
-      <WorktreeList
-        rows={visibleWorktreeRows}
+      <ProjectTree
+        {projects}
+        {rowsByProject}
+        {scratchByProject}
+        {externalSessions}
+        {selection}
         selected={selectedBranch}
         removing={removingBranches}
         initializing={openingBranches}
         archiving={archivingBranches}
         {notifiedBranches}
-        emptyMessage={worktreeListEmptyMessage}
-        onselect={handleSelectWorktree}
+        onSelectWorktree={handleSelectWorktree}
+        onSelectScratch={handleSelectScratch}
+        onSelectExternal={handleSelectExternal}
+        onCreateScratch={(projectId) => { currentProjectId = projectId; showCreateScratchDialog = true; }}
+        onRemoveScratch={(projectId, id, displayName) => { currentProjectId = projectId; scratchToRemove = { id, displayName }; }}
+        onAddProject={() => { console.warn("Add project clicked — dialog pending MP-16"); }}
         onclose={closeWorktree}
         onarchive={toggleWorktreeArchived}
-        onmerge={(branch) => {
-          mergeBranch = branch;
-        }}
+        onmerge={(branch) => { mergeBranch = branch; }}
         onremove={(b) => (removeBranch = b)}
-      />
-
-      <SessionList
-        projectId={currentProjectId ?? ""}
-        {externalSessions}
-        {scratchSessions}
-        {selection}
-        onSelect={handleSessionListSelect}
-        onCreateScratch={() => { showCreateScratchDialog = true; }}
-        onRemoveScratch={handleRemoveScratch}
       />
 
       {#if showCreateScratchDialog}
@@ -1252,7 +1262,7 @@
       onCiClick={(pr) => (ciDetailsPr = pr)}
       onReviewsClick={(pr) => (commentReviewPr = pr)}
       onbellopen={handleBellOpen}
-      onnotificationselect={handleSelectWorktree}
+      onnotificationselect={handleSelectWorktreeByBranch}
       archiving={isSelectedArchiving}
     />
 

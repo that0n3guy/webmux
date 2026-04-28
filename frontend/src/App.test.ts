@@ -293,9 +293,8 @@ describe("App create selection", () => {
     await openCreateDialogAndSubmit("feature/new");
 
     await waitFor(() => {
-      expect(fetchWorktrees).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("button", { name: /^feature\/new\b/i })).toBeInTheDocument();
     });
-    expect(screen.getByRole("button", { name: /^feature\/new\b/i })).toBeInTheDocument();
     expect(screen.getByTitle("main")).toBeInTheDocument();
     expect(screen.queryByTitle("feature/new")).not.toBeInTheDocument();
 
