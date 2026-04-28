@@ -413,10 +413,12 @@
         }
         return true;
       }
-      // Paste: Cmd+V on Mac, Ctrl+Shift+V on Linux/Windows (Ctrl+V alone is reserved
-      // for sending the literal Ctrl+V control character to the PTY).
-      if ((e.metaKey && (e.key === "v" || e.key === "V"))
-        || (e.ctrlKey && e.shiftKey && (e.key === "v" || e.key === "V"))) {
+      // Paste: Cmd+V (Mac) or Ctrl+V / Ctrl+Shift+V (Linux/Windows). Note: plain
+      // Ctrl+V used to send literal control char to the PTY; that conflicts with
+      // CLI agents (e.g. Claude Code) that treat \x16 as image-paste. Webmux now
+      // intercepts plain Ctrl+V as text-paste — use `Ctrl+Q Ctrl+V` if you need
+      // the literal control character (most shells provide that escape).
+      if (mod && (e.key === "v" || e.key === "V")) {
         void pasteFromClipboard();
         return false;
       }
