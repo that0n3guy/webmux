@@ -15,7 +15,7 @@ import {
 import { expandTemplate, getDefaultProfileName, isDockerProfile, type DockerProfileConfig } from "../adapters/config";
 import { type DockerGateway } from "../adapters/docker";
 import { buildProjectSessionName, buildWorktreeWindowName, type TmuxGateway } from "../adapters/tmux";
-import type { AgentId, ProfileConfig, ProjectConfig, RuntimeKind } from "../domain/config";
+import type { AgentId, PaneTemplate, ProfileConfig, ProjectConfig, RuntimeKind } from "../domain/config";
 import type { WorktreeCreationPhase, WorktreeMeta } from "../domain/model";
 import { allocateServicePorts, isValidBranchName, isValidEnvKey } from "../domain/policies";
 import type { AutoNameGenerator } from "./auto-name-service";
@@ -692,17 +692,27 @@ export class LifecycleService {
     shellOnly?: boolean;
     containerName?: string;
   }) {
-    // TODO Task 2: honor shellOnly to omit agent pane.
     const systemPrompt = input.launchMode === "fresh" && input.profile.systemPrompt
       ? expandTemplate(input.profile.systemPrompt, input.initialized.runtimeEnv)
       : undefined;
     const containerName = input.containerName;
     const yolo = input.yolo ?? input.profile.yolo === true;
 
+    let panes = input.profile.panes;
+    if (input.shellOnly === true) {
+      const filtered = panes.filter((pane) => pane.kind !== "agent");
+      if (filtered.length === 0) {
+        const shellFallback = { id: "shell", kind: "shell", cwd: "worktree", focus: true } satisfies PaneTemplate;
+        panes = [shellFallback];
+      } else {
+        panes = filtered;
+      }
+    }
+
     return planSessionLayout(
       this.deps.projectRoot,
       input.branch,
-      input.profile.panes,
+      panes,
       {
         repoRoot: this.deps.projectRoot,
         worktreePath: input.worktreePath,

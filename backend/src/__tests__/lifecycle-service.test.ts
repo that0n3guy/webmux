@@ -1564,4 +1564,54 @@ describe("LifecycleService", () => {
       lifecycle.openWorktree("feature-unknown-agent", { agentOverride: "nonexistent-agent" }),
     ).rejects.toMatchObject({ message: "Unknown agent: nonexistent-agent", status: 404 });
   });
+
+  it("opens a worktree with shellOnly:true and drops the agent pane from the layout", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const lifecycle = makeLifecycleService(repoRoot, tmux, runtime);
+
+    await lifecycle.createWorktree({ branch: "feature-shell-only" });
+    tmux.commands.length = 0;
+    await lifecycle.closeWorktree("feature-shell-only");
+    await lifecycle.openWorktree("feature-shell-only", { shellOnly: true });
+
+    const window = tmux.listWindows().find((w) => w.windowName === buildWorktreeWindowName("feature-shell-only"));
+    expect(window?.paneCount).toBe(1);
+    expect(tmux.commands.every((cmd) => !cmd.command.includes("claude"))).toBe(true);
+  });
+
+  it("opens with shellOnly:true and synthesizes a shell pane when the profile has only agent panes", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const lifecycle = makeLifecycleService(
+      repoRoot,
+      tmux,
+      runtime,
+      new FakeDockerGateway(),
+      new FakeHookRunner(),
+      {
+        ...TEST_CONFIG,
+        profiles: {
+          ...TEST_CONFIG.profiles,
+          default: {
+            ...TEST_CONFIG.profiles.default,
+            panes: [
+              { id: "agent", kind: "agent", focus: true },
+            ],
+          },
+        },
+      },
+    );
+
+    await lifecycle.createWorktree({ branch: "feature-shell-only-fallback" });
+    tmux.commands.length = 0;
+    await lifecycle.closeWorktree("feature-shell-only-fallback");
+    await lifecycle.openWorktree("feature-shell-only-fallback", { shellOnly: true });
+
+    const window = tmux.listWindows().find((w) => w.windowName === buildWorktreeWindowName("feature-shell-only-fallback"));
+    expect(window?.paneCount).toBe(1);
+    expect(tmux.commands.every((cmd) => !cmd.command.includes("claude"))).toBe(true);
+  });
 });
