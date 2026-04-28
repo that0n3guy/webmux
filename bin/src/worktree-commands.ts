@@ -2,7 +2,7 @@ import * as p from "@clack/prompts";
 import { createApi } from "@webmux/api-contract";
 import { basename, resolve } from "node:path";
 import { readWorktreeArchiveState, readWorktreeMeta } from "../../backend/src/adapters/fs";
-import { buildProjectSessionName, buildWorktreeWindowName } from "../../backend/src/adapters/tmux";
+import { buildProjectSessionName, buildWorktreeWindowName, computeProjectId } from "../../backend/src/adapters/tmux";
 import type { AgentId } from "../../backend/src/domain/config";
 import type { WorktreeCreationPhase } from "../../backend/src/domain/model";
 import { isValidWorktreeName } from "../../backend/src/domain/policies";
@@ -664,9 +664,10 @@ export async function runWorktreeCommand(
       }
 
       const api = createApi(`http://localhost:${context.port}`);
+      const projectId = computeProjectId(resolve(context.projectDir));
       try {
         await api.sendWorktreePrompt({
-          params: { name: parsed.branch },
+          params: { projectId, name: parsed.branch },
           body: {
             text: parsed.text,
             ...(parsed.preamble ? { preamble: parsed.preamble } : {}),

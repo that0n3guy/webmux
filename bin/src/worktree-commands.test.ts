@@ -717,7 +717,7 @@ describe("runWorktreeCommand", () => {
       expect(exitCode).toBe(0);
       expect(stdout).toEqual(["Sent prompt to feature/search"]);
       expect(fetchCalls).toHaveLength(1);
-      expect(fetchCalls[0].url).toBe("http://localhost:5111/api/worktrees/feature%2Fsearch/send");
+      expect(fetchCalls[0].url).toBe("http://localhost:5111/api/projects/83630750/worktrees/feature%2Fsearch/send");
       expect(fetchCalls[0].init.method).toBe("POST");
       expect(JSON.parse(fetchCalls[0].init.body as string)).toEqual({
         text: "Fix the bug",

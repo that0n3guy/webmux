@@ -20,11 +20,11 @@ describe("createApi", () => {
     });
 
     await api.sendWorktreePrompt({
-      params: { name: "feature/search" },
+      params: { projectId: "proj1", name: "feature/search" },
       body: { text: "Fix the failing tests" },
     });
 
-    expect(paths).toEqual(["https://example.com/api/worktrees/feature%2Fsearch/send"]);
+    expect(paths).toEqual(["https://example.com/api/projects/proj1/worktrees/feature%2Fsearch/send"]);
   });
 
   it("preserves numeric path params for notification and CI routes", async () => {
@@ -39,12 +39,12 @@ describe("createApi", () => {
       },
     });
 
-    await api.dismissNotification({ params: { id: 42 } });
-    await api.fetchCiLogs({ params: { runId: 317 } });
+    await api.dismissNotification({ params: { projectId: "proj1", id: 42 } });
+    await api.fetchCiLogs({ params: { projectId: "proj1", runId: 317 } });
 
     expect(paths).toEqual([
-      "https://example.com/api/notifications/42/dismiss",
-      "https://example.com/api/ci-logs/317",
+      "https://example.com/api/projects/proj1/notifications/42/dismiss",
+      "https://example.com/api/projects/proj1/ci-logs/317",
     ]);
   });
 
@@ -57,7 +57,7 @@ describe("createApi", () => {
       }),
     });
 
-    await expect(api.dismissNotification({ params: { id: 7 } })).rejects.toThrow("Not found");
+    await expect(api.dismissNotification({ params: { projectId: "proj1", id: 7 } })).rejects.toThrow("Not found");
   });
 
   it("throws API error messages from stringified json error bodies", async () => {
@@ -69,6 +69,6 @@ describe("createApi", () => {
       }),
     });
 
-    await expect(api.fetchCiLogs({ params: { runId: 99 } })).rejects.toThrow("Gateway unavailable");
+    await expect(api.fetchCiLogs({ params: { projectId: "proj1", runId: 99 } })).rejects.toThrow("Gateway unavailable");
   });
 });

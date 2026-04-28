@@ -3,14 +3,15 @@ import { join, resolve } from "node:path";
 import { mkdirSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import {
-  AgentIdParamsSchema,
   AgentsSendMessageRequestSchema,
   apiPaths,
   AvailableBranchesQuerySchema,
+  CreateProjectRequestSchema,
   CreateScratchSessionRequestSchema,
   CreateWorktreeRequestSchema,
   NotificationIdParamsSchema,
   PullMainRequestSchema,
+  RemoveProjectRequestSchema,
   RunIdParamsSchema,
   SendWorktreePromptRequestSchema,
   SetWorktreeArchivedRequestSchema,
@@ -81,6 +82,7 @@ import type { AgentsUiConversationEvent, AgentsUiWorktreeConversationResponse } 
 import type { ProjectSnapshot, WorktreeSnapshot } from "./domain/model";
 import { isValidBranchName, isValidWorktreeName } from "./domain/policies";
 import { createWebmuxRuntime } from "./runtime";
+import type { ProjectScope } from "./services/project-scope";
 
 const PORT = parseInt(Bun.env.PORT || "5111", 10);
 const STATIC_DIR = Bun.env.WEBMUX_STATIC_DIR || "";
@@ -96,20 +98,10 @@ if (projects.length === 0) {
   );
   process.exit(1);
 }
-// TODO(multi-project): firstProject is a single-project compat shim. Replace when MP-6 wires
-// path-prefixed routes that resolve scope from `:projectId` per request.
-const firstProject = projects[0];
-const scope = runtime.projectRegistry.get(firstProject.id);
-if (!scope) throw new Error("first project scope missing immediately after registration");
-const PROJECT_DIR = scope.projectDir;
-const config: ProjectConfig = scope.config;
+
 const git = runtime.git;
-const archiveStateService = scope.archiveStateService;
 const tmux = runtime.tmux;
-const projectRuntime = scope.projectRuntime;
-const worktreeCreationTracker = scope.worktreeCreationTracker;
 const runtimeNotifications = runtime.runtimeNotifications;
-const reconciliationService = scope.reconciliationService;
 const codexAppServerClient = new CodexAppServerClient({
   clientName: "webmux-agents",
   clientVersion: "0.0.0",
@@ -123,42 +115,55 @@ const claudeConversationService = new ClaudeConversationService({
   claude: claudeCliClient,
   git,
 });
-const removingBranches = scope.removingBranches;
-const lifecycleService = scope.lifecycleService;
-const scratchSessionService = scope.scratchSessionService;
-let linearAutoCreateEnabled = config.integrations.linear.autoCreateWorktrees;
-let stopLinearAutoCreate: (() => void) | null = null;
-let autoRemoveOnMergeEnabled = config.integrations.github.autoRemoveOnMerge;
 
-/** Safe to call multiple times — the guard prevents duplicate monitors. */
-function startLinearAutoCreate(): void {
-  if (stopLinearAutoCreate) return;
-  stopLinearAutoCreate = startLinearAutoCreateMonitor({
-    lifecycleService,
-    git,
-    projectRoot: PROJECT_DIR,
-    isActive: hasRecentDashboardActivity,
-  });
+// Per-project toggle state: keyed by projectId
+const linearAutoCreateEnabledByProject = new Map<string, boolean>();
+const stopLinearAutoCreateByProject = new Map<string, (() => void) | null>();
+const autoRemoveOnMergeEnabledByProject = new Map<string, boolean>();
+
+// Initialize per-project toggle state from loaded config
+for (const proj of runtime.projectRegistry.list()) {
+  const scope = runtime.projectRegistry.get(proj.id);
+  if (!scope) continue;
+  linearAutoCreateEnabledByProject.set(proj.id, scope.config.integrations.linear.autoCreateWorktrees);
+  stopLinearAutoCreateByProject.set(proj.id, null);
+  autoRemoveOnMergeEnabledByProject.set(proj.id, scope.config.integrations.github.autoRemoveOnMerge);
 }
 
-function stopLinearAutoCreateMonitor(): void {
-  if (stopLinearAutoCreate) {
-    stopLinearAutoCreate();
-    stopLinearAutoCreate = null;
+/** Safe to call multiple times — the guard prevents duplicate monitors. */
+function startLinearAutoCreate(scope: ProjectScope): void {
+  const existing = stopLinearAutoCreateByProject.get(scope.projectId);
+  if (existing) return;
+  const stop = startLinearAutoCreateMonitor({
+    lifecycleService: scope.lifecycleService,
+    git,
+    projectRoot: scope.projectDir,
+    isActive: hasRecentDashboardActivity,
+  });
+  stopLinearAutoCreateByProject.set(scope.projectId, stop);
+}
+
+function stopLinearAutoCreateMonitor(scope: ProjectScope): void {
+  const stop = stopLinearAutoCreateByProject.get(scope.projectId);
+  if (stop) {
+    stop();
+    stopLinearAutoCreateByProject.set(scope.projectId, null);
   }
 }
 
-const autoRemoveDeps: AutoRemoveDependencies = {
-  lifecycleService,
-  git,
-  projectRoot: PROJECT_DIR,
-  notifications: runtimeNotifications,
-  isRemoving: (branch: string) => removingBranches.has(branch),
-  markRemoving: (branch: string) => removingBranches.add(branch),
-  unmarkRemoving: (branch: string) => removingBranches.delete(branch),
-};
+function buildAutoRemoveDeps(scope: ProjectScope): AutoRemoveDependencies {
+  return {
+    lifecycleService: scope.lifecycleService,
+    git,
+    projectRoot: scope.projectDir,
+    notifications: runtimeNotifications,
+    isRemoving: (branch: string) => scope.removingBranches.has(branch),
+    markRemoving: (branch: string) => scope.removingBranches.add(branch),
+    unmarkRemoving: (branch: string) => scope.removingBranches.delete(branch),
+  };
+}
 
-function getFrontendConfig(): {
+function getFrontendConfig(scope: ProjectScope): {
   name: string;
   services: ProjectConfig["services"];
   profiles: Array<{ name: string; systemPrompt?: string }>;
@@ -174,6 +179,7 @@ function getFrontendConfig(): {
   projectDir: string;
   mainBranch: string;
 } {
+  const config = scope.config;
   const defaultProfileName = getDefaultProfileName(config);
   const orderedProfileEntries = Object.entries(config.profiles).sort(([left], [right]) => {
     if (left === defaultProfileName) return -1;
@@ -196,11 +202,11 @@ function getFrontendConfig(): {
     startupEnvs: config.startupEnvs,
     linkedRepos: config.integrations.github.linkedRepos.map((lr) => ({
       alias: lr.alias,
-      ...(lr.dir ? { dir: resolve(PROJECT_DIR, lr.dir) } : {}),
+      ...(lr.dir ? { dir: resolve(scope.projectDir, lr.dir) } : {}),
     })),
-    linearAutoCreateWorktrees: linearAutoCreateEnabled,
-    autoRemoveOnMerge: autoRemoveOnMergeEnabled,
-    projectDir: PROJECT_DIR,
+    linearAutoCreateWorktrees: linearAutoCreateEnabledByProject.get(scope.projectId) ?? config.integrations.linear.autoCreateWorktrees,
+    autoRemoveOnMerge: autoRemoveOnMergeEnabledByProject.get(scope.projectId) ?? config.integrations.github.autoRemoveOnMerge,
+    projectDir: scope.projectDir,
     mainBranch: config.workspace.mainBranch,
   };
 }
@@ -209,6 +215,7 @@ function getFrontendConfig(): {
 
 interface TerminalWsData {
   kind: "terminal";
+  projectId: string;
   branch: string;
   worktreeId: string | null;
   attachId: string | null;
@@ -217,6 +224,7 @@ interface TerminalWsData {
 
 interface AgentsWsData {
   kind: "agents";
+  projectId: string;
   branch: string;
   conversationId: string | null;
   unsubscribe: (() => void) | null;
@@ -231,6 +239,7 @@ interface ExternalTerminalWsData {
 
 interface ScratchTerminalWsData {
   kind: "terminal-scratch";
+  projectId: string;
   scratchId: string;
   sessionName: string;
   attachId: string | null;
@@ -320,42 +329,42 @@ function catching(label: string, fn: () => Promise<Response>): Promise<Response>
   });
 }
 
-function ensureBranchNotRemoving(branch: string): void {
-  if (removingBranches.has(branch)) {
+function ensureBranchNotRemoving(scope: ProjectScope, branch: string): void {
+  if (scope.removingBranches.has(branch)) {
     throw new LifecycleError(`Worktree is being removed: ${branch}`, 409);
   }
 }
 
-function ensureBranchNotCreating(branch: string): void {
-  if (worktreeCreationTracker.has(branch)) {
+function ensureBranchNotCreating(scope: ProjectScope, branch: string): void {
+  if (scope.worktreeCreationTracker.has(branch)) {
     throw new LifecycleError(`Worktree is being created: ${branch}`, 409);
   }
 }
 
-function ensureBranchNotBusy(branch: string): void {
-  ensureBranchNotRemoving(branch);
-  ensureBranchNotCreating(branch);
+function ensureBranchNotBusy(scope: ProjectScope, branch: string): void {
+  ensureBranchNotRemoving(scope, branch);
+  ensureBranchNotCreating(scope, branch);
 }
 
-async function withRemovingBranch<T>(branch: string, fn: () => Promise<T>): Promise<T> {
-  ensureBranchNotBusy(branch);
-  removingBranches.add(branch);
+async function withRemovingBranch<T>(scope: ProjectScope, branch: string, fn: () => Promise<T>): Promise<T> {
+  ensureBranchNotBusy(scope, branch);
+  scope.removingBranches.add(branch);
   try {
     return await fn();
   } finally {
-    removingBranches.delete(branch);
+    scope.removingBranches.delete(branch);
   }
 }
 
-async function resolveTerminalWorktree(branch: string): Promise<{
+async function resolveTerminalWorktree(scope: ProjectScope, branch: string): Promise<{
   worktreeId: string;
   attachTarget: TerminalAttachTarget;
 }> {
-  ensureBranchNotBusy(branch);
-  let state = projectRuntime.getWorktreeByBranch(branch);
+  ensureBranchNotBusy(scope, branch);
+  let state = scope.projectRuntime.getWorktreeByBranch(branch);
   if (!state || !state.session.exists || !state.session.sessionName) {
-    await reconciliationService.reconcile(PROJECT_DIR);
-    state = projectRuntime.getWorktreeByBranch(branch);
+    await scope.reconciliationService.reconcile(scope.projectDir);
+    state = scope.projectRuntime.getWorktreeByBranch(branch);
   }
   if (!state) {
     throw new Error(`Worktree not found: ${branch}`);
@@ -373,7 +382,7 @@ async function resolveTerminalWorktree(branch: string): Promise<{
   };
 }
 
-async function resolveAgentsTerminalWorktree(branch: string): Promise<{
+async function resolveAgentsTerminalWorktree(scope: ProjectScope, branch: string): Promise<{
   ok: true;
   data: {
     worktreeId: string;
@@ -386,7 +395,7 @@ async function resolveAgentsTerminalWorktree(branch: string): Promise<{
   try {
     return {
       ok: true,
-      data: await resolveTerminalWorktree(branch),
+      data: await resolveTerminalWorktree(scope, branch),
     };
   } catch (error) {
     const classified = classifyAgentsTerminalWorktreeError(error);
@@ -398,13 +407,13 @@ async function resolveAgentsTerminalWorktree(branch: string): Promise<{
   }
 }
 
-async function apiGetNativeTerminalLaunch(branch: string): Promise<Response> {
+async function apiGetNativeTerminalLaunch(scope: ProjectScope, branch: string): Promise<Response> {
   touchDashboardActivity();
-  ensureBranchNotBusy(branch);
-  await reconciliationService.reconcile(PROJECT_DIR);
+  ensureBranchNotBusy(scope, branch);
+  await scope.reconciliationService.reconcile(scope.projectDir);
   const launch = buildNativeTerminalLaunch({
     branch,
-    state: projectRuntime.getWorktreeByBranch(branch),
+    state: scope.projectRuntime.getWorktreeByBranch(branch),
     tmuxCommand: buildNativeTerminalTmuxCommand(Bun.env),
     sessionPrefix: `wm-native-${PORT}-`,
   });
@@ -431,9 +440,9 @@ async function hasValidControlToken(req: Request): Promise<boolean> {
 
 // --- Process helpers ---
 
-async function getWorktreeGitDirs(): Promise<Map<string, string>> {
+async function getWorktreeGitDirs(scope: ProjectScope): Promise<Map<string, string>> {
   const gitDirs = new Map<string, string>();
-  const projectRoot = resolve(PROJECT_DIR);
+  const projectRoot = resolve(scope.projectDir);
   for (const entry of git.listWorktrees(projectRoot)) {
     if (entry.bare || resolve(entry.path) === projectRoot || !entry.branch) continue;
     gitDirs.set(entry.branch, git.resolveWorktreeGitDir(entry.path));
@@ -455,21 +464,21 @@ function makeCallbacks(ws: { send: (data: string) => void; readyState: number })
   };
 }
 
-async function readProjectSnapshot(): Promise<ProjectSnapshot> {
+async function readProjectSnapshot(scope: ProjectScope): Promise<ProjectSnapshot> {
   const linearApiKey = Bun.env.LINEAR_API_KEY;
-  const linearIssuesPromise = config.integrations.linear.enabled && linearApiKey?.trim()
+  const linearIssuesPromise = scope.config.integrations.linear.enabled && linearApiKey?.trim()
     ? fetchAssignedIssues()
     : Promise.resolve({ ok: true as const, data: [] });
-  await reconciliationService.reconcile(PROJECT_DIR);
-  const archiveState = await archiveStateService.prune(projectRuntime.listWorktrees().map((worktree) => worktree.path));
+  await scope.reconciliationService.reconcile(scope.projectDir);
+  const archiveState = await scope.archiveStateService.prune(scope.projectRuntime.listWorktrees().map((worktree) => worktree.path));
   const linearResult = await linearIssuesPromise;
   const archivedPaths = buildArchivedWorktreePathSet(archiveState);
   const linearIssues = linearResult.ok ? linearResult.data : [];
   return buildProjectSnapshot({
-    projectName: config.name,
-    mainBranch: config.workspace.mainBranch,
-    runtime: projectRuntime,
-    creatingWorktrees: worktreeCreationTracker.list(),
+    projectName: scope.config.name,
+    mainBranch: scope.config.workspace.mainBranch,
+    runtime: scope.projectRuntime,
+    creatingWorktrees: scope.worktreeCreationTracker.list(),
     notifications: runtimeNotifications.list(),
     isArchived: (path) => archivedPaths.has(normalizeArchivePath(path)),
     findLinearIssue: (branch) => {
@@ -484,22 +493,22 @@ async function readProjectSnapshot(): Promise<ProjectSnapshot> {
     },
     findAgentLabel: (agentId) => {
       if (!agentId) return null;
-      return getAgentDefinition(config, agentId)?.label ?? agentId;
+      return getAgentDefinition(scope.config, agentId)?.label ?? agentId;
     },
   });
 }
 
 // --- API handler functions (thin I/O layer, testable by injecting deps) ---
 
-async function apiGetProject(): Promise<Response> {
+async function apiGetProject(scope: ProjectScope): Promise<Response> {
   touchDashboardActivity();
-  return jsonResponse(await readProjectSnapshot());
+  return jsonResponse(await readProjectSnapshot(scope));
 }
 
-async function apiGetWorktrees(): Promise<Response> {
+async function apiGetWorktrees(scope: ProjectScope): Promise<Response> {
   touchDashboardActivity();
   return jsonResponse({
-    worktrees: (await readProjectSnapshot()).worktrees,
+    worktrees: (await readProjectSnapshot(scope)).worktrees,
   });
 }
 
@@ -509,24 +518,24 @@ async function apiListExternalSessions(): Promise<Response> {
   return jsonResponse({ sessions });
 }
 
-async function apiListScratchSessions(): Promise<Response> {
-  return jsonResponse({ sessions: scratchSessionService.list() });
+async function apiListScratchSessions(scope: ProjectScope): Promise<Response> {
+  return jsonResponse({ sessions: scope.scratchSessionService.list() });
 }
 
-async function apiCreateScratchSession(req: Request): Promise<Response> {
+async function apiCreateScratchSession(scope: ProjectScope, req: Request): Promise<Response> {
   const body = CreateScratchSessionRequestSchema.parse(await req.json());
-  const meta = await scratchSessionService.create({
+  const meta = await scope.scratchSessionService.create({
     displayName: body.displayName,
     kind: body.kind,
     agentId: body.agentId ?? null,
   });
-  const snap = scratchSessionService.list().find((s) => s.id === meta.id);
+  const snap = scope.scratchSessionService.list().find((s) => s.id === meta.id);
   if (!snap) throw new Error("scratch session created but not visible in list");
   return jsonResponse({ session: snap }, 201);
 }
 
-async function apiRemoveScratchSession(id: string): Promise<Response> {
-  scratchSessionService.remove(id);
+async function apiRemoveScratchSession(scope: ProjectScope, id: string): Promise<Response> {
+  scope.scratchSessionService.remove(id);
   return jsonResponse({ ok: true });
 }
 
@@ -540,14 +549,14 @@ function findSnapshotWorktree(snapshot: ProjectSnapshot, branch: string): Worktr
   return snapshot.worktrees.find((worktree) => worktree.branch === branch) ?? null;
 }
 
-async function resolveAgentsWorktree(branch: string): Promise<{
+async function resolveAgentsWorktree(scope: ProjectScope, branch: string): Promise<{
   ok: true;
   worktree: WorktreeSnapshot;
 } | {
   ok: false;
   response: Response;
 }> {
-  const snapshot = await readProjectSnapshot();
+  const snapshot = await readProjectSnapshot(scope);
   const worktree = findSnapshotWorktree(snapshot, branch);
   if (!worktree) {
     return {
@@ -562,21 +571,21 @@ async function resolveAgentsWorktree(branch: string): Promise<{
   };
 }
 
-function resolveWorktreeAgentChatSupport(worktree: WorktreeSnapshot, action: "chat" | "interrupt") {
+function resolveWorktreeAgentChatSupport(scope: ProjectScope, worktree: WorktreeSnapshot, action: "chat" | "interrupt") {
   return resolveAgentChatSupport({
     agentId: worktree.agentName,
     agentLabel: worktree.agentLabel,
-    agent: worktree.agentName ? getAgentDefinition(config, worktree.agentName) : null,
+    agent: worktree.agentName ? getAgentDefinition(scope.config, worktree.agentName) : null,
     action,
   });
 }
 
-async function apiAttachAgentsWorktree(branch: string): Promise<Response> {
+async function apiAttachAgentsWorktree(scope: ProjectScope, branch: string): Promise<Response> {
   touchDashboardActivity();
-  const resolved = await resolveAgentsWorktree(branch);
+  const resolved = await resolveAgentsWorktree(scope, branch);
   if (!resolved.ok) return resolved.response;
 
-  const chatSupport = resolveWorktreeAgentChatSupport(resolved.worktree, "chat");
+  const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.worktree, "chat");
   if (!chatSupport.ok) {
     return errorResponse(chatSupport.error, chatSupport.status);
   }
@@ -589,12 +598,12 @@ async function apiAttachAgentsWorktree(branch: string): Promise<Response> {
     : errorResponse(result.error, result.status);
 }
 
-async function apiGetAgentsWorktreeHistory(branch: string): Promise<Response> {
+async function apiGetAgentsWorktreeHistory(scope: ProjectScope, branch: string): Promise<Response> {
   touchDashboardActivity();
-  const resolved = await resolveAgentsWorktree(branch);
+  const resolved = await resolveAgentsWorktree(scope, branch);
   if (!resolved.ok) return resolved.response;
 
-  const chatSupport = resolveWorktreeAgentChatSupport(resolved.worktree, "chat");
+  const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.worktree, "chat");
   if (!chatSupport.ok) {
     return errorResponse(chatSupport.error, chatSupport.status);
   }
@@ -607,18 +616,18 @@ async function apiGetAgentsWorktreeHistory(branch: string): Promise<Response> {
     : errorResponse(result.error, result.status);
 }
 
-async function apiSendAgentsWorktreeMessage(branch: string, req: Request): Promise<Response> {
+async function apiSendAgentsWorktreeMessage(scope: ProjectScope, branch: string, req: Request): Promise<Response> {
   touchDashboardActivity();
   const parsed = await parseJsonBody(req, AgentsSendMessageRequestSchema);
   if (!parsed.ok) return parsed.response;
 
-  const resolved = await resolveAgentsWorktree(branch);
+  const resolved = await resolveAgentsWorktree(scope, branch);
   if (!resolved.ok) return resolved.response;
   if (!resolved.worktree.mux) {
     return errorResponse("Open this worktree in the main dashboard before sending messages here", 409);
   }
 
-  const chatSupport = resolveWorktreeAgentChatSupport(resolved.worktree, "chat");
+  const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.worktree, "chat");
   if (!chatSupport.ok) {
     return errorResponse(chatSupport.error, chatSupport.status);
   }
@@ -630,7 +639,7 @@ async function apiSendAgentsWorktreeMessage(branch: string, req: Request): Promi
     return errorResponse(conversationResult.error, conversationResult.status);
   }
 
-  const terminalWorktree = await resolveAgentsTerminalWorktree(branch);
+  const terminalWorktree = await resolveAgentsTerminalWorktree(scope, branch);
   if (!terminalWorktree.ok) return terminalWorktree.response;
   const sendResult = await sendTerminalPrompt(
     terminalWorktree.data.worktreeId,
@@ -652,15 +661,15 @@ async function apiSendAgentsWorktreeMessage(branch: string, req: Request): Promi
   });
 }
 
-async function apiInterruptAgentsWorktree(branch: string): Promise<Response> {
+async function apiInterruptAgentsWorktree(scope: ProjectScope, branch: string): Promise<Response> {
   touchDashboardActivity();
-  const resolved = await resolveAgentsWorktree(branch);
+  const resolved = await resolveAgentsWorktree(scope, branch);
   if (!resolved.ok) return resolved.response;
   if (!resolved.worktree.mux) {
     return errorResponse("Open this worktree in the main dashboard before interrupting it here", 409);
   }
 
-  const chatSupport = resolveWorktreeAgentChatSupport(resolved.worktree, "interrupt");
+  const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.worktree, "interrupt");
   if (!chatSupport.ok) {
     return errorResponse(chatSupport.error, chatSupport.status);
   }
@@ -672,7 +681,7 @@ async function apiInterruptAgentsWorktree(branch: string): Promise<Response> {
     return errorResponse(conversationResult.error, conversationResult.status);
   }
 
-  const terminalWorktree = await resolveAgentsTerminalWorktree(branch);
+  const terminalWorktree = await resolveAgentsTerminalWorktree(scope, branch);
   if (!terminalWorktree.ok) return terminalWorktree.response;
   const interruptResult = await interruptPrompt(terminalWorktree.data.attachTarget, 0);
   if (!interruptResult.ok) {
@@ -687,6 +696,7 @@ async function apiInterruptAgentsWorktree(branch: string): Promise<Response> {
 }
 
 async function loadAgentsConversationSnapshot(
+  scope: ProjectScope,
   branch: string,
 ): Promise<{
   ok: true;
@@ -695,7 +705,7 @@ async function loadAgentsConversationSnapshot(
   ok: false;
   message: string;
 }> {
-  const resolved = await resolveAgentsWorktree(branch);
+  const resolved = await resolveAgentsWorktree(scope, branch);
   if (!resolved.ok) {
     return {
       ok: false,
@@ -703,7 +713,7 @@ async function loadAgentsConversationSnapshot(
     };
   }
 
-  const chatSupport = resolveWorktreeAgentChatSupport(resolved.worktree, "chat");
+  const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.worktree, "chat");
   if (!chatSupport.ok) {
     return {
       ok: false,
@@ -740,7 +750,15 @@ async function openAgentsSocket(
   ws: { readyState: number; send: (data: string) => void; close: (code?: number, reason?: string) => void },
   data: AgentsWsData,
 ): Promise<void> {
-  const snapshot = await loadAgentsConversationSnapshot(data.branch);
+  const scope = runtime.projectRegistry.get(data.projectId);
+  if (!scope) {
+    const msg = `Project not found: ${data.projectId}`;
+    sendAgentsWs(ws, { type: "error", message: msg });
+    ws.close(1011, msg.slice(0, 123));
+    return;
+  }
+
+  const snapshot = await loadAgentsConversationSnapshot(scope, data.branch);
   if (!snapshot.ok) {
     sendAgentsWs(ws, { type: "error", message: snapshot.message });
     ws.close(1011, snapshot.message.slice(0, 123));
@@ -770,7 +788,9 @@ async function openAgentsSocket(
     if (!shouldRefreshAgentsConversationSnapshot(notification)) return;
 
     void (async () => {
-      const nextSnapshot = await loadAgentsConversationSnapshot(data.branch);
+      const projScope = runtime.projectRegistry.get(data.projectId);
+      if (!projScope) return;
+      const nextSnapshot = await loadAgentsConversationSnapshot(projScope, data.branch);
       if (!nextSnapshot.ok) {
         sendAgentsWs(ws, { type: "error", message: nextSnapshot.message });
         return;
@@ -796,17 +816,33 @@ async function apiRuntimeEvent(req: Request): Promise<Response> {
   } catch {
     return errorResponse("Invalid JSON", 400);
   }
+
+  // Runtime events are project-scoped; look up project from the event body if present,
+  // otherwise fall back to the first project (single-project compat for lifecycle hooks).
+  const maybeProjectId = isRecord(raw) && typeof raw.projectId === "string" ? raw.projectId : null;
+  let targetScope: ProjectScope | null = null;
+  if (maybeProjectId) {
+    targetScope = runtime.projectRegistry.get(maybeProjectId);
+    if (!targetScope) return errorResponse(`Project not found: ${maybeProjectId}`, 404);
+  } else {
+    const first = runtime.projectRegistry.list()[0];
+    if (first) targetScope = runtime.projectRegistry.get(first.id);
+  }
+
+  if (!targetScope) return errorResponse("No project available", 404);
+  const scope = targetScope;
+
   const event = parseRuntimeEvent(raw);
   if (!event) return errorResponse("Invalid runtime event body", 400);
 
   try {
-    projectRuntime.applyEvent(event);
+    scope.projectRuntime.applyEvent(event);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes("Unknown worktree id")) {
-      await reconciliationService.reconcile(PROJECT_DIR);
+      await scope.reconciliationService.reconcile(scope.projectDir);
       try {
-        projectRuntime.applyEvent(event);
+        scope.projectRuntime.applyEvent(event);
       } catch (retryError) {
         const retryMessage = retryError instanceof Error ? retryError.message : String(retryError);
         if (retryMessage.includes("Unknown worktree id")) {
@@ -826,27 +862,28 @@ async function apiRuntimeEvent(req: Request): Promise<Response> {
   });
 }
 
-async function apiListBranches(req: Request): Promise<Response> {
+async function apiListBranches(scope: ProjectScope, req: Request): Promise<Response> {
   const parsed = parseQuery(req, AvailableBranchesQuerySchema);
   if (!parsed.ok) return parsed.response;
 
   const includeRemote = parsed.data.includeRemote === true;
   return jsonResponse({
-    branches: lifecycleService.listAvailableBranches({ includeRemote }),
+    branches: scope.lifecycleService.listAvailableBranches({ includeRemote }),
   });
 }
 
-async function apiListBaseBranches(): Promise<Response> {
+async function apiListBaseBranches(scope: ProjectScope): Promise<Response> {
   return jsonResponse({
-    branches: lifecycleService.listBaseBranches(),
+    branches: scope.lifecycleService.listBaseBranches(),
   });
 }
 
-async function apiCreateWorktree(req: Request): Promise<Response> {
+async function apiCreateWorktree(scope: ProjectScope, req: Request): Promise<Response> {
   const parsed = await parseJsonBody(req, CreateWorktreeRequestSchema);
   if (!parsed.ok) return parsed.response;
 
   const body = parsed.data;
+  const config = scope.config;
   const envOverrides = body.envOverrides && Object.keys(body.envOverrides).length > 0 ? body.envOverrides : undefined;
   const branch = body.branch?.trim() ? body.branch.trim() : undefined;
   const baseBranch = body.baseBranch?.trim() ? body.baseBranch.trim() : undefined;
@@ -917,7 +954,7 @@ async function apiCreateWorktree(req: Request): Promise<Response> {
   if (resolvedBranch) {
     const targetBranches = buildCreateWorktreeTargets(resolvedBranch, selectedAgents).map((target) => target.branch);
     for (const targetBranch of targetBranches) {
-      ensureBranchNotBusy(targetBranch);
+      ensureBranchNotBusy(scope, targetBranch);
     }
 
     if (baseBranch && targetBranches.some((targetBranch) => targetBranch === baseBranch)) {
@@ -928,7 +965,7 @@ async function apiCreateWorktree(req: Request): Promise<Response> {
   log.info(
     `[worktree:add] mode=${mode ?? "new"}${resolvedBranch ? ` branch=${resolvedBranch}` : ""}${baseBranch ? ` base=${baseBranch}` : ""}${profile ? ` profile=${profile}` : ""} agents=${selectedAgents.join(",")}${createLinearTicket ? " linearTicket=true" : ""}${prompt ? ` prompt="${prompt.slice(0, 80)}"` : ""}`,
   );
-  const result = await lifecycleService.createWorktrees({
+  const result = await scope.lifecycleService.createWorktrees({
     mode,
     branch: resolvedBranch,
     baseBranch,
@@ -944,52 +981,52 @@ async function apiCreateWorktree(req: Request): Promise<Response> {
   }, 201);
 }
 
-async function apiDeleteWorktree(name: string): Promise<Response> {
-  return withRemovingBranch(name, async () => {
+async function apiDeleteWorktree(scope: ProjectScope, name: string): Promise<Response> {
+  return withRemovingBranch(scope, name, async () => {
     log.info(`[worktree:rm] name=${name}`);
-    await lifecycleService.removeWorktree(name);
+    await scope.lifecycleService.removeWorktree(name);
     log.debug(`[worktree:rm] done name=${name}`);
     return jsonResponse({ ok: true });
   });
 }
 
-async function apiOpenWorktree(name: string): Promise<Response> {
-  ensureBranchNotBusy(name);
+async function apiOpenWorktree(scope: ProjectScope, name: string): Promise<Response> {
+  ensureBranchNotBusy(scope, name);
   log.info(`[worktree:open] name=${name}`);
-  const result = await lifecycleService.openWorktree(name);
+  const result = await scope.lifecycleService.openWorktree(name);
   log.debug(`[worktree:open] done name=${name} worktreeId=${result.worktreeId}`);
   return jsonResponse({ ok: true });
 }
 
-async function apiCloseWorktree(name: string): Promise<Response> {
-  ensureBranchNotBusy(name);
+async function apiCloseWorktree(scope: ProjectScope, name: string): Promise<Response> {
+  ensureBranchNotBusy(scope, name);
   log.info(`[worktree:close] name=${name}`);
-  await lifecycleService.closeWorktree(name);
+  await scope.lifecycleService.closeWorktree(name);
   log.debug(`[worktree:close] done name=${name}`);
   return jsonResponse({ ok: true });
 }
 
-async function apiSetWorktreeArchived(name: string, req: Request): Promise<Response> {
-  ensureBranchNotBusy(name);
+async function apiSetWorktreeArchived(scope: ProjectScope, name: string, req: Request): Promise<Response> {
+  ensureBranchNotBusy(scope, name);
   const parsed = await parseJsonBody(req, SetWorktreeArchivedRequestSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
 
   log.info(`[worktree:archive] name=${name} archived=${body.archived}`);
-  await lifecycleService.setWorktreeArchived(name, body.archived);
+  await scope.lifecycleService.setWorktreeArchived(name, body.archived);
   log.debug(`[worktree:archive] done name=${name} archived=${body.archived}`);
   return jsonResponse({ ok: true, archived: body.archived });
 }
 
-async function apiSendPrompt(name: string, req: Request): Promise<Response> {
-  ensureBranchNotBusy(name);
+async function apiSendPrompt(scope: ProjectScope, name: string, req: Request): Promise<Response> {
+  ensureBranchNotBusy(scope, name);
   const parsed = await parseJsonBody(req, SendWorktreePromptRequestSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
   const text = body.text;
   const preamble = body.preamble;
   log.info(`[worktree:send] name=${name} text="${text.slice(0, 80)}"`);
-  const terminalWorktree = await resolveTerminalWorktree(name);
+  const terminalWorktree = await resolveTerminalWorktree(scope, name);
   const result = await sendTerminalPrompt(
     terminalWorktree.worktreeId,
     terminalWorktree.attachTarget,
@@ -1001,16 +1038,16 @@ async function apiSendPrompt(name: string, req: Request): Promise<Response> {
   return jsonResponse({ ok: true });
 }
 
-async function apiMergeWorktree(name: string): Promise<Response> {
-  ensureBranchNotBusy(name);
+async function apiMergeWorktree(scope: ProjectScope, name: string): Promise<Response> {
+  ensureBranchNotBusy(scope, name);
   log.info(`[worktree:merge] name=${name}`);
-  await lifecycleService.mergeWorktree(name);
+  await scope.lifecycleService.mergeWorktree(name);
   log.debug(`[worktree:merge] done name=${name}`);
   return jsonResponse({ ok: true });
 }
 
-async function apiListAgents(): Promise<Response> {
-  return jsonResponse({ agents: listAgentDetails(config) });
+async function apiListAgents(scope: ProjectScope): Promise<Response> {
+  return jsonResponse({ agents: listAgentDetails(scope.config) });
 }
 
 async function apiValidateAgent(req: Request): Promise<Response> {
@@ -1019,13 +1056,13 @@ async function apiValidateAgent(req: Request): Promise<Response> {
   return jsonResponse(validateCustomAgentInput(parsed.data));
 }
 
-async function apiCreateAgent(req: Request): Promise<Response> {
+async function apiCreateAgent(scope: ProjectScope, req: Request): Promise<Response> {
   const parsed = await parseJsonBody(req, UpsertCustomAgentRequestSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
   const agentId = normalizeCustomAgentId(body.label);
 
-  if (isBuiltInAgentId(agentId) || config.agents[agentId]) {
+  if (isBuiltInAgentId(agentId) || scope.config.agents[agentId]) {
     return errorResponse(`Agent already exists: ${agentId}`, 409);
   }
 
@@ -1035,10 +1072,10 @@ async function apiCreateAgent(req: Request): Promise<Response> {
     ...(body.resumeCommand?.trim() ? { resumeCommand: body.resumeCommand.trim() } : {}),
   };
 
-  await persistLocalCustomAgent(PROJECT_DIR, agentId, agentConfig);
-  config.agents[agentId] = agentConfig;
+  await persistLocalCustomAgent(scope.projectDir, agentId, agentConfig);
+  scope.config.agents[agentId] = agentConfig;
 
-  const agent = listAgentDetails(config).find((entry) => entry.id === agentId);
+  const agent = listAgentDetails(scope.config).find((entry) => entry.id === agentId);
   if (!agent) {
     return errorResponse(`Created agent could not be loaded: ${agentId}`, 500);
   }
@@ -1046,11 +1083,11 @@ async function apiCreateAgent(req: Request): Promise<Response> {
   return jsonResponse({ agent });
 }
 
-async function apiUpdateAgent(agentId: string, req: Request): Promise<Response> {
+async function apiUpdateAgent(scope: ProjectScope, agentId: string, req: Request): Promise<Response> {
   if (isBuiltInAgentId(agentId)) {
     return errorResponse(`Built-in agent cannot be edited: ${agentId}`, 400);
   }
-  if (!config.agents[agentId]) {
+  if (!scope.config.agents[agentId]) {
     return errorResponse(`Unknown agent: ${agentId}`, 404);
   }
 
@@ -1063,10 +1100,10 @@ async function apiUpdateAgent(agentId: string, req: Request): Promise<Response> 
     ...(body.resumeCommand?.trim() ? { resumeCommand: body.resumeCommand.trim() } : {}),
   };
 
-  await persistLocalCustomAgent(PROJECT_DIR, agentId, agentConfig);
-  config.agents[agentId] = agentConfig;
+  await persistLocalCustomAgent(scope.projectDir, agentId, agentConfig);
+  scope.config.agents[agentId] = agentConfig;
 
-  const agent = listAgentDetails(config).find((entry) => entry.id === agentId);
+  const agent = listAgentDetails(scope.config).find((entry) => entry.id === agentId);
   if (!agent) {
     return errorResponse(`Updated agent could not be loaded: ${agentId}`, 500);
   }
@@ -1074,53 +1111,53 @@ async function apiUpdateAgent(agentId: string, req: Request): Promise<Response> 
   return jsonResponse({ agent });
 }
 
-async function apiDeleteAgent(agentId: string): Promise<Response> {
+async function apiDeleteAgent(scope: ProjectScope, agentId: string): Promise<Response> {
   if (isBuiltInAgentId(agentId)) {
     return errorResponse(`Built-in agent cannot be deleted: ${agentId}`, 400);
   }
-  if (!config.agents[agentId]) {
+  if (!scope.config.agents[agentId]) {
     return errorResponse(`Unknown agent: ${agentId}`, 404);
   }
 
-  await removeLocalCustomAgent(PROJECT_DIR, agentId);
-  delete config.agents[agentId];
+  await removeLocalCustomAgent(scope.projectDir, agentId);
+  delete scope.config.agents[agentId];
   return jsonResponse({ ok: true });
 }
 
-async function apiSetLinearAutoCreate(req: Request): Promise<Response> {
+async function apiSetLinearAutoCreate(scope: ProjectScope, req: Request): Promise<Response> {
   const parsed = await parseJsonBody(req, ToggleEnabledRequestSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
 
-  linearAutoCreateEnabled = body.enabled;
-  if (linearAutoCreateEnabled) {
+  linearAutoCreateEnabledByProject.set(scope.projectId, body.enabled);
+  if (body.enabled) {
     resetProcessedIssues();
-    startLinearAutoCreate();
+    startLinearAutoCreate(scope);
     log.info("[config] Linear auto-create worktrees enabled");
   } else {
-    stopLinearAutoCreateMonitor();
+    stopLinearAutoCreateMonitor(scope);
     log.info("[config] Linear auto-create worktrees disabled");
   }
 
-  await persistLocalLinearConfig(PROJECT_DIR, { autoCreateWorktrees: linearAutoCreateEnabled });
+  await persistLocalLinearConfig(scope.projectDir, { autoCreateWorktrees: body.enabled });
 
-  return jsonResponse({ ok: true, enabled: linearAutoCreateEnabled });
+  return jsonResponse({ ok: true, enabled: body.enabled });
 }
 
-async function apiSetAutoRemoveOnMerge(req: Request): Promise<Response> {
+async function apiSetAutoRemoveOnMerge(scope: ProjectScope, req: Request): Promise<Response> {
   const parsed = await parseJsonBody(req, ToggleEnabledRequestSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
 
-  autoRemoveOnMergeEnabled = body.enabled;
-  log.info(`[config] Auto-remove on merge ${autoRemoveOnMergeEnabled ? "enabled" : "disabled"}`);
+  autoRemoveOnMergeEnabledByProject.set(scope.projectId, body.enabled);
+  log.info(`[config] Auto-remove on merge ${body.enabled ? "enabled" : "disabled"}`);
 
-  await persistLocalGitHubConfig(PROJECT_DIR, { autoRemoveOnMerge: autoRemoveOnMergeEnabled });
+  await persistLocalGitHubConfig(scope.projectDir, { autoRemoveOnMerge: body.enabled });
 
-  return jsonResponse({ ok: true, enabled: autoRemoveOnMergeEnabled });
+  return jsonResponse({ ok: true, enabled: body.enabled });
 }
 
-async function apiPullMain(req: Request): Promise<Response> {
+async function apiPullMain(scope: ProjectScope, req: Request): Promise<Response> {
   const raw: unknown = await req.json().catch(() => ({}));
   const parsed = PullMainRequestSchema.safeParse(raw);
   if (!parsed.success) {
@@ -1129,12 +1166,12 @@ async function apiPullMain(req: Request): Promise<Response> {
   const force = parsed.data.force === true;
   const repo = parsed.data.repo ?? "";
 
-  let projectRoot = PROJECT_DIR;
+  let projectRoot = scope.projectDir;
   if (repo) {
-    const linkedRepo = config.integrations.github.linkedRepos.find((lr) => lr.alias === repo);
+    const linkedRepo = scope.config.integrations.github.linkedRepos.find((lr) => lr.alias === repo);
     if (!linkedRepo) return errorResponse(`Unknown linked repo: ${repo}`, 404);
     if (!linkedRepo.dir) return errorResponse(`Linked repo "${repo}" has no dir configured`, 400);
-    const resolvedDir = resolve(PROJECT_DIR, linkedRepo.dir);
+    const resolvedDir = resolve(scope.projectDir, linkedRepo.dir);
     const repoRoot = git.resolveRepoRoot(resolvedDir);
     if (!repoRoot) return errorResponse(`Linked repo "${repo}" dir is not a git repository: ${resolvedDir}`, 400);
     projectRoot = repoRoot;
@@ -1142,20 +1179,20 @@ async function apiPullMain(req: Request): Promise<Response> {
 
   // NOTE: linked repos inherit the project's mainBranch setting — if a linked
   // repo uses a different default branch this will need a per-repo override.
-  const deps = { git, projectRoot, mainBranch: config.workspace.mainBranch };
+  const deps = { git, projectRoot, mainBranch: scope.config.workspace.mainBranch };
   const result = force ? forcePullMainBranch(deps) : pullMainBranch(deps);
 
   log.info(`[pull-main] ${repo || "main"} ${force ? "force " : ""}pull: ${result.status}`);
   return jsonResponse(result);
 }
 
-async function apiGetLinearIssues(): Promise<Response> {
+async function apiGetLinearIssues(scope: ProjectScope): Promise<Response> {
   const apiKey = Bun.env.LINEAR_API_KEY;
-  const fetchResult = config.integrations.linear.enabled && apiKey?.trim()
+  const fetchResult = scope.config.integrations.linear.enabled && apiKey?.trim()
     ? await fetchAssignedIssues()
     : undefined;
   const result = buildLinearIssuesResponse({
-    integrationEnabled: config.integrations.linear.enabled,
+    integrationEnabled: scope.config.integrations.linear.enabled,
     apiKey,
     fetchResult,
   });
@@ -1165,9 +1202,9 @@ async function apiGetLinearIssues(): Promise<Response> {
 
 const MAX_DIFF_BYTES = 200 * 1024;
 
-async function apiGetWorktreeDiff(name: string): Promise<Response> {
-  await reconciliationService.reconcile(PROJECT_DIR);
-  const state = projectRuntime.getWorktreeByBranch(name);
+async function apiGetWorktreeDiff(scope: ProjectScope, name: string): Promise<Response> {
+  await scope.reconciliationService.reconcile(scope.projectDir);
+  const state = scope.projectRuntime.getWorktreeByBranch(name);
   if (!state) return errorResponse(`Worktree not found: ${name}`, 404);
 
   const uncommitted = git.readDiff(state.path);
@@ -1211,8 +1248,8 @@ function sanitizeFilename(name: string): string {
   return base.replace(/[^a-zA-Z0-9._-]/g, "_") || "upload";
 }
 
-async function apiUploadFiles(name: string, req: Request): Promise<Response> {
-  const state = projectRuntime.getWorktreeByBranch(name);
+async function apiUploadFiles(scope: ProjectScope, name: string, req: Request): Promise<Response> {
+  const state = scope.projectRuntime.getWorktreeByBranch(name);
   if (!state) return errorResponse(`Worktree not found: ${name}`, 404);
 
   let formData: FormData;
@@ -1292,9 +1329,7 @@ function parseNotificationIdParam(params: Record<string, string>):
 function parseAgentIdParam(params: Record<string, string>):
   | { ok: true; data: string }
   | { ok: false; response: Response } {
-  const parsed = parseParams(params, AgentIdParamsSchema);
-  if (!parsed.ok) return parsed;
-  const agentId = parsed.data.id.trim();
+  const agentId = params.id?.trim();
   if (!agentId) {
     return {
       ok: false,
@@ -1307,6 +1342,38 @@ function parseAgentIdParam(params: Record<string, string>):
   };
 }
 
+function parseProjectIdParam(
+  params: Record<string, string>,
+): { ok: true; data: { id: string; scope: ProjectScope } } | { ok: false; response: Response } {
+  const id = params.projectId;
+  if (!id || id.length === 0) {
+    return { ok: false, response: errorResponse("Missing projectId", 400) };
+  }
+  const scope = runtime.projectRegistry.get(id);
+  if (!scope) {
+    return { ok: false, response: errorResponse(`Project not found: ${id}`, 404) };
+  }
+  return { ok: true, data: { id, scope } };
+}
+
+// --- Project registry handlers ---
+
+async function apiListProjects(): Promise<Response> {
+  return jsonResponse({ projects: runtime.projectRegistry.list() });
+}
+
+async function apiCreateProject(req: Request): Promise<Response> {
+  const body = CreateProjectRequestSchema.parse(await req.json());
+  const project = await runtime.projectRegistry.add(body);
+  return jsonResponse({ project }, 201);
+}
+
+async function apiRemoveProject(id: string, req: Request): Promise<Response> {
+  const body = RemoveProjectRequestSchema.parse(await req.json());
+  await runtime.projectRegistry.remove(id, { killSessions: body.killSessions ?? false });
+  return jsonResponse({ ok: true });
+}
+
 // --- Server ---
 
 Bun.serve({
@@ -1315,16 +1382,22 @@ Bun.serve({
 
   routes: {
     [apiPaths.streamAgentsWorktreeConversation]: (req, server) => {
+      const projectId = decodeURIComponent(req.params.projectId);
       const branch = decodeURIComponent(req.params.name);
-      return server.upgrade(req, { data: { kind: "agents", branch, conversationId: null, unsubscribe: null } })
+      const scope = runtime.projectRegistry.get(projectId);
+      if (!scope) return new Response("Project not found", { status: 404 });
+      return server.upgrade(req, { data: { kind: "agents", projectId, branch, conversationId: null, unsubscribe: null } })
         ? undefined
         : new Response("WebSocket upgrade failed", { status: 400 });
     },
 
-    "/ws/:worktree": (req, server) => {
+    "/ws/projects/:projectId/:worktree": (req, server) => {
+      const projectId = decodeURIComponent(req.params.projectId);
       const branch = decodeURIComponent(req.params.worktree);
+      const scope = runtime.projectRegistry.get(projectId);
+      if (!scope) return new Response("Project not found", { status: 404 });
       return server.upgrade(req, {
-        data: { kind: "terminal", branch, worktreeId: null, attachId: null, attached: false },
+        data: { kind: "terminal", projectId, branch, worktreeId: null, attachId: null, attached: false },
       })
         ? undefined
         : new Response("WebSocket upgrade failed", { status: 400 });
@@ -1339,13 +1412,17 @@ Bun.serve({
         : new Response("WebSocket upgrade failed", { status: 400 });
     },
 
-    "/ws/scratch/:id": (req, server) => {
+    "/ws/projects/:projectId/scratch/:id": (req, server) => {
+      const projectId = decodeURIComponent(req.params.projectId);
       const id = decodeURIComponent(req.params.id);
-      const meta = scratchSessionService.list().find((s) => s.id === id);
+      const scope = runtime.projectRegistry.get(projectId);
+      if (!scope) return new Response("Project not found", { status: 404 });
+      const meta = scope.scratchSessionService.list().find((s) => s.id === id);
       if (!meta) return new Response("Scratch session not found", { status: 404 });
       return server.upgrade(req, {
         data: {
           kind: "terminal-scratch",
+          projectId,
           scratchId: id,
           sessionName: meta.sessionName,
           attachId: null,
@@ -1357,81 +1434,140 @@ Bun.serve({
     },
 
     [apiPaths.fetchConfig]: {
-      GET: () => jsonResponse(getFrontendConfig()),
+      GET: (req) => {
+        // fetchConfig remains single-project for backward compat; use first project
+        const first = runtime.projectRegistry.list()[0];
+        const scope = first ? runtime.projectRegistry.get(first.id) : null;
+        if (!scope) return errorResponse("No project available", 404);
+        return jsonResponse(getFrontendConfig(scope));
+      },
+    },
+
+    [apiPaths.fetchExternalSessions]: {
+      GET: () => catching("GET /api/external-sessions", () => apiListExternalSessions()),
+    },
+
+    [apiPaths.fetchProjects]: {
+      GET: () => catching("GET /api/projects", () => apiListProjects()),
+      POST: (req) => catching("POST /api/projects", () => apiCreateProject(req)),
+    },
+
+    [apiPaths.removeProject]: {
+      DELETE: (req) => {
+        const id = req.params.projectId;
+        if (!id || id.length === 0) return errorResponse("Missing projectId", 400);
+        return catching("DELETE /api/projects/:projectId", () => apiRemoveProject(id, req));
+      },
     },
 
     [apiPaths.fetchAvailableBranches]: {
-      GET: (req) => catching("GET /api/branches", () => apiListBranches(req)),
+      GET: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("GET /api/projects/:projectId/branches", () => apiListBranches(parsed.data.scope, req));
+      },
     },
 
     [apiPaths.fetchBaseBranches]: {
-      GET: () => catching("GET /api/base-branches", () => apiListBaseBranches()),
+      GET: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("GET /api/projects/:projectId/base-branches", () => apiListBaseBranches(parsed.data.scope));
+      },
     },
 
     [apiPaths.fetchProject]: {
-      GET: () => catching("GET /api/project", () => apiGetProject()),
+      GET: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("GET /api/projects/:projectId/project", () => apiGetProject(parsed.data.scope));
+      },
     },
 
     [apiPaths.fetchAgents]: {
-      GET: () => catching("GET /api/agents", () => apiListAgents()),
-      POST: (req) => catching("POST /api/agents", () => apiCreateAgent(req)),
+      GET: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("GET /api/projects/:projectId/agents", () => apiListAgents(parsed.data.scope));
+      },
+      POST: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("POST /api/projects/:projectId/agents", () => apiCreateAgent(parsed.data.scope, req));
+      },
     },
 
     [apiPaths.validateAgent]: {
-      POST: (req) => catching("POST /api/agents/validate", () => apiValidateAgent(req)),
+      POST: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("POST /api/projects/:projectId/agents/validate", () => apiValidateAgent(req));
+      },
     },
 
     [apiPaths.updateAgent]: {
       PUT: (req) => {
-        const parsed = parseAgentIdParam(req.params);
-        if (!parsed.ok) return parsed.response;
-        return catching("PUT /api/agents/:id", () => apiUpdateAgent(parsed.data, req));
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
+        const parsedAgent = parseAgentIdParam(req.params);
+        if (!parsedAgent.ok) return parsedAgent.response;
+        return catching("PUT /api/projects/:projectId/agents/:id", () => apiUpdateAgent(parsedProject.data.scope, parsedAgent.data, req));
       },
       DELETE: (req) => {
-        const parsed = parseAgentIdParam(req.params);
-        if (!parsed.ok) return parsed.response;
-        return catching("DELETE /api/agents/:id", () => apiDeleteAgent(parsed.data));
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
+        const parsedAgent = parseAgentIdParam(req.params);
+        if (!parsedAgent.ok) return parsedAgent.response;
+        return catching("DELETE /api/projects/:projectId/agents/:id", () => apiDeleteAgent(parsedProject.data.scope, parsedAgent.data));
       },
     },
 
     [apiPaths.attachAgentsWorktreeConversation]: {
       POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`POST ${apiPaths.attachAgentsWorktreeConversation}`, () => apiAttachAgentsWorktree(name));
+        return catching(`POST ${apiPaths.attachAgentsWorktreeConversation}`, () => apiAttachAgentsWorktree(parsedProject.data.scope, name));
       },
     },
 
     [apiPaths.fetchAgentsWorktreeConversationHistory]: {
       GET: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`GET ${apiPaths.fetchAgentsWorktreeConversationHistory}`, () => apiGetAgentsWorktreeHistory(name));
+        return catching(`GET ${apiPaths.fetchAgentsWorktreeConversationHistory}`, () => apiGetAgentsWorktreeHistory(parsedProject.data.scope, name));
       },
     },
 
     [apiPaths.sendAgentsWorktreeConversationMessage]: {
       POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
         return catching(
           `POST ${apiPaths.sendAgentsWorktreeConversationMessage}`,
-          () => apiSendAgentsWorktreeMessage(name, req),
+          () => apiSendAgentsWorktreeMessage(parsedProject.data.scope, name, req),
         );
       },
     },
 
     [apiPaths.interruptAgentsWorktreeConversation]: {
       POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
         return catching(
           `POST ${apiPaths.interruptAgentsWorktreeConversation}`,
-          () => apiInterruptAgentsWorktree(name),
+          () => apiInterruptAgentsWorktree(parsedProject.data.scope, name),
         );
       },
     },
@@ -1440,130 +1576,180 @@ Bun.serve({
       POST: (req) => catching("POST /api/runtime/events", () => apiRuntimeEvent(req)),
     },
 
-    [apiPaths.fetchExternalSessions]: {
-      GET: () => catching("GET /api/external-sessions", () => apiListExternalSessions()),
-    },
-
     [apiPaths.fetchScratchSessions]: {
-      GET: () => catching("GET /api/scratch-sessions", () => apiListScratchSessions()),
-      POST: (req) => catching("POST /api/scratch-sessions", () => apiCreateScratchSession(req)),
+      GET: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("GET /api/projects/:projectId/scratch-sessions", () => apiListScratchSessions(parsed.data.scope));
+      },
+      POST: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("POST /api/projects/:projectId/scratch-sessions", () => apiCreateScratchSession(parsed.data.scope, req));
+      },
     },
 
     [apiPaths.removeScratchSession]: {
       DELETE: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseScratchSessionIdParam(req.params);
         if (!parsed.ok) return parsed.response;
-        return catching("DELETE /api/scratch-sessions/:id", () => apiRemoveScratchSession(parsed.data));
+        return catching("DELETE /api/projects/:projectId/scratch-sessions/:id", () => apiRemoveScratchSession(parsedProject.data.scope, parsed.data));
       },
     },
 
     [apiPaths.fetchWorktrees]: {
-      GET: () => catching("GET /api/worktrees", () => apiGetWorktrees()),
-      POST: (req) => catching("POST /api/worktrees", () => apiCreateWorktree(req)),
+      GET: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("GET /api/projects/:projectId/worktrees", () => apiGetWorktrees(parsed.data.scope));
+      },
+      POST: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("POST /api/projects/:projectId/worktrees", () => apiCreateWorktree(parsed.data.scope, req));
+      },
     },
 
     [apiPaths.removeWorktree]: {
       DELETE: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`DELETE /api/worktrees/${name}`, () => apiDeleteWorktree(name));
+        return catching(`DELETE /api/projects/:projectId/worktrees/${name}`, () => apiDeleteWorktree(parsedProject.data.scope, name));
       },
     },
 
     [apiPaths.openWorktree]: {
       POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`POST /api/worktrees/${name}/open`, () => apiOpenWorktree(name));
+        return catching(`POST /api/projects/:projectId/worktrees/${name}/open`, () => apiOpenWorktree(parsedProject.data.scope, name));
       },
     },
 
-    "/api/worktrees/:name/terminal-launch": {
+    "/api/projects/:projectId/worktrees/:name/terminal-launch": {
       GET: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`GET /api/worktrees/${name}/terminal-launch`, () => apiGetNativeTerminalLaunch(name));
+        return catching(`GET /api/projects/:projectId/worktrees/${name}/terminal-launch`, () => apiGetNativeTerminalLaunch(parsedProject.data.scope, name));
       },
     },
 
     [apiPaths.closeWorktree]: {
       POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`POST /api/worktrees/${name}/close`, () => apiCloseWorktree(name));
+        return catching(`POST /api/projects/:projectId/worktrees/${name}/close`, () => apiCloseWorktree(parsedProject.data.scope, name));
       },
     },
 
     [apiPaths.setWorktreeArchived]: {
       PUT: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`PUT /api/worktrees/${name}/archive`, () => apiSetWorktreeArchived(name, req));
+        return catching(`PUT /api/projects/:projectId/worktrees/${name}/archive`, () => apiSetWorktreeArchived(parsedProject.data.scope, name, req));
       },
     },
 
     [apiPaths.sendWorktreePrompt]: {
       POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`POST /api/worktrees/${name}/send`, () => apiSendPrompt(name, req));
+        return catching(`POST /api/projects/:projectId/worktrees/${name}/send`, () => apiSendPrompt(parsedProject.data.scope, name, req));
       },
     },
 
-    "/api/worktrees/:name/upload": {
+    "/api/projects/:projectId/worktrees/:name/upload": {
       POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`POST /api/worktrees/${name}/upload`, () => apiUploadFiles(name, req));
+        return catching(`POST /api/projects/:projectId/worktrees/${name}/upload`, () => apiUploadFiles(parsedProject.data.scope, name, req));
       },
     },
 
     [apiPaths.mergeWorktree]: {
       POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`POST /api/worktrees/${name}/merge`, () => apiMergeWorktree(name));
+        return catching(`POST /api/projects/:projectId/worktrees/${name}/merge`, () => apiMergeWorktree(parsedProject.data.scope, name));
       },
     },
 
     [apiPaths.fetchWorktreeDiff]: {
       GET: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`GET /api/worktrees/${name}/diff`, () => apiGetWorktreeDiff(name));
+        return catching(`GET /api/projects/:projectId/worktrees/${name}/diff`, () => apiGetWorktreeDiff(parsedProject.data.scope, name));
       },
     },
 
     [apiPaths.fetchLinearIssues]: {
-      GET: () => catching("GET /api/linear/issues", () => apiGetLinearIssues()),
+      GET: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("GET /api/projects/:projectId/linear/issues", () => apiGetLinearIssues(parsed.data.scope));
+      },
     },
 
     [apiPaths.setLinearAutoCreate]: {
-      PUT: (req) => catching("PUT /api/linear/auto-create", () => apiSetLinearAutoCreate(req)),
+      PUT: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("PUT /api/projects/:projectId/linear/auto-create", () => apiSetLinearAutoCreate(parsed.data.scope, req));
+      },
     },
 
     [apiPaths.setAutoRemoveOnMerge]: {
-      PUT: (req) => catching("PUT /api/github/auto-remove-on-merge", () => apiSetAutoRemoveOnMerge(req)),
+      PUT: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("PUT /api/projects/:projectId/github/auto-remove-on-merge", () => apiSetAutoRemoveOnMerge(parsed.data.scope, req));
+      },
     },
 
     [apiPaths.pullMain]: {
-      POST: (req) => catching("POST /api/pull-main", () => apiPullMain(req)),
+      POST: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("POST /api/projects/:projectId/pull-main", () => apiPullMain(parsed.data.scope, req));
+      },
     },
 
     [apiPaths.fetchCiLogs]: {
       GET: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseRunIdParam(req.params);
         if (!parsed.ok) return parsed.response;
-        return catching(`GET /api/ci-logs/${parsed.data}`, () => apiCiLogs(parsed.data));
+        return catching(`GET /api/projects/:projectId/ci-logs/${parsed.data}`, () => apiCiLogs(parsed.data));
       },
     },
 
@@ -1573,6 +1759,8 @@ Bun.serve({
 
     [apiPaths.dismissNotification]: {
       POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseNotificationIdParam(req.params);
         if (!parsed.ok) return parsed.response;
         const id = parsed.data;
@@ -1673,7 +1861,9 @@ Bun.serve({
               let attachTarget: TerminalAttachTarget;
               let attachIdPrefix: string;
               if (data.kind === "terminal") {
-                const terminalWorktree = await resolveTerminalWorktree(data.branch);
+                const projScope = runtime.projectRegistry.get(data.projectId);
+                if (!projScope) throw new Error(`Project not found: ${data.projectId}`);
+                const terminalWorktree = await resolveTerminalWorktree(projScope, data.branch);
                 attachTarget = terminalWorktree.attachTarget;
                 attachIdPrefix = terminalWorktree.worktreeId;
                 data.worktreeId = terminalWorktree.worktreeId;
@@ -1750,19 +1940,38 @@ if (tmuxCheck.exitCode !== 0) {
 }
 
 cleanupStaleSessions();
-startPrMonitor(getWorktreeGitDirs, config.integrations.github.linkedRepos, PROJECT_DIR, undefined, hasRecentDashboardActivity, async () => {
-  if (autoRemoveOnMergeEnabled) {
-    await runAutoRemove(autoRemoveDeps);
-  }
-});
-if (linearAutoCreateEnabled) {
-  startLinearAutoCreate();
-}
-if (config.workspace.autoPull.enabled) {
-  startAutoPullMonitor(
-    { git, projectRoot: PROJECT_DIR, mainBranch: config.workspace.mainBranch },
-    config.workspace.autoPull.intervalSeconds * 1000,
+
+// Start per-project background monitors
+for (const proj of runtime.projectRegistry.list()) {
+  const projScope = runtime.projectRegistry.get(proj.id);
+  if (!projScope) continue;
+
+  const autoRemoveEnabled = autoRemoveOnMergeEnabledByProject.get(proj.id) ?? false;
+  const autoRemoveDeps = buildAutoRemoveDeps(projScope);
+
+  startPrMonitor(
+    () => getWorktreeGitDirs(projScope),
+    projScope.config.integrations.github.linkedRepos,
+    projScope.projectDir,
+    undefined,
+    hasRecentDashboardActivity,
+    async () => {
+      if (autoRemoveOnMergeEnabledByProject.get(proj.id) ?? autoRemoveEnabled) {
+        await runAutoRemove(autoRemoveDeps);
+      }
+    },
   );
+
+  if (linearAutoCreateEnabledByProject.get(proj.id) ?? false) {
+    startLinearAutoCreate(projScope);
+  }
+
+  if (projScope.config.workspace.autoPull.enabled) {
+    startAutoPullMonitor(
+      { git, projectRoot: projScope.projectDir, mainBranch: projScope.config.workspace.mainBranch },
+      projScope.config.workspace.autoPull.intervalSeconds * 1000,
+    );
+  }
 }
 
 log.info(`Dev Dashboard API running at http://localhost:${PORT}`);
