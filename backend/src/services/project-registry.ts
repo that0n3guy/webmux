@@ -133,10 +133,20 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
         return;
       }
 
-      if (!parsed || typeof parsed !== "object" || !("projects" in parsed)) return;
-      const projects = (parsed as RegistryFile).projects ?? [];
+      if (!parsed || typeof parsed !== "object") return;
+      const maybeProjects = (parsed as { projects?: unknown }).projects;
+      if (!Array.isArray(maybeProjects)) return;
 
-      for (const entry of projects) {
+      for (const raw of maybeProjects) {
+        if (!raw || typeof raw !== "object") {
+          log.warn(`[project-registry] skipping malformed entry: ${JSON.stringify(raw)}`);
+          continue;
+        }
+        const entry = raw as { id?: unknown; path?: unknown; addedAt?: unknown };
+        if (typeof entry.id !== "string" || typeof entry.path !== "string" || typeof entry.addedAt !== "string") {
+          log.warn(`[project-registry] skipping malformed entry: missing string fields`);
+          continue;
+        }
         if (!existsSync(entry.path)) {
           log.warn(`[project-registry] skipping missing path: ${entry.path}`);
           continue;

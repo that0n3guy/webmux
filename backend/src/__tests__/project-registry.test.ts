@@ -145,4 +145,19 @@ describe("ProjectRegistry", () => {
     await reg.load();
     expect(reg.list()).toHaveLength(0);
   });
+
+  test("load() tolerates corrupted yaml without crashing", async () => {
+    // Malformed yaml content
+    writeFileSync(registryPath, "this is not valid yaml: : :\nprojects: not-an-array");
+    const reg = createProjectRegistry(buildDeps());
+    await expect(reg.load()).resolves.toBeUndefined();
+    expect(reg.list()).toEqual([]);
+  });
+
+  test("load() tolerates entries with missing string fields", async () => {
+    writeFileSync(registryPath, `schemaVersion: 1\nprojects:\n  - {}\n  - id: 12345678\n  - {id: "abc", path: 42, addedAt: "x"}\n`);
+    const reg = createProjectRegistry(buildDeps());
+    await reg.load();
+    expect(reg.list()).toEqual([]);
+  });
 });
