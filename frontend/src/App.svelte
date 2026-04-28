@@ -71,6 +71,7 @@
     removeScratchSession,
     createProject,
     removeProject,
+    openWorktree,
   } from "./lib/api";
   import type { CreateProjectRequest } from "@webmux/api-contract";
 
@@ -412,6 +413,10 @@
 
   let openingBranches = $state<Set<string>>(new Set());
   let archivingBranches = $state<Set<string>>(new Set());
+  let openWithMenuOpen = $state(false);
+  let openWithMenuTop = $state(0);
+  let openWithMenuLeft = $state(0);
+  let openWithCaretEl = $state<HTMLButtonElement | null>(null);
   let trimmedWorktreeSearch = $derived(searchQuery.trim());
   // Current project's worktree list (flat, for single-project operations)
   let currentWorktrees = $derived(currentProjectId ? (worktreesByProject.get(currentProjectId) ?? []) : []);
@@ -858,7 +863,7 @@
     if (!branch) return;
     openingBranches = new Set([...openingBranches, branch]);
     try {
-      await api.openWorktree({ params: { projectId: currentProjectId!, name: branch } });
+      await openWorktree(currentProjectId!, branch);
       await refresh();
     } catch (err) {
       showToast({ tone: "error", message: `Failed to open worktree: ${errorMessage(err)}` });
@@ -866,6 +871,46 @@
       openingBranches = new Set([...openingBranches].filter((x) => x !== branch));
     }
   }
+
+  async function openSelectedWorktreeWith(opts: { agentOverride?: string; shellOnly?: boolean }): Promise<void> {
+    const branch = selectedBranch;
+    if (!branch) return;
+    openWithMenuOpen = false;
+    openingBranches = new Set([...openingBranches, branch]);
+    try {
+      await openWorktree(currentProjectId!, branch, opts);
+      await refresh();
+    } catch (err) {
+      showToast({ tone: "error", message: `Failed to open worktree: ${errorMessage(err)}` });
+    } finally {
+      openingBranches = new Set([...openingBranches].filter((x) => x !== branch));
+    }
+  }
+
+  function toggleOpenWithMenu(e: MouseEvent): void {
+    e.stopPropagation();
+    if (!openWithMenuOpen && openWithCaretEl) {
+      const rect = openWithCaretEl.getBoundingClientRect();
+      openWithMenuTop = rect.bottom + 4;
+      openWithMenuLeft = rect.left + rect.width / 2;
+    }
+    openWithMenuOpen = !openWithMenuOpen;
+  }
+
+  $effect(() => {
+    if (!openWithMenuOpen) return;
+    function onClickOutside(): void { openWithMenuOpen = false; }
+    function onScroll(): void { openWithMenuOpen = false; }
+    const timer = setTimeout(() => {
+      window.addEventListener("click", onClickOutside, { once: true });
+      document.addEventListener("scroll", onScroll, { capture: true, once: true });
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("click", onClickOutside);
+      document.removeEventListener("scroll", onScroll, { capture: true } as EventListenerOptions);
+    };
+  });
 
   async function toggleWorktreeArchived(branch: string): Promise<void> {
     const worktree = currentWorktrees.find((candidate) => candidate.branch === branch);
@@ -927,6 +972,12 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape" && openWithMenuOpen) {
+      e.stopPropagation();
+      openWithMenuOpen = false;
+      return;
+    }
+
     // Ignore shortcuts when a dialog is open (let dialog handle its own keys)
     if (showCreateDialog || showCreateAISessionDialog || removeBranch || mergeBranch || pullMainConfirm || pullLinkedRepoAlias) return;
 
@@ -1400,18 +1451,68 @@
               <span class="text-xs text-muted">This agent runs in the terminal only.</span>
             {/if}
           </div>
-          <button
-            class="mt-2 px-5 py-2 rounded-md bg-accent text-white text-sm font-medium cursor-pointer border-none hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            onclick={openSelectedWorktree}
-            disabled={isSelectedOpening}
-          >
-            {#if isSelectedOpening}
-              <span class="spinner" style="width: 14px; height: 14px; border-width: 1.5px;"></span>
-              Opening...
-            {:else}
-              Open Session
-            {/if}
-          </button>
+          <div class="mt-2 flex items-stretch">
+            <button
+              class="px-5 py-2 rounded-l-md bg-accent text-white text-sm font-medium cursor-pointer border-none hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              onclick={openSelectedWorktree}
+              disabled={isSelectedOpening}
+            >
+              {#if isSelectedOpening}
+                <span class="spinner" style="width: 14px; height: 14px; border-width: 1.5px;"></span>
+                Opening...
+              {:else}
+                Open Session
+              {/if}
+            </button>
+            <button
+              bind:this={openWithCaretEl}
+              type="button"
+              class="px-2 py-2 rounded-r-md bg-accent text-white text-sm cursor-pointer border-none border-l border-white/20 hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+              onclick={toggleOpenWithMenu}
+              disabled={isSelectedOpening}
+              aria-label="Open with options"
+              aria-haspopup="true"
+              aria-expanded={openWithMenuOpen}
+            >
+              ▾
+            </button>
+          </div>
+
+          {#if openWithMenuOpen}
+            <div
+              class="fixed z-50 rounded-md border border-edge bg-sidebar shadow-md min-w-[200px]"
+              style:top="{openWithMenuTop}px"
+              style:left="{openWithMenuLeft}px"
+              style="transform: translateX(-50%);"
+              role="menu"
+            >
+              {#if config.agents.length > 0}
+                <div class="px-3 py-1 text-[11px] text-muted uppercase tracking-wide">Open with another agent</div>
+                {#each config.agents as agent (agent.id)}
+                  {@const isDefault = agent.id === selectedWorktree.agentName}
+                  <button
+                    type="button"
+                    class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-hover disabled:opacity-50 disabled:cursor-not-allowed"
+                    onclick={() => { void openSelectedWorktreeWith({ agentOverride: agent.id }); }}
+                    disabled={isDefault}
+                    role="menuitem"
+                  >
+                    {agent.label}
+                    {#if isDefault}<span class="ml-1 text-muted text-[11px]">(default)</span>{/if}
+                  </button>
+                {/each}
+                <div class="my-1 border-t border-edge"></div>
+              {/if}
+              <button
+                type="button"
+                class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-hover"
+                onclick={() => { void openSelectedWorktreeWith({ shellOnly: true }); }}
+                role="menuitem"
+              >
+                Shell only
+              </button>
+            </div>
+          {/if}
         </div>
       </div>
     {:else}

@@ -14,7 +14,6 @@ vi.mock("./lib/api", () => ({
     fetchWorktreeDiff: vi.fn(),
     fetchLinearIssues: vi.fn(),
     mergeWorktree: vi.fn(),
-    openWorktree: vi.fn(),
     pullMain: vi.fn(),
     removeWorktree: vi.fn(),
     setWorktreeArchived: vi.fn(),
@@ -26,10 +25,11 @@ vi.mock("./lib/api", () => ({
   fetchExternalSessions: vi.fn(),
   fetchScratchSessions: vi.fn(),
   subscribeNotifications: vi.fn(),
+  openWorktree: vi.fn(),
 }));
 
 import App from "./App.svelte";
-import { api, fetchAgents, fetchWorktrees, fetchProjects, fetchExternalSessions, fetchScratchSessions, subscribeNotifications } from "./lib/api";
+import { api, fetchAgents, fetchWorktrees, fetchProjects, fetchExternalSessions, fetchScratchSessions, subscribeNotifications, openWorktree } from "./lib/api";
 import type { ProjectInfo } from "./lib/types";
 
 interface Deferred<T> {
@@ -290,7 +290,7 @@ describe("App create selection", () => {
       unpushedCommits: [],
     });
     vi.mocked(subscribeNotifications).mockReturnValue(() => {});
-    vi.mocked(api.openWorktree).mockResolvedValue({ ok: true });
+    vi.mocked(openWorktree).mockResolvedValue(undefined);
     vi.mocked(api.closeWorktree).mockResolvedValue({ ok: true });
     vi.mocked(api.removeWorktree).mockResolvedValue({ ok: true });
     vi.mocked(api.setWorktreeArchived).mockResolvedValue({ ok: true, archived: true });
@@ -794,5 +794,99 @@ describe("App create selection", () => {
     remoteBranches.resolve([{ name: "feature/local-only" }, { name: "feature/remote-only" }]);
 
     expect(await screen.findByRole("button", { name: "feature/remote-only" })).toBeInTheDocument();
+  });
+
+  it("plain Open Session calls openWorktree with no overrides", async () => {
+    vi.mocked(fetchWorktrees)
+      .mockResolvedValueOnce([createWorktree("feature/test")])
+      .mockResolvedValue([createWorktree("feature/test")]);
+
+    render(App);
+
+    await screen.findByRole("button", { name: /^feature\/test\b/i });
+    await fireEvent.click(screen.getByRole("button", { name: /^feature\/test\b/i }));
+
+    await screen.findByRole("button", { name: "Open Session" });
+    await fireEvent.click(screen.getByRole("button", { name: "Open Session" }));
+
+    await waitFor(() => {
+      expect(openWorktree).toHaveBeenCalledWith("test-project-1", "feature/test");
+    });
+  });
+
+  it("clicking the caret opens a menu with configured agents and Shell only", async () => {
+    vi.mocked(fetchWorktrees).mockResolvedValue([createWorktree("feature/test")]);
+
+    render(App);
+
+    await screen.findByRole("button", { name: /^feature\/test\b/i });
+    await fireEvent.click(screen.getByRole("button", { name: /^feature\/test\b/i }));
+
+    await screen.findByRole("button", { name: "Open Session" });
+    await fireEvent.click(screen.getByRole("button", { name: "Open with options" }));
+
+    expect(await screen.findByRole("menuitem", { name: /Claude/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Codex/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Shell only" })).toBeInTheDocument();
+  });
+
+  it("clicking an alternate agent calls openWorktree with agentOverride", async () => {
+    vi.mocked(fetchWorktrees)
+      .mockResolvedValueOnce([createWorktree("feature/test", { agentName: "claude" })])
+      .mockResolvedValue([createWorktree("feature/test", { agentName: "claude" })]);
+
+    render(App);
+
+    await screen.findByRole("button", { name: /^feature\/test\b/i });
+    await fireEvent.click(screen.getByRole("button", { name: /^feature\/test\b/i }));
+
+    await screen.findByRole("button", { name: "Open Session" });
+    await fireEvent.click(screen.getByRole("button", { name: "Open with options" }));
+
+    const codexItem = await screen.findByRole("menuitem", { name: /Codex/ });
+    await fireEvent.click(codexItem);
+
+    await waitFor(() => {
+      expect(openWorktree).toHaveBeenCalledWith("test-project-1", "feature/test", { agentOverride: "codex" });
+    });
+  });
+
+  it("clicking Shell only calls openWorktree with shellOnly: true", async () => {
+    vi.mocked(fetchWorktrees)
+      .mockResolvedValueOnce([createWorktree("feature/test")])
+      .mockResolvedValue([createWorktree("feature/test")]);
+
+    render(App);
+
+    await screen.findByRole("button", { name: /^feature\/test\b/i });
+    await fireEvent.click(screen.getByRole("button", { name: /^feature\/test\b/i }));
+
+    await screen.findByRole("button", { name: "Open Session" });
+    await fireEvent.click(screen.getByRole("button", { name: "Open with options" }));
+
+    const shellOnlyItem = await screen.findByRole("menuitem", { name: "Shell only" });
+    await fireEvent.click(shellOnlyItem);
+
+    await waitFor(() => {
+      expect(openWorktree).toHaveBeenCalledWith("test-project-1", "feature/test", { shellOnly: true });
+    });
+  });
+
+  it("the default-agent entry in the open-with menu is disabled", async () => {
+    vi.mocked(fetchWorktrees).mockResolvedValue([createWorktree("feature/test", { agentName: "claude" })]);
+
+    render(App);
+
+    await screen.findByRole("button", { name: /^feature\/test\b/i });
+    await fireEvent.click(screen.getByRole("button", { name: /^feature\/test\b/i }));
+
+    await screen.findByRole("button", { name: "Open Session" });
+    await fireEvent.click(screen.getByRole("button", { name: "Open with options" }));
+
+    const claudeItem = await screen.findByRole("menuitem", { name: /Claude.*\(default\)/ });
+    expect(claudeItem).toBeDisabled();
+
+    const codexItem = screen.getByRole("menuitem", { name: /Codex/ });
+    expect(codexItem).not.toBeDisabled();
   });
 });

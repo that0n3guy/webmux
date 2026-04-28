@@ -1,5 +1,5 @@
 import { AgentsUiConversationEventSchema, apiPaths, createApi } from "@webmux/api-contract";
-import type { CreateProjectRequest, CreateScratchSessionRequest } from "@webmux/api-contract";
+import type { CreateProjectRequest, CreateScratchSessionRequest, OpenWorktreeRequest } from "@webmux/api-contract";
 import type {
   AgentDetails,
   AgentResponse,
@@ -238,4 +238,8 @@ export async function createProject(body: CreateProjectRequest): Promise<Project
 
 export async function removeProject(id: string, killSessions: boolean): Promise<void> {
   await api.removeProject({ params: { projectId: id }, body: { killSessions } });
+}
+
+export async function openWorktree(projectId: string, name: string, body: OpenWorktreeRequest = {}): Promise<void> {
+  await api.openWorktree({ params: { projectId, name }, body });
 }
