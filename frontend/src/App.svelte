@@ -16,6 +16,8 @@
   import SidebarRepoRow from "./lib/SidebarRepoRow.svelte";
   import Toggle from "./lib/Toggle.svelte";
   import CreateScratchDialog from "./lib/CreateScratchDialog.svelte";
+  import AddProjectDialog from "./lib/AddProjectDialog.svelte";
+  import ConfirmRemoveProjectDialog from "./lib/ConfirmRemoveProjectDialog.svelte";
   import type {
     AvailableBranch,
     AppConfig,
@@ -65,7 +67,10 @@
     fetchScratchSessions,
     createScratchSession,
     removeScratchSession,
+    createProject,
+    removeProject,
   } from "./lib/api";
+  import type { CreateProjectRequest } from "@webmux/api-contract";
 
   function createDefaultConfig(): AppConfig {
     return {
@@ -109,6 +114,8 @@
   let removingBranches = $state<Set<string>>(new Set());
   let showCreateDialog = $state(false);
   let showSettingsDialog = $state(false);
+  let showAddProjectDialog = $state(false);
+  let projectToRemove = $state<{ id: string; name: string } | null>(null);
   let ciDetailsPr = $state<PrEntry | null>(null);
   let commentReviewPr = $state<PrEntry | null>(null);
   let showDiffDialog = $state(false);
@@ -966,6 +973,53 @@
     scratchToRemove = null;
   }
 
+  async function handleAddProject(req: CreateProjectRequest): Promise<void> {
+    const project = await createProject(req);
+    projects = [...projects, project];
+    worktreesByProject = new Map([...worktreesByProject, [project.id, []]]);
+    scratchByProject = new Map([...scratchByProject, [project.id, []]]);
+    currentProjectId = project.id;
+    selectedBranch = null;
+    selectedScratchSession = null;
+    selectedExternalSession = null;
+    void refreshAll();
+  }
+
+  function handleMenuNewWorktree(projectId: string): void {
+    currentProjectId = projectId;
+    showCreateDialog = true;
+  }
+
+  function handleMenuSettings(projectId: string): void {
+    currentProjectId = projectId;
+    showSettingsDialog = true;
+  }
+
+  function handleMenuRemoveProject(projectId: string): void {
+    const p = projects.find((x) => x.id === projectId);
+    if (!p) return;
+    projectToRemove = { id: p.id, name: p.name };
+  }
+
+  async function handleConfirmRemoveProject(killSessions: boolean): Promise<void> {
+    if (!projectToRemove) return;
+    const target = projectToRemove;
+    try {
+      await removeProject(target.id, killSessions);
+    } catch (err) {
+      console.error("removeProject failed", err);
+    }
+    projects = projects.filter((p) => p.id !== target.id);
+    worktreesByProject = new Map([...worktreesByProject].filter(([id]) => id !== target.id));
+    scratchByProject = new Map([...scratchByProject].filter(([id]) => id !== target.id));
+    if (currentProjectId === target.id) {
+      currentProjectId = projects[0]?.id ?? null;
+      selectedBranch = null;
+      selectedScratchSession = null;
+    }
+    projectToRemove = null;
+  }
+
   function handleSelectExternal(name: string): void {
     selectedScratchSession = null;
     selectedBranch = null;
@@ -1165,7 +1219,10 @@
         onSelectExternal={handleSelectExternal}
         onCreateScratch={(projectId) => { currentProjectId = projectId; showCreateScratchDialog = true; }}
         onRemoveScratch={(projectId, id, displayName) => { currentProjectId = projectId; scratchToRemove = { id, displayName }; }}
-        onAddProject={() => { console.warn("Add project clicked — dialog pending MP-16"); }}
+        onAddProject={() => { showAddProjectDialog = true; }}
+        onMenuNewWorktree={handleMenuNewWorktree}
+        onMenuSettings={handleMenuSettings}
+        onMenuRemoveProject={handleMenuRemoveProject}
         onclose={closeWorktree}
         onarchive={toggleWorktreeArchived}
         onmerge={(branch) => { mergeBranch = branch; }}
@@ -1328,6 +1385,21 @@
     {/if}
   </main>
 </div>
+
+{#if showAddProjectDialog}
+  <AddProjectDialog
+    onClose={() => { showAddProjectDialog = false; }}
+    onCreate={handleAddProject}
+  />
+{/if}
+
+{#if projectToRemove}
+  <ConfirmRemoveProjectDialog
+    projectName={projectToRemove.name}
+    onConfirm={(killSessions) => { void handleConfirmRemoveProject(killSessions); }}
+    onCancel={() => { projectToRemove = null; }}
+  />
+{/if}
 
 {#if showCreateDialog}
   <CreateWorktreeDialog

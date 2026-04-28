@@ -31,6 +31,9 @@
     onCreateScratch,
     onRemoveScratch,
     onAddProject,
+    onMenuNewWorktree,
+    onMenuSettings,
+    onMenuRemoveProject,
     onclose,
     onarchive,
     onmerge,
@@ -52,6 +55,9 @@
     onCreateScratch: (projectId: string) => void;
     onRemoveScratch: (projectId: string, id: string, displayName: string) => void;
     onAddProject: () => void;
+    onMenuNewWorktree: (projectId: string) => void;
+    onMenuSettings: (projectId: string) => void;
+    onMenuRemoveProject: (projectId: string) => void;
     onclose: (branch: string) => void;
     onarchive: (branch: string) => void;
     onmerge: (branch: string) => void;
@@ -118,6 +124,9 @@
       onSelectScratch={(id, sessionName) => onSelectScratch(project.id, id, sessionName)}
       onCreateScratch={() => onCreateScratch(project.id)}
       onRemoveScratch={(id, name) => onRemoveScratch(project.id, id, name)}
+      onMenuNewWorktree={() => onMenuNewWorktree(project.id)}
+      onMenuSettings={() => onMenuSettings(project.id)}
+      onMenuRemoveProject={() => onMenuRemoveProject(project.id)}
       {onclose}
       {onarchive}
       {onmerge}
