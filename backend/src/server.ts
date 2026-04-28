@@ -88,8 +88,8 @@ const runtime = createWebmuxRuntime({
   port: PORT,
   projectDir: Bun.env.WEBMUX_PROJECT_DIR || process.cwd(),
 });
-const PROJECT_DIR = runtime.projectDir;
-const config: ProjectConfig = runtime.config;
+const PROJECT_DIR = runtime.scope.projectDir;
+const config: ProjectConfig = runtime.scope.config;
 const git = runtime.git;
 const archiveStateService = runtime.scope.archiveStateService;
 const tmux = runtime.tmux;

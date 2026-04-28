@@ -1,4 +1,4 @@
-import { projectRoot, type ProjectConfig } from "./adapters/config";
+import { projectRoot } from "./adapters/config";
 import { BunDockerGateway } from "./adapters/docker";
 import { BunGitGateway } from "./adapters/git";
 import { BunLifecycleHookRunner } from "./adapters/hooks";
@@ -17,8 +17,6 @@ export interface WebmuxRuntimeOptions {
 
 export interface WebmuxRuntime {
   port: number;
-  projectDir: string;
-  config: ProjectConfig;
   git: BunGitGateway;
   tmux: BunTmuxGateway;
   docker: BunDockerGateway;
@@ -56,8 +54,6 @@ export function createWebmuxRuntime(options: WebmuxRuntimeOptions = {}): WebmuxR
 
   return {
     port,
-    projectDir,
-    config: scope.config,
     git,
     tmux,
     docker,
