@@ -152,11 +152,14 @@ function stopLinearAutoCreateMonitor(scope: ProjectScope): void {
 }
 
 function buildAutoRemoveDeps(scope: ProjectScope): AutoRemoveDependencies {
+  const { projectId } = scope;
   return {
     lifecycleService: scope.lifecycleService,
     git,
     projectRoot: scope.projectDir,
-    notifications: runtimeNotifications,
+    notifications: {
+      notify: (input) => runtimeNotifications.notify({ ...input, projectId }),
+    },
     isRemoving: (branch: string) => scope.removingBranches.has(branch),
     markRemoving: (branch: string) => scope.removingBranches.add(branch),
     unmarkRemoving: (branch: string) => scope.removingBranches.delete(branch),
@@ -855,7 +858,7 @@ async function apiRuntimeEvent(req: Request): Promise<Response> {
     }
   }
 
-  const notification = runtimeNotifications.recordEvent(event);
+  const notification = runtimeNotifications.recordEvent(event, scope.projectId);
   return jsonResponse({
     ok: true,
     ...(notification ? { notification } : {}),

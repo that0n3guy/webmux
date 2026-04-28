@@ -38,6 +38,36 @@ describe("NotificationService", () => {
     expect(notifications.list()).toHaveLength(2);
   });
 
+  it("persists projectId on notify when provided", () => {
+    const notifications = new NotificationService();
+
+    const tagged = notifications.notify({
+      branch: "feature/search",
+      type: "agent_stopped",
+      message: "Agent stopped",
+      projectId: "proj_abc",
+    });
+    const untagged = notifications.notify({
+      branch: "feature/other",
+      type: "agent_stopped",
+      message: "Agent stopped",
+    });
+
+    expect(tagged.projectId).toBe("proj_abc");
+    expect(untagged.projectId).toBeUndefined();
+  });
+
+  it("threads projectId through recordEvent", () => {
+    const notifications = new NotificationService();
+
+    const result = notifications.recordEvent(
+      { worktreeId: "wt_search", branch: "feature/search", type: "agent_stopped" },
+      "proj_xyz",
+    );
+
+    expect(result?.projectId).toBe("proj_xyz");
+  });
+
   it("dismisses notifications by id", () => {
     const notifications = new NotificationService();
     const item = notifications.recordEvent(
