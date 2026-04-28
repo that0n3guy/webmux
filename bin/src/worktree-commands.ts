@@ -7,7 +7,15 @@ import type { AgentId } from "../../backend/src/domain/config";
 import type { WorktreeCreationPhase } from "../../backend/src/domain/model";
 import { isValidWorktreeName } from "../../backend/src/domain/policies";
 import { buildArchivedWorktreePathSet } from "../../backend/src/services/archive-service";
-import { createWebmuxRuntime } from "../../backend/src/runtime";
+import { BunDockerGateway } from "../../backend/src/adapters/docker";
+import { BunGitGateway } from "../../backend/src/adapters/git";
+import { BunLifecycleHookRunner } from "../../backend/src/adapters/hooks";
+import { BunPortProbe } from "../../backend/src/adapters/port-probe";
+import { BunTmuxGateway } from "../../backend/src/adapters/tmux";
+import { AutoNameService } from "../../backend/src/services/auto-name-service";
+import { NotificationService } from "../../backend/src/services/notification-service";
+import { createProjectScope } from "../../backend/src/services/project-scope";
+import { projectRoot } from "../../backend/src/adapters/config";
 import type { CreateLifecycleWorktreeInput, CreateLifecycleWorktreesInput, CreateLifecycleWorktreesResult, CreateWorktreeProgress, PruneWorktreesResult } from "../../backend/src/services/lifecycle-service";
 
 const PHASE_LABELS: Record<WorktreeCreationPhase, string> = {
@@ -567,7 +575,18 @@ export async function runWorktreeCommand(
   context: WorktreeCommandContext,
   deps: WorktreeCommandDependencies = {},
 ): Promise<number> {
-  const createRuntime = deps.createRuntime ?? ((options: { projectDir: string; port: number }) => createWebmuxRuntime(options));
+  const createRuntime = deps.createRuntime ?? ((options: { projectDir: string; port: number; onCreateProgress?: (progress: CreateWorktreeProgress) => void }) => createProjectScope({
+    projectDir: projectRoot(options.projectDir),
+    port: options.port,
+    git: new BunGitGateway(),
+    tmux: new BunTmuxGateway(),
+    docker: new BunDockerGateway(),
+    portProbe: new BunPortProbe(),
+    hooks: new BunLifecycleHookRunner(),
+    autoName: new AutoNameService(),
+    runtimeNotifications: new NotificationService(),
+    onCreateProgress: options.onCreateProgress,
+  }));
   const stdout = deps.stdout ?? ((message: string) => console.log(message));
   const stderr = deps.stderr ?? ((message: string) => console.error(message));
   const switchToTmuxWindow = deps.switchToTmuxWindow ?? defaultSwitchToTmuxWindow;

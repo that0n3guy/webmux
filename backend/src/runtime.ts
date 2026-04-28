@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { projectRoot } from "./adapters/config";
 import { BunDockerGateway } from "./adapters/docker";
 import { BunGitGateway } from "./adapters/git";
@@ -6,16 +8,15 @@ import { BunPortProbe } from "./adapters/port-probe";
 import { BunTmuxGateway } from "./adapters/tmux";
 import { AutoNameService } from "./services/auto-name-service";
 import { NotificationService as RuntimeNotificationService } from "./services/notification-service";
-import { createProjectScope, type ProjectScope } from "./services/project-scope";
-import { type CreateWorktreeProgress } from "./services/lifecycle-service";
+import { createProjectRegistry, type ProjectRegistry } from "./services/project-registry";
+import { log } from "./lib/log";
 
 export interface WebmuxRuntimeOptions {
   projectDir?: string;
   port?: number;
-  onCreateProgress?: (progress: CreateWorktreeProgress) => void | Promise<void>;
 }
 
-export interface WebmuxRuntime {
+export interface MultiProjectRuntime {
   port: number;
   git: BunGitGateway;
   tmux: BunTmuxGateway;
@@ -24,12 +25,15 @@ export interface WebmuxRuntime {
   hooks: BunLifecycleHookRunner;
   autoName: AutoNameService;
   runtimeNotifications: RuntimeNotificationService;
-  scope: ProjectScope;
+  projectRegistry: ProjectRegistry;
 }
 
-export function createWebmuxRuntime(options: WebmuxRuntimeOptions = {}): WebmuxRuntime {
+// Backward-compat alias used by older imports (e.g., `import type { WebmuxRuntime }`).
+export type WebmuxRuntime = MultiProjectRuntime;
+
+export async function createWebmuxRuntime(options: WebmuxRuntimeOptions = {}): Promise<MultiProjectRuntime> {
   const port = options.port ?? parseInt(Bun.env.PORT || "5111", 10);
-  const projectDir = projectRoot(options.projectDir ?? Bun.env.WEBMUX_PROJECT_DIR ?? process.cwd());
+  const cwdHint = projectRoot(options.projectDir ?? Bun.env.WEBMUX_PROJECT_DIR ?? process.cwd());
 
   const git = new BunGitGateway();
   const tmux = new BunTmuxGateway();
@@ -39,8 +43,7 @@ export function createWebmuxRuntime(options: WebmuxRuntimeOptions = {}): WebmuxR
   const autoName = new AutoNameService();
   const runtimeNotifications = new RuntimeNotificationService();
 
-  const scope = createProjectScope({
-    projectDir,
+  const projectRegistry = createProjectRegistry({
     port,
     git,
     tmux,
@@ -49,8 +52,17 @@ export function createWebmuxRuntime(options: WebmuxRuntimeOptions = {}): WebmuxR
     hooks,
     autoName,
     runtimeNotifications,
-    onCreateProgress: options.onCreateProgress,
   });
+  await projectRegistry.load();
+
+  // First-run hydration: if registry is empty AND cwd has .webmux.yaml, auto-register cwd.
+  if (projectRegistry.list().length === 0 && existsSync(join(cwdHint, ".webmux.yaml"))) {
+    try {
+      await projectRegistry.add({ path: cwdHint });
+    } catch (err) {
+      log.warn(`[runtime] first-run auto-add failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
 
   return {
     port,
@@ -61,6 +73,6 @@ export function createWebmuxRuntime(options: WebmuxRuntimeOptions = {}): WebmuxR
     hooks,
     autoName,
     runtimeNotifications,
-    scope,
+    projectRegistry,
   };
 }

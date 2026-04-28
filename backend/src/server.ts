@@ -84,19 +84,27 @@ import { createWebmuxRuntime } from "./runtime";
 
 const PORT = parseInt(Bun.env.PORT || "5111", 10);
 const STATIC_DIR = Bun.env.WEBMUX_STATIC_DIR || "";
-const runtime = createWebmuxRuntime({
+const runtime = await createWebmuxRuntime({
   port: PORT,
   projectDir: Bun.env.WEBMUX_PROJECT_DIR || process.cwd(),
 });
-const PROJECT_DIR = runtime.scope.projectDir;
-const config: ProjectConfig = runtime.scope.config;
+const projects = runtime.projectRegistry.list();
+if (projects.length === 0) {
+  log.error("[server] no projects registered. Run `webmux init` in a project dir or POST /api/projects.");
+  process.exit(1);
+}
+const firstProject = projects[0];
+const scope = runtime.projectRegistry.get(firstProject.id);
+if (!scope) throw new Error("first project scope missing immediately after registration");
+const PROJECT_DIR = scope.projectDir;
+const config: ProjectConfig = scope.config;
 const git = runtime.git;
-const archiveStateService = runtime.scope.archiveStateService;
+const archiveStateService = scope.archiveStateService;
 const tmux = runtime.tmux;
-const projectRuntime = runtime.scope.projectRuntime;
-const worktreeCreationTracker = runtime.scope.worktreeCreationTracker;
+const projectRuntime = scope.projectRuntime;
+const worktreeCreationTracker = scope.worktreeCreationTracker;
 const runtimeNotifications = runtime.runtimeNotifications;
-const reconciliationService = runtime.scope.reconciliationService;
+const reconciliationService = scope.reconciliationService;
 const codexAppServerClient = new CodexAppServerClient({
   clientName: "webmux-agents",
   clientVersion: "0.0.0",
@@ -110,9 +118,9 @@ const claudeConversationService = new ClaudeConversationService({
   claude: claudeCliClient,
   git,
 });
-const removingBranches = runtime.scope.removingBranches;
-const lifecycleService = runtime.scope.lifecycleService;
-const scratchSessionService = runtime.scope.scratchSessionService;
+const removingBranches = scope.removingBranches;
+const lifecycleService = scope.lifecycleService;
+const scratchSessionService = scope.scratchSessionService;
 let linearAutoCreateEnabled = config.integrations.linear.autoCreateWorktrees;
 let stopLinearAutoCreate: (() => void) | null = null;
 let autoRemoveOnMergeEnabled = config.integrations.github.autoRemoveOnMerge;
