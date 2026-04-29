@@ -1,6 +1,6 @@
 import { readWorktreeMeta, writeWorktreeMeta } from "../adapters/fs";
 import type {
-  ClaudeCliConversationMessage,
+  ClaudeCliConversationEvent,
   ClaudeCliGateway,
   ClaudeCliSession,
 } from "../adapters/claude-cli";
@@ -70,11 +70,40 @@ function sameConversationMeta(left: WorktreeConversationMeta | null | undefined,
     && left.cwd === right.cwd;
 }
 
-function normalizeSessionMessages(messages: ClaudeCliConversationMessage[]): AgentsUiConversationMessage[] {
-  return messages.map((message) => ({
-    ...message,
-    status: "completed",
-  }));
+function normalizeSessionMessages(messages: ClaudeCliConversationEvent[]): AgentsUiConversationMessage[] {
+  return messages.flatMap((event): AgentsUiConversationMessage[] => {
+    if (event.kind === "user" || event.kind === "assistant") {
+      return [{
+        kind: event.kind,
+        id: event.id,
+        turnId: event.turnId,
+        text: event.text,
+        status: "completed",
+        createdAt: event.createdAt,
+      }];
+    }
+    if (event.kind === "tool") {
+      return [{
+        kind: "tool",
+        id: event.id,
+        turnId: event.turnId,
+        name: event.name,
+        summary: event.summary,
+        status: event.status,
+        createdAt: event.createdAt,
+      }];
+    }
+    if (event.kind === "thinking") {
+      return [{
+        kind: "thinking",
+        id: event.id,
+        turnId: event.turnId,
+        text: event.text,
+        createdAt: event.createdAt,
+      }];
+    }
+    return [];
+  });
 }
 
 function buildConversationState(

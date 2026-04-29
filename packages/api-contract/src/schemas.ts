@@ -317,17 +317,50 @@ export const AgentsUiWorktreeSummarySchema = z.object({
   conversation: WorktreeConversationRefSchema.nullable(),
 });
 
-export const AgentsUiConversationMessageRoleSchema = z.enum(["user", "assistant"]);
 export const AgentsUiConversationMessageStatusSchema = z.enum(["completed", "inProgress"]);
 
-export const AgentsUiConversationMessageSchema = z.object({
+const AgentsUiConversationMessageUserSchema = z.object({
+  kind: z.literal("user"),
   id: z.string(),
   turnId: z.string(),
-  role: AgentsUiConversationMessageRoleSchema,
   text: z.string(),
   status: AgentsUiConversationMessageStatusSchema,
   createdAt: z.string().nullable(),
 });
+
+const AgentsUiConversationMessageAssistantSchema = z.object({
+  kind: z.literal("assistant"),
+  id: z.string(),
+  turnId: z.string(),
+  text: z.string(),
+  status: AgentsUiConversationMessageStatusSchema,
+  createdAt: z.string().nullable(),
+});
+
+const AgentsUiConversationMessageToolSchema = z.object({
+  kind: z.literal("tool"),
+  id: z.string(),
+  turnId: z.string(),
+  name: z.string(),
+  summary: z.string(),
+  status: z.enum(["running", "ok", "error"]),
+  createdAt: z.string().nullable(),
+});
+
+const AgentsUiConversationMessageThinkingSchema = z.object({
+  kind: z.literal("thinking"),
+  id: z.string(),
+  turnId: z.string(),
+  text: z.string(),
+  createdAt: z.string().nullable(),
+});
+
+export const AgentsUiConversationMessageSchema = z.discriminatedUnion("kind", [
+  AgentsUiConversationMessageUserSchema,
+  AgentsUiConversationMessageAssistantSchema,
+  AgentsUiConversationMessageToolSchema,
+  AgentsUiConversationMessageThinkingSchema,
+]);
 
 export const AgentsUiConversationStateSchema = z.object({
   provider: WorktreeConversationProviderSchema,
@@ -597,7 +630,6 @@ export type CodexWorktreeConversationRef = z.infer<typeof CodexWorktreeConversat
 export type ClaudeWorktreeConversationRef = z.infer<typeof ClaudeWorktreeConversationRefSchema>;
 export type WorktreeConversationRef = z.infer<typeof WorktreeConversationRefSchema>;
 export type AgentsUiWorktreeSummary = z.infer<typeof AgentsUiWorktreeSummarySchema>;
-export type AgentsUiConversationMessageRole = z.infer<typeof AgentsUiConversationMessageRoleSchema>;
 export type AgentsUiConversationMessageStatus = z.infer<typeof AgentsUiConversationMessageStatusSchema>;
 export type AgentsUiConversationMessage = z.infer<typeof AgentsUiConversationMessageSchema>;
 export type AgentsUiConversationState = z.infer<typeof AgentsUiConversationStateSchema>;

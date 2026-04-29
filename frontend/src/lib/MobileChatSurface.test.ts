@@ -137,7 +137,7 @@ describe("MobileChatSurface", () => {
         {
           id: "user-1",
           turnId: "turn-1",
-          role: "user",
+          kind: "user",
           text: "Ship it",
           status: "completed",
           createdAt: "2026-04-15T12:00:00.000Z",
@@ -145,7 +145,7 @@ describe("MobileChatSurface", () => {
         {
           id: "assistant-1",
           turnId: "turn-1",
-          role: "assistant",
+          kind: "assistant",
           text: "Done.",
           status: "completed",
           createdAt: "2026-04-15T12:00:01.000Z",
@@ -196,7 +196,7 @@ describe("MobileChatSurface", () => {
           {
             id: "user-1",
             turnId: "turn-1",
-            role: "user",
+            kind: "user",
             text: "Ship it",
             status: "completed",
             createdAt: "2026-04-15T12:00:00.000Z",
@@ -204,7 +204,7 @@ describe("MobileChatSurface", () => {
           {
             id: "assistant-1",
             turnId: "turn-1",
-            role: "assistant",
+            kind: "assistant",
             text: "Done.",
             status: "completed",
             createdAt: "2026-04-15T12:00:01.000Z",
@@ -265,7 +265,7 @@ describe("MobileChatSurface", () => {
             {
               id: "user-1",
               turnId: "turn-1",
-              role: "user",
+              kind: "user",
               text: "Ship it",
               status: "completed",
               createdAt: "2026-04-15T12:00:00.000Z",
@@ -273,7 +273,7 @@ describe("MobileChatSurface", () => {
             {
               id: "assistant-1",
               turnId: "turn-1",
-              role: "assistant",
+              kind: "assistant",
               text: "Done.",
               status: "completed",
               createdAt: "2026-04-15T12:03:01.000Z",
@@ -316,7 +316,7 @@ describe("MobileChatSurface", () => {
         {
           id: "assistant-1",
           turnId: "turn-1",
-          role: "assistant",
+          kind: "assistant",
           text: "Working...",
           status: "inProgress",
           createdAt: "2026-04-15T12:00:00.000Z",
@@ -329,7 +329,7 @@ describe("MobileChatSurface", () => {
         {
           id: "assistant-1",
           turnId: "turn-1",
-          role: "assistant",
+          kind: "assistant",
           text: "Done.",
           status: "completed",
           createdAt: "2026-04-15T12:00:01.000Z",
@@ -435,7 +435,7 @@ describe("MobileChatSurface", () => {
         {
           id: "user-1",
           turnId: "turn-1",
-          role: "user",
+          kind: "user",
           text: "Hello scratch",
           status: "completed",
           createdAt: "2026-04-28T12:00:00.000Z",
@@ -443,7 +443,7 @@ describe("MobileChatSurface", () => {
         {
           id: "assistant-1",
           turnId: "turn-1",
-          role: "assistant",
+          kind: "assistant",
           text: "Scratch response.",
           status: "completed",
           createdAt: "2026-04-28T12:00:01.000Z",

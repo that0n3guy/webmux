@@ -268,7 +268,7 @@ describe("buildConversationState", () => {
         {
           id: "user-1",
           turnId: "turn-1",
-          role: "user",
+          kind: "user",
           text: "Inspect the diff",
           status: "completed",
           createdAt: "1970-01-01T00:01:51.000Z",
@@ -276,7 +276,7 @@ describe("buildConversationState", () => {
         {
           id: "assistant-1",
           turnId: "turn-1",
-          role: "assistant",
+          kind: "assistant",
           text: "I inspected it.",
           status: "completed",
           createdAt: "1970-01-01T00:03:20.000Z",
@@ -325,7 +325,7 @@ describe("buildConversationState", () => {
         {
           id: "user-2",
           turnId: "turn-interrupted",
-          role: "user",
+          kind: "user",
           text: "Stop after the grep",
           status: "completed",
           createdAt: "1970-01-01T00:03:42.000Z",
@@ -333,7 +333,7 @@ describe("buildConversationState", () => {
         {
           id: "assistant-2",
           turnId: "turn-interrupted",
-          role: "assistant",
+          kind: "assistant",
           text: "Interrupted after the grep step.",
           status: "completed",
           createdAt: "1970-01-01T00:03:42.000Z",
@@ -535,7 +535,8 @@ describe("WorktreeConversationService", () => {
     if (!result.ok) return;
 
     expect(result.data.worktree.conversation?.conversationId).toBe("thread-new");
-    expect(result.data.conversation.messages.at(-1)?.text).toBe("Latest reply");
+    const lastMsg = result.data.conversation.messages.at(-1);
+    expect(lastMsg && "text" in lastMsg ? lastMsg.text : null).toBe("Latest reply");
     expect(appServer.calls).toEqual([
       "threadList",
       "threadRead:thread-new:false",
@@ -574,6 +575,84 @@ describe("WorktreeConversationService", () => {
     expect(metaStore.get(gitDir)?.conversation).toBeUndefined();
   });
 
+});
+
+describe("buildConversationState — tool and thinking items", () => {
+  it("maps codex toolCall items to tool messages", () => {
+    const thread = makeThread({
+      id: "thread-tool",
+      cwd: "/tmp/worktree",
+      updatedAt: 200,
+      statusType: "idle",
+      source: "cli",
+      turns: [
+        makeTurn({
+          id: "turn-1",
+          status: "completed",
+          startedAt: 111,
+          items: [
+            {
+              type: "userMessage",
+              id: "user-1",
+              content: [{ type: "text", text: "Run grep" }],
+            },
+            {
+              type: "toolCall",
+              id: "tool-1",
+              name: "bash",
+              args: { command: "grep -r foo src/" },
+            } as unknown as import("../adapters/codex-app-server").CodexAppServerGenericItem,
+          ],
+        }),
+      ],
+    });
+
+    const state = buildConversationState(thread);
+    const toolMsg = state.messages.find((m) => m.kind === "tool");
+    expect(toolMsg).toBeDefined();
+    expect(toolMsg).toMatchObject({
+      kind: "tool",
+      name: "bash",
+      status: "ok",
+    });
+  });
+
+  it("maps codex reasoning items to thinking messages", () => {
+    const thread = makeThread({
+      id: "thread-thinking",
+      cwd: "/tmp/worktree",
+      updatedAt: 200,
+      statusType: "idle",
+      source: "cli",
+      turns: [
+        makeTurn({
+          id: "turn-1",
+          status: "completed",
+          startedAt: 111,
+          items: [
+            {
+              type: "userMessage",
+              id: "user-1",
+              content: [{ type: "text", text: "Think about this" }],
+            },
+            {
+              type: "reasoning",
+              id: "think-1",
+              text: "I should break this down step by step.",
+            } as unknown as import("../adapters/codex-app-server").CodexAppServerGenericItem,
+          ],
+        }),
+      ],
+    });
+
+    const state = buildConversationState(thread);
+    const thinkMsg = state.messages.find((m) => m.kind === "thinking");
+    expect(thinkMsg).toBeDefined();
+    expect(thinkMsg).toMatchObject({
+      kind: "thinking",
+      text: "I should break this down step by step.",
+    });
+  });
 });
 
 describe("buildConversationState — running flag", () => {

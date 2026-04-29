@@ -94,7 +94,8 @@
     const conversationId = conversation?.conversationId ?? null;
     const messageCount = conversation?.messages.length ?? 0;
     const lastMessageId = messageCount > 0 ? conversation?.messages[messageCount - 1]?.id ?? null : null;
-    const lastMessageTextLength = messageCount > 0 ? conversation?.messages[messageCount - 1]?.text.length ?? 0 : 0;
+    const lastMsg = messageCount > 0 ? conversation?.messages[messageCount - 1] ?? null : null;
+    const lastMessageTextLength = lastMsg && "text" in lastMsg ? lastMsg.text.length : 0;
     if (!conversationId || !transcriptViewport) return;
     if (conversationId !== lastConversationId) {
       isPinnedToBottom = true;
@@ -167,20 +168,36 @@
           </div>
         {:else}
           {#each conversation.messages as message (message.id)}
-            <div
-              class={`max-w-[88%] min-w-0 rounded-2xl px-4 py-3 text-sm ${
-                message.role === "user"
-                  ? "self-end bg-accent text-white"
-                  : "self-start border border-edge bg-topbar text-primary"
-              }`}
-            >
-              <div class="whitespace-pre-wrap break-words">{message.text}</div>
-              {#if message.status === "inProgress"}
-                <div class="mt-2 text-[10px] uppercase tracking-[0.12em] text-muted">
-                  typing
-                </div>
-              {/if}
-            </div>
+            {#if message.kind === "user"}
+              <div class="max-w-[88%] min-w-0 self-end rounded-2xl bg-accent px-4 py-3 text-sm text-white">
+                <div class="whitespace-pre-wrap break-words">{message.text}</div>
+              </div>
+            {:else if message.kind === "assistant"}
+              <div class="max-w-[88%] min-w-0 self-start rounded-2xl border border-edge bg-topbar px-4 py-3 text-sm text-primary">
+                <div class="whitespace-pre-wrap break-words">{message.text}</div>
+                {#if message.status === "inProgress"}
+                  <div class="mt-2 text-[10px] uppercase tracking-[0.12em] text-muted">
+                    typing
+                  </div>
+                {/if}
+              </div>
+            {:else if message.kind === "tool"}
+              <div class="flex min-w-0 items-center gap-1.5 self-start px-1 text-xs text-muted">
+                {#if message.status === "running"}
+                  <span class="inline-block h-3 w-3 animate-spin rounded-full border border-muted border-t-transparent"></span>
+                {:else if message.status === "error"}
+                  <span class="text-danger">✗</span>
+                {:else}
+                  <span class="text-success">✓</span>
+                {/if}
+                <span class="shrink-0 font-medium">▸ {message.name}</span>
+                <span class="truncate overflow-hidden whitespace-nowrap text-ellipsis opacity-70">{message.summary}</span>
+              </div>
+            {:else if message.kind === "thinking"}
+              <div class="min-w-0 self-start px-1 text-xs italic text-muted opacity-60">
+                <span class="truncate overflow-hidden whitespace-nowrap text-ellipsis">· {message.text}</span>
+              </div>
+            {/if}
           {/each}
         {/if}
       </div>

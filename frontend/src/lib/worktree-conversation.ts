@@ -8,7 +8,7 @@ function buildOptimisticUserMessage(turnId: string, text: string): AgentsUiConve
   return {
     id: `pending-user:${turnId}`,
     turnId,
-    role: "user",
+    kind: "user",
     text,
     status: "completed",
     createdAt: new Date().toISOString(),
@@ -32,7 +32,7 @@ export function applyConversationMessageDelta(
         {
           id: event.itemId,
           turnId: event.turnId,
-          role: "assistant",
+          kind: "assistant",
           text: event.delta,
           status: "inProgress",
           createdAt: null,
@@ -45,15 +45,15 @@ export function applyConversationMessageDelta(
     ...conversation,
     running: true,
     activeTurnId: event.turnId,
-    messages: conversation.messages.map((message, index) =>
-      index === existingIndex
-        ? {
-            ...message,
-            text: `${message.text}${event.delta}`,
-            status: "inProgress",
-          }
-        : message
-    ),
+    messages: conversation.messages.map((message, index) => {
+      if (index !== existingIndex) return message;
+      if (message.kind !== "user" && message.kind !== "assistant") return message;
+      return {
+        ...message,
+        text: `${message.text}${event.delta}`,
+        status: "inProgress" as const,
+      };
+    }),
   };
 }
 
@@ -64,7 +64,7 @@ export function markConversationTurnStarted(
 ): AgentsUiConversationState | null {
   if (!conversation) return conversation;
 
-  const nextMessages = conversation.messages.some((message) => message.turnId === turnId && message.role === "user")
+  const nextMessages = conversation.messages.some((message) => message.turnId === turnId && message.kind === "user")
     ? conversation.messages
     : [...conversation.messages, buildOptimisticUserMessage(turnId, text)];
 
@@ -80,13 +80,15 @@ export function buildConversationProgressSignature(conversation: AgentsUiConvers
   if (!conversation) return null;
 
   const lastMessage = conversation.messages[conversation.messages.length - 1] ?? null;
+  const lastMessageStatus = lastMessage && "status" in lastMessage ? lastMessage.status : null;
+  const lastMessageTextLength = lastMessage && "text" in lastMessage ? lastMessage.text.length : 0;
   return JSON.stringify({
     conversationId: conversation.conversationId,
     running: conversation.running,
     activeTurnId: conversation.activeTurnId,
     messageCount: conversation.messages.length,
     lastMessageId: lastMessage?.id ?? null,
-    lastMessageStatus: lastMessage?.status ?? null,
-    lastMessageTextLength: lastMessage?.text.length ?? 0,
+    lastMessageStatus,
+    lastMessageTextLength,
   });
 }

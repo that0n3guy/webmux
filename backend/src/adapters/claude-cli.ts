@@ -2,13 +2,37 @@ import { readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { log } from "../lib/log";
 
-export interface ClaudeCliConversationMessage {
+export interface ClaudeCliTextMessage {
+  kind: "user" | "assistant";
   id: string;
   turnId: string;
-  role: "user" | "assistant";
+  text: string;
+  status: "completed";
+  createdAt: string | null;
+}
+
+export interface ClaudeCliToolEvent {
+  kind: "tool";
+  id: string;
+  turnId: string;
+  toolUseId: string;
+  name: string;
+  summary: string;
+  status: "running" | "ok" | "error";
+  createdAt: string | null;
+}
+
+export interface ClaudeCliThinkingEvent {
+  kind: "thinking";
+  id: string;
+  turnId: string;
   text: string;
   createdAt: string | null;
 }
+
+export type ClaudeCliConversationEvent = ClaudeCliTextMessage | ClaudeCliToolEvent | ClaudeCliThinkingEvent;
+
+export type ClaudeCliConversationMessage = ClaudeCliConversationEvent;
 
 export interface ClaudeCliSession {
   sessionId: string;
@@ -17,7 +41,7 @@ export interface ClaudeCliSession {
   gitBranch: string | null;
   createdAt: string | null;
   lastSeenAt: string | null;
-  messages: ClaudeCliConversationMessage[];
+  messages: ClaudeCliConversationEvent[];
 }
 
 export interface ClaudeCliSessionSummary {
@@ -71,8 +95,8 @@ interface ClaudeStoredMessage {
 }
 
 interface ClaudeParsedTurn {
-  assistant: ClaudeCliConversationMessage | null;
-  user: ClaudeCliConversationMessage;
+  events: ClaudeCliConversationEvent[];
+  userEvent: ClaudeCliTextMessage;
 }
 
 function isRecord(raw: unknown): raw is Record<string, unknown> {
@@ -172,6 +196,35 @@ async function findClaudeSessionPath(sessionId: string, cwd: string): Promise<st
   return null;
 }
 
+function formatToolSummary(name: string, input: Record<string, unknown>): string {
+  const str = (v: unknown): string => (typeof v === "string" ? v : "");
+  switch (name) {
+    case "Read": {
+      const file = str(input.file_path);
+      const start = input.start_line;
+      const end = input.end_line;
+      return start !== undefined && end !== undefined ? `${file}:${start}-${end}` : file || name;
+    }
+    case "Edit":
+    case "Write":
+    case "MultiEdit":
+      return str(input.file_path) || name;
+    case "Bash": {
+      const cmd = str(input.command);
+      return cmd.slice(0, 80) || name;
+    }
+    case "Grep": {
+      const pattern = str(input.pattern);
+      const path = str(input.path);
+      return path ? `${pattern} in ${path}` : pattern || name;
+    }
+    default: {
+      const raw = JSON.stringify(input);
+      return raw.slice(0, 80);
+    }
+  }
+}
+
 function parseClaudeSessionRecords(text: string): ClaudeStoredRecord[] {
   return text
     .split("\n")
@@ -186,6 +239,74 @@ function parseClaudeSessionRecords(text: string): ClaudeStoredRecord[] {
         return [];
       }
     });
+}
+
+function parseAssistantContentBlocks(
+  record: ClaudeStoredRecord & { message: ClaudeStoredMessage & { role: "assistant" }; uuid: string },
+  turnId: string,
+  createdAt: string | null,
+): ClaudeCliConversationEvent[] {
+  const content = (record.message as ClaudeStoredMessage).content;
+  if (!Array.isArray(content)) return [];
+
+  const events: ClaudeCliConversationEvent[] = [];
+  const pendingToolIds = new Set<string>();
+
+  for (const block of content) {
+    if (!isRecord(block)) continue;
+
+    if (block.type === "text") {
+      const text = typeof block.text === "string" ? block.text.trim() : "";
+      if (text.length > 0) {
+        events.push({
+          kind: "assistant",
+          id: record.uuid,
+          turnId,
+          text,
+          status: "completed",
+          createdAt,
+        });
+      }
+      continue;
+    }
+
+    if (block.type === "tool_use") {
+      const name = typeof block.name === "string" ? block.name : "Tool";
+      const toolId = typeof block.id === "string" ? block.id : record.uuid;
+      const input = isRecord(block.input) ? block.input : {};
+      const summary = formatToolSummary(name, input);
+      events.push({
+        kind: "tool",
+        id: toolId,
+        turnId,
+        toolUseId: toolId,
+        name,
+        summary,
+        status: "ok",
+        createdAt,
+      });
+      pendingToolIds.add(toolId);
+      continue;
+    }
+
+    if (block.type === "thinking") {
+      const thinking = typeof block.thinking === "string" ? block.thinking : "";
+      const firstLine = thinking.split("\n")[0] ?? "";
+      const text = firstLine.slice(0, 200);
+      if (text.length > 0) {
+        events.push({
+          kind: "thinking",
+          id: `thinking:${record.uuid}:${events.length}`,
+          turnId,
+          text,
+          createdAt,
+        });
+      }
+      continue;
+    }
+  }
+
+  return events;
 }
 
 export function buildClaudeSessionFromText(
@@ -216,15 +337,18 @@ export function buildClaudeSessionFromText(
         turns.push(currentTurn);
       }
 
+      const userEvent: ClaudeCliTextMessage = {
+        kind: "user",
+        id: record.uuid,
+        turnId: record.uuid,
+        text: record.message.content.trim(),
+        status: "completed",
+        createdAt: readString(record.timestamp),
+      };
+
       currentTurn = {
-        user: {
-          id: record.uuid,
-          turnId: record.uuid,
-          role: "user",
-          text: record.message.content.trim(),
-          createdAt: readString(record.timestamp),
-        },
-        assistant: null,
+        userEvent,
+        events: [userEvent],
       };
       continue;
     }
@@ -233,18 +357,31 @@ export function buildClaudeSessionFromText(
       continue;
     }
 
-    const text = extractClaudeMessageText(record.message.content);
-    if (text.length === 0 || record.message.stop_reason !== "end_turn") {
+    if (record.message.stop_reason !== "end_turn") {
       continue;
     }
 
-    currentTurn.assistant = {
-      id: record.uuid,
-      turnId: currentTurn.user.turnId,
-      role: "assistant",
-      text,
-      createdAt: readString(record.timestamp),
-    };
+    const blockEvents = parseAssistantContentBlocks(
+      record,
+      currentTurn.userEvent.turnId,
+      readString(record.timestamp),
+    );
+
+    if (blockEvents.length === 0) {
+      const text = extractClaudeMessageText(record.message.content);
+      if (text.length > 0) {
+        currentTurn.events.push({
+          kind: "assistant",
+          id: record.uuid,
+          turnId: currentTurn.userEvent.turnId,
+          text,
+          status: "completed",
+          createdAt: readString(record.timestamp),
+        });
+      }
+    } else {
+      currentTurn.events.push(...blockEvents);
+    }
   }
 
   if (currentTurn) {
@@ -258,7 +395,7 @@ export function buildClaudeSessionFromText(
     gitBranch,
     createdAt,
     lastSeenAt,
-    messages: turns.flatMap((turn) => turn.assistant ? [turn.user, turn.assistant] : [turn.user]),
+    messages: turns.flatMap((turn) => turn.events),
   };
 }
 

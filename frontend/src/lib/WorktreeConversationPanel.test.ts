@@ -125,4 +125,89 @@ describe("WorktreeConversationPanel", () => {
     expect(interruptButton).toBeDisabled();
     expect(interruptButton).toHaveTextContent("Stopping...");
   });
+
+  it("renders tool events as a single-line row with name and summary", () => {
+    renderPanel({
+      conversation: createConversation({
+        messages: [
+          {
+            kind: "tool",
+            id: "tool-1",
+            turnId: "turn-1",
+            name: "Read",
+            summary: "frontend/src/lib/types.ts:1-50",
+            status: "ok",
+            createdAt: null,
+          },
+        ],
+      }),
+    });
+
+    expect(screen.getByText("▸ Read")).toBeInTheDocument();
+    expect(screen.getByText("frontend/src/lib/types.ts:1-50")).toBeInTheDocument();
+  });
+
+  it("renders thinking events as a muted italic line", () => {
+    renderPanel({
+      conversation: createConversation({
+        messages: [
+          {
+            kind: "thinking",
+            id: "think-1",
+            turnId: "turn-1",
+            text: "I should analyze this carefully.",
+            createdAt: null,
+          },
+        ],
+      }),
+    });
+
+    expect(screen.getByText("· I should analyze this carefully.")).toBeInTheDocument();
+  });
+
+  it("renders tool and thinking events between user and assistant bubbles", () => {
+    renderPanel({
+      conversation: createConversation({
+        messages: [
+          {
+            kind: "user",
+            id: "user-1",
+            turnId: "turn-1",
+            text: "Show me the file",
+            status: "completed",
+            createdAt: null,
+          },
+          {
+            kind: "thinking",
+            id: "think-1",
+            turnId: "turn-1",
+            text: "Reading the file now.",
+            createdAt: null,
+          },
+          {
+            kind: "tool",
+            id: "tool-1",
+            turnId: "turn-1",
+            name: "Read",
+            summary: "src/lib/foo.ts",
+            status: "ok",
+            createdAt: null,
+          },
+          {
+            kind: "assistant",
+            id: "asst-1",
+            turnId: "turn-1",
+            text: "Here it is.",
+            status: "completed",
+            createdAt: null,
+          },
+        ],
+      }),
+    });
+
+    expect(screen.getByText("Show me the file")).toBeInTheDocument();
+    expect(screen.getByText("· Reading the file now.")).toBeInTheDocument();
+    expect(screen.getByText("▸ Read")).toBeInTheDocument();
+    expect(screen.getByText("Here it is.")).toBeInTheDocument();
+  });
 });

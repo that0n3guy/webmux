@@ -17,7 +17,7 @@ function makeConversation(): AgentsUiConversationState {
       {
         id: "user-1",
         turnId: "turn-1",
-        role: "user",
+        kind: "user",
         text: "Inspect the diff",
         status: "completed",
         createdAt: "2026-04-15T10:00:00.000Z",
@@ -31,7 +31,7 @@ describe("worktree conversation helpers", () => {
     expect(markConversationTurnStarted(makeConversation(), "turn-2", "Ship it")?.messages.at(-1)).toEqual({
       id: "pending-user:turn-2",
       turnId: "turn-2",
-      role: "user",
+      kind: "user",
       text: "Ship it",
       status: "completed",
       createdAt: expect.any(String),
@@ -58,7 +58,7 @@ describe("worktree conversation helpers", () => {
     expect(updated?.messages.at(-1)).toEqual({
       id: "assistant-2",
       turnId: "turn-2",
-      role: "assistant",
+      kind: "assistant",
       text: "Looking good",
       status: "inProgress",
       createdAt: null,

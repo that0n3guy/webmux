@@ -26,17 +26,41 @@ export interface AgentsUiWorktreeSummary {
   conversation: WorktreeConversationMeta | null;
 }
 
-export type AgentsUiConversationMessageRole = "user" | "assistant";
 export type AgentsUiConversationMessageStatus = "completed" | "inProgress";
 
-export interface AgentsUiConversationMessage {
-  id: string;
-  turnId: string;
-  role: AgentsUiConversationMessageRole;
-  text: string;
-  status: AgentsUiConversationMessageStatus;
-  createdAt: string | null;
-}
+export type AgentsUiConversationMessage =
+  | {
+      kind: "user";
+      id: string;
+      turnId: string;
+      text: string;
+      status: AgentsUiConversationMessageStatus;
+      createdAt: string | null;
+    }
+  | {
+      kind: "assistant";
+      id: string;
+      turnId: string;
+      text: string;
+      status: AgentsUiConversationMessageStatus;
+      createdAt: string | null;
+    }
+  | {
+      kind: "tool";
+      id: string;
+      turnId: string;
+      name: string;
+      summary: string;
+      status: "running" | "ok" | "error";
+      createdAt: string | null;
+    }
+  | {
+      kind: "thinking";
+      id: string;
+      turnId: string;
+      text: string;
+      createdAt: string | null;
+    };
 
 export interface AgentsUiConversationState {
   provider: WorktreeConversationProvider;

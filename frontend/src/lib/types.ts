@@ -15,6 +15,7 @@ export type {
   AgentsUiConversationEvent,
   AgentsUiConversationMessage,
   AgentsUiConversationMessageDeltaEvent,
+  AgentsUiConversationMessageStatus,
   AgentsUiConversationState,
   AgentsUiInterruptResponse,
   AgentsUiSendMessageResponse,
