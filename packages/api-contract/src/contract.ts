@@ -40,6 +40,7 @@ import {
   CreateProjectResponseSchema,
   RemoveProjectRequestSchema,
   OpenWorktreeRequestSchema,
+  UpdateWorktreeRequestSchema,
 } from "./schemas";
 import { z } from "zod";
 
@@ -67,6 +68,7 @@ export const apiPaths = {
   fetchWorktrees: "/api/projects/:projectId/worktrees",
   createWorktree: "/api/projects/:projectId/worktrees",
   removeWorktree: "/api/projects/:projectId/worktrees/:name",
+  updateWorktree: "/api/projects/:projectId/worktrees/:name",
   openWorktree: "/api/projects/:projectId/worktrees/:name/open",
   closeWorktree: "/api/projects/:projectId/worktrees/:name/close",
   setWorktreeArchived: "/api/projects/:projectId/worktrees/:name/archive",
@@ -297,6 +299,16 @@ export const apiContract = c.router({
     method: "DELETE",
     path: apiPaths.removeWorktree,
     pathParams: ProjectScopedWorktreeNameParamsSchema,
+    responses: {
+      200: OkResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  updateWorktree: {
+    method: "PATCH",
+    path: apiPaths.updateWorktree,
+    pathParams: ProjectScopedWorktreeNameParamsSchema,
+    body: UpdateWorktreeRequestSchema,
     responses: {
       200: OkResponseSchema,
       ...commonErrorResponses,

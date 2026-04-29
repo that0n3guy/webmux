@@ -56,6 +56,7 @@ export type {
   SetWorktreeArchivedRequest,
   SetWorktreeArchivedResponse,
   UnpushedCommit,
+  UpdateWorktreeRequest,
   WorktreeCreationPhase,
   WorktreeCreationState,
   WorktreeCreateMode,

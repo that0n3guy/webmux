@@ -5,6 +5,7 @@
   import Terminal from "./lib/Terminal.svelte";
   import ConfirmDialog from "./lib/ConfirmDialog.svelte";
   import CreateWorktreeDialog from "./lib/CreateWorktreeDialog.svelte";
+  import EditWorktreeDialog from "./lib/EditWorktreeDialog.svelte";
   import SettingsDialog from "./lib/SettingsDialog.svelte";
   import CiDetailsDialog from "./lib/CiDetailsDialog.svelte";
   import CommentReviewDialog from "./lib/CommentReviewDialog.svelte";
@@ -72,6 +73,7 @@
     createProject,
     removeProject,
     openWorktree,
+    updateWorktree,
   } from "./lib/api";
   import type { CreateProjectRequest } from "@webmux/api-contract";
 
@@ -131,6 +133,7 @@
   let showCreateAISessionDialog = $state(false);
   let hasLoadedWorktrees = $state(false);
   let removeBranch = $state<string | null>(null);
+  let editWorktreeBranch = $state<string | null>(null);
   let scratchToRemove = $state<{ id: string; displayName: string } | null>(null);
   let mergeBranch = $state<string | null>(null);
   let removingBranches = $state<Set<string>>(new Set());
@@ -978,6 +981,18 @@
     }
   }
 
+  async function handleSaveEditWorktree(branch: string, yolo: boolean, agent: string): Promise<void> {
+    const projectId = currentProjectId!;
+    await updateWorktree(projectId, branch, { yolo, agent });
+    const worktree = currentWorktrees.find((w) => w.branch === branch);
+    if (worktree?.mux === "✓") {
+      await api.closeWorktree({ params: { projectId, name: branch } });
+      await openWorktree(projectId, branch);
+    }
+    editWorktreeBranch = null;
+    await refresh();
+  }
+
   async function handleArchiveToggle() {
     const branch = selectedBranch;
     if (!branch) return;
@@ -1334,6 +1349,7 @@
         onarchive={toggleWorktreeArchived}
         onmerge={(branch) => { mergeBranch = branch; }}
         onremove={(b) => (removeBranch = b)}
+        onedit={(branch) => { editWorktreeBranch = branch; }}
       />
 
       {#if showCreateScratchDialog}
@@ -1634,6 +1650,18 @@
     onconfirm={handleRemove}
     oncancel={() => (removeBranch = null)}
   />
+{/if}
+
+{#if editWorktreeBranch}
+  {@const editWorktree = currentWorktrees.find((w) => w.branch === editWorktreeBranch)}
+  {#if editWorktree}
+    <EditWorktreeDialog
+      worktree={editWorktree}
+      agents={config.agents}
+      onsave={(yolo, agent) => handleSaveEditWorktree(editWorktreeBranch!, yolo, agent)}
+      onclose={() => { editWorktreeBranch = null; }}
+    />
+  {/if}
 {/if}
 
 {#if scratchToRemove}

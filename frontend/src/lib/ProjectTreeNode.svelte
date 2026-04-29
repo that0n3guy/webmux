@@ -26,6 +26,7 @@
     onarchive,
     onmerge,
     onremove,
+    onedit,
   }: {
     project: ProjectInfo;
     expanded: boolean;
@@ -49,6 +50,7 @@
     onarchive: (branch: string) => void;
     onmerge: (branch: string) => void;
     onremove: (branch: string) => void;
+    onedit: (branch: string) => void;
   } = $props();
 
   let menuOpen = $state(false);
@@ -134,6 +136,7 @@
         {onarchive}
         {onmerge}
         {onremove}
+        {onedit}
       />
       <SessionList
         mode="scratch-only"

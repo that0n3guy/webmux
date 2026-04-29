@@ -38,6 +38,7 @@
     onarchive,
     onmerge,
     onremove,
+    onedit,
   }: {
     projects: ProjectInfo[];
     rowsByProject: Map<string, WorktreeListRow[]>;
@@ -62,6 +63,7 @@
     onarchive: (branch: string) => void;
     onmerge: (branch: string) => void;
     onremove: (branch: string) => void;
+    onedit: (branch: string) => void;
   } = $props();
 
   let expanded = $state(loadExpanded());
@@ -131,6 +133,7 @@
       {onarchive}
       {onmerge}
       {onremove}
+      {onedit}
     />
   {/each}
 

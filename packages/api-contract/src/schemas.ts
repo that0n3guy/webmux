@@ -587,6 +587,11 @@ export const OpenWorktreeRequestSchema = z.object({
   shellOnly: z.boolean().optional(),
 });
 
+export const UpdateWorktreeRequestSchema = z.object({
+  yolo: z.boolean().optional(),
+  agent: AgentIdSchema.optional(),
+});
+
 export type BuiltInAgentId = z.infer<typeof BuiltInAgentIdSchema>;
 export type AgentId = z.infer<typeof AgentIdSchema>;
 export type AgentKind = z.infer<typeof AgentKindSchema>;
@@ -665,4 +670,5 @@ export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;
 export type CreateProjectResponse = z.infer<typeof CreateProjectResponseSchema>;
 export type RemoveProjectRequest = z.infer<typeof RemoveProjectRequestSchema>;
 export type OpenWorktreeRequest = z.infer<typeof OpenWorktreeRequestSchema>;
+export type UpdateWorktreeRequest = z.infer<typeof UpdateWorktreeRequestSchema>;
 export type ExternalSessionNameParams = z.infer<typeof ExternalSessionNameParamsSchema>;

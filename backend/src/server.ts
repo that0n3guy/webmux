@@ -17,6 +17,7 @@ import {
   SendWorktreePromptRequestSchema,
   SetWorktreeArchivedRequestSchema,
   ToggleEnabledRequestSchema,
+  UpdateWorktreeRequestSchema,
   UpsertCustomAgentRequestSchema,
   WorktreeNameParamsSchema,
 } from "@webmux/api-contract";
@@ -39,6 +40,7 @@ import {
   type TerminalAttachTarget,
 } from "./adapters/terminal";
 import { loadControlToken } from "./adapters/control-token";
+import { readWorktreeMeta, writeWorktreeMeta } from "./adapters/fs";
 import { ClaudeCliClient } from "./adapters/claude-cli";
 import { CodexAppServerClient } from "./adapters/codex-app-server";
 import {
@@ -1354,6 +1356,32 @@ async function apiMergeWorktree(scope: ProjectScope, name: string): Promise<Resp
   return jsonResponse({ ok: true });
 }
 
+async function apiUpdateWorktree(scope: ProjectScope, name: string, req: Request): Promise<Response> {
+  ensureBranchNotBusy(scope, name);
+  const parsed = await parseJsonBody(req, UpdateWorktreeRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
+
+  if (body.agent !== undefined) {
+    const agentDef = getAgentDefinition(scope.config, body.agent);
+    if (!agentDef) return errorResponse(`Unknown agent: ${body.agent}`, 404);
+  }
+
+  const gitDirs = await getWorktreeGitDirs(scope);
+  const gitDir = gitDirs.get(name);
+  if (!gitDir) return errorResponse(`Worktree not found: ${name}`, 404);
+
+  const meta = await readWorktreeMeta(gitDir);
+  if (!meta) return errorResponse(`Worktree is not webmux-managed: ${name}`, 404);
+
+  if (body.yolo !== undefined) meta.yolo = body.yolo;
+  if (body.agent !== undefined) meta.agent = body.agent;
+
+  await writeWorktreeMeta(gitDir, meta);
+  log.info(`[worktree:update] name=${name} agent=${body.agent ?? "(unchanged)"} yolo=${body.yolo ?? "(unchanged)"}`);
+  return jsonResponse({ ok: true });
+}
+
 async function apiListAgents(scope: ProjectScope): Promise<Response> {
   return jsonResponse({ agents: listAgentDetails(scope.config) });
 }
@@ -2000,6 +2028,14 @@ Bun.serve({
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
         return catching(`DELETE /api/projects/:projectId/worktrees/${name}`, () => apiDeleteWorktree(parsedProject.data.scope, name));
+      },
+      PATCH: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
+        const parsed = parseWorktreeNameParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        const name = parsed.data;
+        return catching(`PATCH /api/projects/:projectId/worktrees/${name}`, () => apiUpdateWorktree(parsedProject.data.scope, name, req));
       },
     },
 

@@ -30,6 +30,7 @@ vi.mock("./lib/api", () => ({
   removeScratchSession: vi.fn(),
   createProject: vi.fn(),
   removeProject: vi.fn(),
+  updateWorktree: vi.fn(),
   attachScratchConversation: vi.fn(),
   fetchScratchConversationHistory: vi.fn(),
   sendScratchConversationMessage: vi.fn(),
@@ -38,7 +39,7 @@ vi.mock("./lib/api", () => ({
 }));
 
 import App from "./App.svelte";
-import { api, fetchAgents, fetchWorktrees, fetchProjects, fetchExternalSessions, fetchScratchSessions, subscribeNotifications, openWorktree, attachScratchConversation, connectScratchConversationStream } from "./lib/api";
+import { api, fetchAgents, fetchWorktrees, fetchProjects, fetchExternalSessions, fetchScratchSessions, subscribeNotifications, openWorktree, updateWorktree, attachScratchConversation, connectScratchConversationStream } from "./lib/api";
 import type { ProjectInfo, ScratchSessionSnapshot } from "./lib/types";
 
 interface Deferred<T> {
@@ -151,6 +152,7 @@ function createWorktree(
     linearIssue: null,
     creating: false,
     creationPhase: null,
+    yolo: false,
     ...overrides,
   };
 }
@@ -300,6 +302,7 @@ describe("App create selection", () => {
     });
     vi.mocked(subscribeNotifications).mockReturnValue(() => {});
     vi.mocked(openWorktree).mockResolvedValue(undefined);
+    vi.mocked(updateWorktree).mockResolvedValue(undefined);
     vi.mocked(api.closeWorktree).mockResolvedValue({ ok: true });
     vi.mocked(api.removeWorktree).mockResolvedValue({ ok: true });
     vi.mocked(api.setWorktreeArchived).mockResolvedValue({ ok: true, archived: true });
@@ -966,6 +969,125 @@ describe("App create selection", () => {
       expect(
         screen.queryByTitle("Switch to chat") ?? screen.queryByTitle("Switch to terminal"),
       ).toBeTruthy();
+    });
+  });
+});
+
+describe("EditWorktreeDialog", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    cleanup();
+    localStorage.clear();
+    setupBrowserMocks();
+
+    vi.mocked(api.fetchConfig).mockResolvedValue(createConfig());
+    vi.mocked(fetchAgents).mockResolvedValue([
+      {
+        id: "claude",
+        label: "Claude",
+        kind: "builtin",
+        capabilities: { terminal: true, inAppChat: true, conversationHistory: true, interrupt: true, resume: true },
+        startCommand: null,
+        resumeCommand: null,
+      },
+      {
+        id: "codex",
+        label: "Codex",
+        kind: "builtin",
+        capabilities: { terminal: true, inAppChat: true, conversationHistory: true, interrupt: true, resume: true },
+        startCommand: null,
+        resumeCommand: null,
+      },
+    ]);
+    vi.mocked(fetchProjects).mockResolvedValue([createProject()]);
+    vi.mocked(fetchWorktrees).mockResolvedValue([createWorktree("feature/foo", { agentName: "claude", agentLabel: "Claude", yolo: false })]);
+    vi.mocked(fetchExternalSessions).mockResolvedValue([]);
+    vi.mocked(fetchScratchSessions).mockResolvedValue([]);
+    vi.mocked(api.fetchAvailableBranches).mockResolvedValue({ branches: [] });
+    vi.mocked(api.fetchBaseBranches).mockResolvedValue({ branches: [] });
+    vi.mocked(api.fetchLinearIssues).mockResolvedValue(createLinearIssuesResponse());
+    vi.mocked(subscribeNotifications).mockReturnValue(() => {});
+    vi.mocked(openWorktree).mockResolvedValue(undefined);
+    vi.mocked(updateWorktree).mockResolvedValue(undefined);
+    vi.mocked(api.closeWorktree).mockResolvedValue({ ok: true });
+    vi.mocked(api.removeWorktree).mockResolvedValue({ ok: true });
+    vi.mocked(api.setWorktreeArchived).mockResolvedValue({ ok: true, archived: true });
+    vi.mocked(api.mergeWorktree).mockResolvedValue({ ok: true });
+    vi.mocked(api.pullMain).mockResolvedValue({ status: "updated" });
+    vi.mocked(api.dismissNotification).mockResolvedValue({ ok: true });
+  });
+
+  afterEach(() => {
+    cleanup();
+    restoreBrowserMocks();
+  });
+
+  async function openEditDialog(): Promise<void> {
+    await screen.findByRole("button", { name: /^feature\/foo\b/i });
+    const row = screen.getByRole("button", { name: /^feature\/foo\b/i });
+    const actionsBtn = row.parentElement?.querySelector("[aria-label^='Actions for']") as HTMLButtonElement | null;
+    if (!actionsBtn) throw new Error("Actions button not found");
+    await fireEvent.click(actionsBtn);
+    await fireEvent.click(await screen.findByText("Edit…"));
+  }
+
+  it("opens Edit dialog and shows current agent and yolo state", async () => {
+    render(App);
+    await openEditDialog();
+    await screen.findByText("Edit Worktree");
+    const select = screen.getByLabelText("Agent") as HTMLSelectElement;
+    expect(select.value).toBe("claude");
+    const yoloToggle = screen.getByRole("switch", { name: /skip permissions/i });
+    expect(yoloToggle).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("calls updateWorktree with correct args on save", async () => {
+    render(App);
+    await openEditDialog();
+    await screen.findByText("Edit Worktree");
+    const yoloToggle = screen.getByRole("switch", { name: /skip permissions/i });
+    await fireEvent.click(yoloToggle);
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(vi.mocked(updateWorktree)).toHaveBeenCalledWith(
+        "test-project-1",
+        "feature/foo",
+        expect.objectContaining({ yolo: true, agent: "claude" }),
+      );
+    });
+  });
+
+  it("closes dialog and does not call close+open when worktree is not open (mux='') on save", async () => {
+    render(App);
+    await openEditDialog();
+    await screen.findByText("Edit Worktree");
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(vi.mocked(updateWorktree)).toHaveBeenCalled();
+    });
+    expect(vi.mocked(api.closeWorktree)).not.toHaveBeenCalled();
+    expect(vi.mocked(openWorktree)).not.toHaveBeenCalled();
+  });
+
+  it("closes and reopens worktree when it is currently open (mux='✓') on save", async () => {
+    vi.mocked(fetchWorktrees).mockResolvedValue([
+      createWorktree("feature/foo", { agentName: "claude", agentLabel: "Claude", yolo: false, mux: "✓" }),
+    ]);
+    render(App);
+    await screen.findByRole("button", { name: /^feature\/foo\b/i });
+    const row = screen.getByRole("button", { name: /^feature\/foo\b/i });
+    const actionsBtn = row.parentElement?.querySelector("[aria-label^='Actions for']") as HTMLButtonElement | null;
+    if (!actionsBtn) throw new Error("Actions button not found");
+    await fireEvent.click(actionsBtn);
+    await fireEvent.click(await screen.findByText("Edit…"));
+    await screen.findByText("Edit Worktree");
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(vi.mocked(updateWorktree)).toHaveBeenCalled();
+      expect(vi.mocked(api.closeWorktree)).toHaveBeenCalledWith(
+        expect.objectContaining({ params: { projectId: "test-project-1", name: "feature/foo" } }),
+      );
+      expect(vi.mocked(openWorktree)).toHaveBeenCalledWith("test-project-1", "feature/foo");
     });
   });
 });

@@ -22,6 +22,7 @@
     onarchive,
     onmerge,
     onremove,
+    onedit,
   }: {
     rows: WorktreeListRow[];
     selected: string | null;
@@ -35,6 +36,7 @@
     onarchive: (branch: string) => void;
     onmerge: (branch: string) => void;
     onremove: (branch: string) => void;
+    onedit: (branch: string) => void;
   } = $props();
 
   function toggleMenu(branch: string, triggerEl: HTMLButtonElement): void {
@@ -212,6 +214,17 @@
             }}
           >
             Close
+          </button>
+          <button
+            type="button"
+            disabled={isCreating}
+            class="w-full px-2 py-1.5 rounded text-left text-xs text-primary hover:bg-hover disabled:opacity-50 disabled:cursor-not-allowed"
+            onclick={(event) => {
+              event.stopPropagation();
+              runMenuAction(wt.branch, onedit);
+            }}
+          >
+            Edit…
           </button>
           <button
             type="button"
