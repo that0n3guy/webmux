@@ -114,9 +114,6 @@
       const agent = config.agents.find((candidate) => candidate.id === session.agentId);
       return agent?.capabilities.inAppChat ?? (session.agentId === "claude" || session.agentId === "codex");
     }
-    if (sel.kind === "external") {
-      return true;
-    }
     return false;
   }
 
@@ -1484,13 +1481,6 @@
         <MobileChatSurface
           projectId={currentProjectId!}
           target={{ kind: "scratch", projectId: currentProjectId!, scratchId: selection.id }}
-        />
-      {/key}
-    {:else if showMobileChat && selection?.kind === "external"}
-      {#key selection.sessionName}
-        <MobileChatSurface
-          projectId={currentProjectId!}
-          target={{ kind: "external", sessionName: selection.sessionName }}
         />
       {/key}
     {:else if selection && (selection.kind !== "worktree" || canConnect)}
