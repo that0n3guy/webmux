@@ -25,7 +25,12 @@ export function probeSessionActivity(
   const tailLines = opts?.tailLines ?? 50;
   const { lastActivityAt } = tmux.getPaneLastActivity(target);
   const recentTailLines = tmux.capturePane(target, tailLines);
-  return { agentBinary: null, lastActivityAt, recentTailLines };
+  return {
+    // agentBinary is intentionally null in Task 4; Task 2 will populate it from pane_current_command for external session detection.
+    agentBinary: null,
+    lastActivityAt,
+    recentTailLines,
+  };
 }
 
 export function computeRunning(

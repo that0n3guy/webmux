@@ -645,6 +645,46 @@ describe("WorktreeConversationService — probe augmentation", () => {
     expect(result.data.conversation.running).toBe(true);
   });
 
+  it("keeps running=true when codex thread is active even if probe shows stale activity", async () => {
+    const metaStore = new Map<string, WorktreeMeta>();
+    const worktree = makeWorktree();
+    const gitDir = `${worktree.path}/.git`;
+    metaStore.set(gitDir, makeMeta());
+
+    const appServer = new FakeCodexAppServer();
+    const activeThread = makeThread({
+      id: "thread-active",
+      cwd: worktree.path,
+      updatedAt: 200,
+      statusType: "active",
+      source: "cli",
+      turns: [],
+    });
+    appServer.listedThreads = [activeThread];
+    appServer.threads.set(activeThread.id, structuredClone(activeThread));
+
+    const now = new Date("2026-04-28T10:00:00.000Z");
+    const probeGateway = new FakeProbeGateway();
+    // Probe shows stale activity: last active 30 seconds ago (well beyond the 2500 ms threshold)
+    probeGateway.lastActivityAt = new Date(now.getTime() - 30_000).toISOString();
+
+    const service = new WorktreeConversationService({
+      appServer,
+      git: new FakeGitGateway(),
+      now: () => now,
+      readMeta: async (path) => structuredClone(metaStore.get(path) ?? null),
+      writeMeta: async (path, meta) => { metaStore.set(path, structuredClone(meta)); },
+    });
+
+    const result = await service.attachWorktreeConversation(worktree, {
+      tmux: probeGateway as unknown as TmuxGateway,
+      projectRoot: "/tmp/worktrees/codex-feature",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.conversation.running).toBe(true);
+  });
+
   it("running=false when both thread and probe are idle", async () => {
     const metaStore = new Map<string, WorktreeMeta>();
     const worktree = makeWorktree();
