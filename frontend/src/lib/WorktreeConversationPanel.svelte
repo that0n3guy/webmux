@@ -9,6 +9,7 @@
     conversationLoading: boolean;
     composerText: string;
     isSending: boolean;
+    isInterrupting?: boolean;
     onAttach: () => void;
     onComposerInput: (value: string) => void;
     onInterrupt: () => void;
@@ -23,6 +24,7 @@
     conversationLoading,
     composerText,
     isSending,
+    isInterrupting = false,
     onAttach,
     onComposerInput,
     onInterrupt,
@@ -84,10 +86,12 @@
 {#snippet interruptButton()}
   <button
     type="button"
-    class="rounded-md border border-danger px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger/10"
+    aria-label="Interrupt"
+    class="rounded-md border border-danger px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"
     onclick={onInterrupt}
+    disabled={isInterrupting}
   >
-    Interrupt
+    {isInterrupting ? "Stopping..." : "Interrupt"}
   </button>
 {/snippet}
 

@@ -44,10 +44,12 @@ function renderPanel({
   worktree = createWorktree(),
   conversation = createConversation(),
   conversationError = null,
+  isInterrupting = false,
 }: {
   worktree?: WorktreeInfo;
   conversation?: AgentsUiConversationState | null;
   conversationError?: string | null;
+  isInterrupting?: boolean;
 } = {}) {
   const onInterrupt = vi.fn();
 
@@ -59,6 +61,7 @@ function renderPanel({
       conversationLoading: false,
       composerText: "",
       isSending: false,
+      isInterrupting,
       onAttach: vi.fn(),
       onComposerInput: vi.fn(),
       onInterrupt,
@@ -110,5 +113,16 @@ describe("WorktreeConversationPanel", () => {
 
     expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Interrupt" })).not.toBeInTheDocument();
+  });
+
+  it("disables the interrupt button and shows Stopping... while isInterrupting is true", () => {
+    renderPanel({
+      conversation: createConversation({ running: true, activeTurnId: "turn-1" }),
+      isInterrupting: true,
+    });
+
+    const interruptButton = screen.getByRole("button", { name: "Interrupt" });
+    expect(interruptButton).toBeDisabled();
+    expect(interruptButton).toHaveTextContent("Stopping...");
   });
 });

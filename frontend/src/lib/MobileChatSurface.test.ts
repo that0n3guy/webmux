@@ -19,6 +19,7 @@ import {
   attachWorktreeConversation,
   connectWorktreeConversationStream,
   fetchWorktreeConversationHistory,
+  interruptWorktreeConversation,
   sendWorktreeConversationMessage,
 } from "./api";
 
@@ -289,5 +290,87 @@ describe("MobileChatSurface", () => {
       expect(fetchWorktreeConversationHistory).toHaveBeenCalledTimes(122);
     });
     await screen.findByText("Done.");
+  });
+
+  it("starts polling on mount when conversation is already running", async () => {
+    vi.mocked(attachWorktreeConversation).mockResolvedValue(createConversationResponse("claudeCode", {
+      running: true,
+      activeTurnId: "turn-1",
+      messages: [
+        {
+          id: "assistant-1",
+          turnId: "turn-1",
+          role: "assistant",
+          text: "Working...",
+          status: "inProgress",
+          createdAt: "2026-04-15T12:00:00.000Z",
+        },
+      ],
+    }));
+    vi.mocked(fetchWorktreeConversationHistory).mockResolvedValue(createConversationResponse("claudeCode", {
+      running: false,
+      messages: [
+        {
+          id: "assistant-1",
+          turnId: "turn-1",
+          role: "assistant",
+          text: "Done.",
+          status: "completed",
+          createdAt: "2026-04-15T12:00:01.000Z",
+        },
+      ],
+    }));
+
+    render(MobileChatSurface, {
+      props: {
+        projectId: "test-project-1",
+        worktree: createWorktree(),
+      },
+    });
+
+    await screen.findByText("Working...");
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await waitFor(() => {
+      expect(fetchWorktreeConversationHistory).toHaveBeenCalledWith("test-project-1", "feature/mobile-chat");
+    });
+    await screen.findByText("Done.");
+  });
+
+  it("disables the interrupt button while the interrupt request is in flight", async () => {
+    let resolveInterrupt!: (value: { conversationId: string; turnId: string; interrupted: true }) => void;
+    const interruptPromise = new Promise<{ conversationId: string; turnId: string; interrupted: true }>((resolve) => {
+      resolveInterrupt = resolve;
+    });
+
+    vi.mocked(attachWorktreeConversation).mockResolvedValue(createConversationResponse("claudeCode", {
+      running: true,
+      activeTurnId: "turn-1",
+    }));
+    vi.mocked(interruptWorktreeConversation).mockReturnValue(interruptPromise);
+    vi.mocked(fetchWorktreeConversationHistory).mockResolvedValue(createConversationResponse("claudeCode", { running: false }));
+
+    render(MobileChatSurface, {
+      props: {
+        projectId: "test-project-1",
+        worktree: createWorktree(),
+      },
+    });
+
+    const interruptButton = await screen.findByRole("button", { name: "Interrupt" });
+    expect(interruptButton).not.toBeDisabled();
+
+    await fireEvent.click(interruptButton);
+
+    await waitFor(() => {
+      expect(interruptButton).toBeDisabled();
+    });
+    expect(interruptButton).toHaveTextContent("Stopping...");
+
+    resolveInterrupt({ conversationId: "session-1", turnId: "turn-1", interrupted: true });
+
+    await waitFor(() => {
+      expect(interruptButton).not.toBeDisabled();
+    });
   });
 });

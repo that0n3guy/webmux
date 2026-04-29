@@ -32,6 +32,7 @@
   let conversationLoading = $state(false);
   let composerText = $state("");
   let isSending = $state(false);
+  let isInterrupting = $state(false);
   let refreshPollingState = $state<{
     token: number;
     baselineSignature: string | null;
@@ -135,6 +136,9 @@
     try {
       const response = await requestConversation(mode);
       applyConversationResponse(response);
+      if (mode === "attach" && response.conversation.running) {
+        startRefreshPolling(response.conversation);
+      }
     } catch (error) {
       conversationError = error instanceof Error ? error.message : String(error);
     } finally {
@@ -210,13 +214,17 @@
   }
 
   async function interruptSelectedConversation(): Promise<void> {
+    if (isInterrupting) return;
     const baselineConversation = conversation;
+    isInterrupting = true;
     conversationError = null;
     try {
       await interruptWorktreeConversation(projectId, worktree.branch);
       startRefreshPolling(baselineConversation);
     } catch (error) {
       conversationError = error instanceof Error ? error.message : String(error);
+    } finally {
+      isInterrupting = false;
     }
   }
 
@@ -265,6 +273,7 @@
   {conversationLoading}
   {composerText}
   {isSending}
+  {isInterrupting}
   onAttach={() => void loadConversation("attach")}
   onComposerInput={(value) => {
     composerText = value;
