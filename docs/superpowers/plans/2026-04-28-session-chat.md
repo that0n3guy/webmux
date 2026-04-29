@@ -111,17 +111,59 @@ User reports the mobile chat doesn't update unless they navigate away and back. 
 
 **Tests:** existing frontend tests still pass; add a smoke test for scratch chat rendering when on a scratch+claude session.
 
-### Task 4 — Backend: status detector for scratch + external sessions
+### Task 4 — Backend: activity probe (Stop button + status badge + status word)
+
+**Goal:** A single tmux-pane probe that drives three things at once:
+1. The Stop / Interrupt button on the chat surface (replaces the hard-coded `running: false` for Claude in `claude-conversation-service.ts:80`).
+2. The sidebar status badge for scratch + external sessions (today: forever-idle).
+3. A best-effort "status word" surfaced in the chat header (Claude's animated gerund — "Pondering", "Cogitating" — extracted from the pane tail when available, otherwise omitted).
 
 **Files:**
 - New `backend/src/services/session-activity-service.ts`:
-  - `probeSessionAgent(sessionName, windowName?): { agentBinary: "claude" | "codex" | null; lastOutputAt: string | null }` — uses tmux `display-message` + `capture-pane` to detect agent.
-  - `computeStatus(probe, options): "running" | "idle"` — coarse heuristic on lastOutputAt freshness.
-- `backend/src/services/snapshot-service.ts` (or wherever sidebar data is built): include the probe result for scratch + external sessions so the frontend can render the badge.
-- `backend/src/services/scratch-session-service.ts` `buildSnapshot`: add `agentStatus: "running" | "idle" | null` to `ScratchSessionSnapshot`.
-- `packages/api-contract/src/schemas.ts`: extend `ScratchSessionSnapshotSchema` and the `ExternalTmuxSession` schema with the new field.
+  - `probeSessionActivity(sessionName, windowName?, paneIndex?): { agentBinary: "claude" | "codex" | null; lastOutputAt: string | null; recentTailLines: string[] }` — uses tmux `display-message` + `capture-pane -p -S -<N>` to capture the last N lines of the agent pane.
+  - `computeRunning(probe, now, opts?: { thresholdMs?: number }): boolean` — true if `lastOutputAt` is within threshold (default 2500ms).
+  - `extractStatusWord(tailLines): string | null` — best-effort: scan for the Claude `✻ <Gerund>…` pattern (the `✻` symbol is unique enough to anchor on). If no match, return null. Conservative: prefer null over wrong word.
+- Extend `WorktreeSnapshot` and `ScratchSessionSnapshot` with `agentStatus: "running" | "idle"` and optional `statusWord: string | null` fields. Same for `ExternalTmuxSession`.
+- `backend/src/services/snapshot-service.ts`: build worktree status from existing lifecycle, fall back to / augment with probe when lifecycle is `closed`/missing.
+- `backend/src/services/claude-conversation-service.ts`: replace `running: false` with computed value from the probe (worktree's agent pane). Also surface `statusWord` if available, otherwise null.
+- `backend/src/services/scratch-session-service.ts` `buildSnapshot`: include `agentStatus` and `statusWord`.
+- Same for whatever surfaces external tmux sessions (snapshot-service or a peer).
+- `packages/api-contract/src/schemas.ts`: extend the relevant snapshot schemas additively.
 
-**Tests:** unit tests for the probe / heuristic with fake tmux output.
+**Constraints:**
+- Probe is **read-only** — never modifies tmux state.
+- `extractStatusWord` is best-effort. If Claude updates its CLI animation, we just stop showing it. Don't over-engineer.
+- Don't replace Codex's existing `thread.status.type === "active"` running detection — augment it (OR with probe result) so codex-app-server downtime doesn't kill the indicator.
+
+**Tests:**
+- `session-activity-service.test.ts`: unit tests for `computeRunning` thresholds, `extractStatusWord` happy + negative paths, and the probe shape against a mocked TmuxGateway.
+- Extend `claude-conversation-service.test.ts` to verify `running` reflects probe output instead of being hard-coded.
+
+### Task 7 — Backend + frontend: surface tool use / thinking inline
+
+**Goal:** The mobile chat (and desktop panel) currently show only `user`/`assistant` text. Surface tool calls, thinking, and tool results as inline truncated one-liners so the UI mirrors what the user sees in xterm.
+
+**Files:**
+- Shared types in `packages/api-contract/src/schemas.ts` + frontend `types.ts`:
+  - Extend `AgentsUiConversationMessage` to a discriminated union: existing `user` / `assistant` plus new kinds:
+    - `{ kind: "tool"; id; turnId; name: string; summary: string; status: "running" | "ok" | "error"; createdAt }`
+    - `{ kind: "thinking"; id; turnId; text: string; createdAt }`
+- `backend/src/adapters/claude-cli.ts`: stop collapsing content to text only. Walk content blocks of each stored message; emit a `ClaudeCliConversationEvent` (rename `ClaudeCliConversationMessage`) for each meaningful block. Existing user/assistant text events keep their shape; new tool/thinking events surface the rest.
+- `backend/src/services/claude-conversation-service.ts`: forward the new event kinds in the conversation messages array.
+- `backend/src/services/worktree-conversation-service.ts`: same treatment for codex thread items — emit `tool_use` / `thinking` items as `tool` / `thinking` events instead of skipping them.
+- Frontend `WorktreeConversationPanel.svelte` (and through it, `MobileChatSurface.svelte`):
+  - Render `tool` events as a single-line row: `▸ <name>` + truncated summary (e.g. `▸ Read frontend/src/.../MobileChatSurface.svelte`). Status icon for ok/error/running.
+  - Render `thinking` events as a single muted italic line, max 1 line truncated.
+  - Optional: tap-to-expand for full payload (skip in v1; just truncate).
+  - Visually distinct from user/assistant bubbles (smaller, no avatar, lower contrast).
+
+**Constraints:**
+- Backward compatibility: existing tests asserting message shape may need updates. Discriminated union — narrow on `kind` everywhere.
+- The `summary` for a `tool` event is the implementer's call: prefer the most identifying field for the tool (file path for Read/Edit/Write, command for Bash, etc.). Truncate at 80 chars.
+
+**Tests:**
+- Backend: parser tests on a fixture session with tool_use + thinking blocks.
+- Frontend: smoke test in MobileChatSurface that tool events render with their name + summary.
 
 ### Task 5 — Frontend: status badge for scratch + external entries
 
