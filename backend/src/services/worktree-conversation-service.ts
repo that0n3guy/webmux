@@ -1,4 +1,5 @@
 import { readWorktreeMeta, writeWorktreeMeta } from "../adapters/fs";
+import { buildWorktreeConversationStorage, type ConversationStorage } from "./conversation-storage";
 import type {
   CodexAppServerAgentMessageItem,
   CodexAppServerThread,
@@ -38,8 +39,6 @@ export interface WorktreeConversationServiceDependencies {
 }
 
 interface ResolvedConversation {
-  gitDir: string;
-  meta: WorktreeMeta;
   thread: CodexAppServerThread;
   conversationMeta: WorktreeConversationMeta;
 }
@@ -187,8 +186,9 @@ export class WorktreeConversationService {
   async attachWorktreeConversation(
     worktree: WorktreeSnapshot,
     probe?: WorktreeConversationProbeContext,
+    storage?: ConversationStorage,
   ): Promise<WorktreeConversationResult<AgentsUiWorktreeConversationResponse>> {
-    return await this.withResolvedConversation(worktree, true, async ({ conversationMeta, thread }) =>
+    return await this.withResolvedConversation(worktree, true, storage, async ({ conversationMeta, thread }) =>
       ok(toWorktreeConversationResponse(worktree, conversationMeta, thread))
     );
   }
@@ -196,15 +196,26 @@ export class WorktreeConversationService {
   async readWorktreeConversation(
     worktree: WorktreeSnapshot,
     probe?: WorktreeConversationProbeContext,
+    storage?: ConversationStorage,
   ): Promise<WorktreeConversationResult<AgentsUiWorktreeConversationResponse>> {
-    return await this.withResolvedConversation(worktree, false, async ({ conversationMeta, thread }) =>
+    return await this.withResolvedConversation(worktree, false, storage, async ({ conversationMeta, thread }) =>
       ok(toWorktreeConversationResponse(worktree, conversationMeta, thread))
     );
+  }
+
+  private buildDefaultStorage(worktreePath: string): ConversationStorage {
+    const gitDir = this.deps.git.resolveWorktreeGitDir(worktreePath);
+    return buildWorktreeConversationStorage({
+      gitDir,
+      readMeta: this.readMeta,
+      writeMeta: this.writeMeta,
+    });
   }
 
   private async withResolvedConversation<T>(
     worktree: WorktreeSnapshot,
     allowCreate: boolean,
+    storage: ConversationStorage | undefined,
     fn: (resolved: ResolvedConversation) => Promise<WorktreeConversationResult<T>>,
   ): Promise<WorktreeConversationResult<T>> {
     if (!isCodexWorktree(worktree)) {
@@ -212,7 +223,8 @@ export class WorktreeConversationService {
     }
 
     try {
-      const resolved = await this.resolveConversation(worktree, allowCreate);
+      const effectiveStorage = storage ?? this.buildDefaultStorage(worktree.path);
+      const resolved = await this.resolveConversation(worktree, allowCreate, effectiveStorage);
       if (!resolved.ok) return resolved;
       return await fn(resolved.data);
     } catch (error) {
@@ -224,38 +236,33 @@ export class WorktreeConversationService {
   private async resolveConversation(
     worktree: WorktreeSnapshot,
     allowCreate: boolean,
+    storage: ConversationStorage,
   ): Promise<WorktreeConversationResult<ResolvedConversation>> {
-    const gitDir = this.deps.git.resolveWorktreeGitDir(worktree.path);
-    const meta = await this.readMeta(gitDir);
-    if (!meta) {
-      return err(409, "Worktree metadata is missing");
-    }
+    const saved = await storage.load();
 
     const now = this.now();
-    const thread = await this.resolveThread(meta, worktree.path, allowCreate);
+    const thread = await this.resolveThread(saved, worktree.path, allowCreate);
     if (!thread) {
       return err(404, "No Codex thread could be resolved for this worktree");
     }
 
     const conversationMeta = buildConversationMeta(thread, now);
-    const nextMeta = sameConversationMeta(meta.conversation, conversationMeta)
-      ? { ...meta, conversation: { ...conversationMeta, lastSeenAt: meta.conversation?.lastSeenAt ?? conversationMeta.lastSeenAt } }
-      : { ...meta, conversation: conversationMeta };
+    const effectiveMeta = sameConversationMeta(saved, conversationMeta)
+      ? { ...conversationMeta, lastSeenAt: saved?.lastSeenAt ?? conversationMeta.lastSeenAt }
+      : conversationMeta;
 
-    if (!sameConversationMeta(meta.conversation, conversationMeta)) {
-      await this.writeMeta(gitDir, nextMeta);
+    if (!sameConversationMeta(saved, conversationMeta)) {
+      await storage.save(effectiveMeta);
     }
 
     return ok({
-      gitDir,
-      meta: nextMeta,
       thread,
-      conversationMeta: nextMeta.conversation ?? conversationMeta,
+      conversationMeta: effectiveMeta,
     });
   }
 
   private async resolveThread(
-    meta: WorktreeMeta,
+    saved: WorktreeConversationMeta | null,
     cwd: string,
     allowCreate: boolean,
   ): Promise<CodexAppServerThread | null> {
@@ -268,9 +275,7 @@ export class WorktreeConversationService {
       return await this.ensureThreadLoaded(discoveredThread.id, cwd);
     }
 
-    const savedThreadId = isCodexConversationMeta(meta.conversation)
-      ? meta.conversation.threadId
-      : null;
+    const savedThreadId = isCodexConversationMeta(saved) ? saved.threadId : null;
     if (savedThreadId) {
       const savedThread = await this.tryLoadThread(savedThreadId, cwd);
       if (savedThread) return savedThread;

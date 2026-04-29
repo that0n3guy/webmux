@@ -18,6 +18,7 @@ import type {
 } from "../domain/model";
 import { log } from "../lib/log";
 import { buildAgentsUiWorktreeSummary } from "./agents-ui-service";
+import { buildWorktreeConversationStorage, type ConversationStorage } from "./conversation-storage";
 import { probeSessionActivity, extractStatusWord } from "./session-activity-service";
 import { err, ok, type WorktreeConversationResult } from "./worktree-conversation-result";
 
@@ -136,8 +137,9 @@ export class ClaudeConversationService {
   async attachWorktreeConversation(
     worktree: WorktreeSnapshot,
     probe?: ClaudeConversationProbeContext,
+    storage?: ConversationStorage,
   ): Promise<WorktreeConversationResult<AgentsUiWorktreeConversationResponse>> {
-    return await this.withResolvedConversation(worktree, async (resolved) => {
+    return await this.withResolvedConversation(worktree, storage, async (resolved) => {
       const running = worktree.status === "running" || worktree.status === "starting";
       const statusWord = this.probeStatusWord(worktree, probe);
       return ok(toWorktreeConversationResponse(worktree, resolved.conversationMeta, resolved.session, running, statusWord));
@@ -147,16 +149,27 @@ export class ClaudeConversationService {
   async readWorktreeConversation(
     worktree: WorktreeSnapshot,
     probe?: ClaudeConversationProbeContext,
+    storage?: ConversationStorage,
   ): Promise<WorktreeConversationResult<AgentsUiWorktreeConversationResponse>> {
-    return await this.withResolvedConversation(worktree, async (resolved) => {
+    return await this.withResolvedConversation(worktree, storage, async (resolved) => {
       const running = worktree.status === "running" || worktree.status === "starting";
       const statusWord = this.probeStatusWord(worktree, probe);
       return ok(toWorktreeConversationResponse(worktree, resolved.conversationMeta, resolved.session, running, statusWord));
     });
   }
 
+  private buildDefaultStorage(worktreePath: string): ConversationStorage {
+    const gitDir = this.deps.git.resolveWorktreeGitDir(worktreePath);
+    return buildWorktreeConversationStorage({
+      gitDir,
+      readMeta: this.readMeta,
+      writeMeta: this.writeMeta,
+    });
+  }
+
   private async withResolvedConversation<T>(
     worktree: WorktreeSnapshot,
+    storage: ConversationStorage | undefined,
     fn: (resolved: ResolvedClaudeConversation) => Promise<WorktreeConversationResult<T>>,
   ): Promise<WorktreeConversationResult<T>> {
     if (!isClaudeWorktree(worktree)) {
@@ -164,7 +177,8 @@ export class ClaudeConversationService {
     }
 
     try {
-      const resolved = await this.resolveConversation(worktree);
+      const effectiveStorage = storage ?? this.buildDefaultStorage(worktree.path);
+      const resolved = await this.resolveConversation(worktree, effectiveStorage);
       if (!resolved.ok) return resolved;
       return await fn(resolved.data);
     } catch (error) {
@@ -175,16 +189,13 @@ export class ClaudeConversationService {
 
   private async resolveConversation(
     worktree: WorktreeSnapshot,
+    storage: ConversationStorage,
   ): Promise<WorktreeConversationResult<ResolvedClaudeConversation>> {
-    const gitDir = this.deps.git.resolveWorktreeGitDir(worktree.path);
-    const meta = await this.readMeta(gitDir);
-    if (!meta) {
-      return err(409, "Worktree metadata is missing");
-    }
+    const saved = await storage.load();
 
-    const session = await this.resolveSession(meta, worktree.path);
+    const session = await this.resolveSession(saved, worktree.path);
     const conversationMeta = session
-      ? await this.persistConversationMeta(gitDir, meta, worktree.path, session.sessionId)
+      ? await this.persistConversationMeta(storage, worktree.path, session.sessionId)
       : null;
 
     return ok({
@@ -193,10 +204,11 @@ export class ClaudeConversationService {
     });
   }
 
-  private async resolveSession(meta: WorktreeMeta, cwd: string): Promise<ClaudeCliSession | null> {
-    const savedSessionId = isClaudeConversationMeta(meta.conversation)
-      ? meta.conversation.sessionId
-      : null;
+  private async resolveSession(
+    saved: WorktreeConversationMeta | null,
+    cwd: string,
+  ): Promise<ClaudeCliSession | null> {
+    const savedSessionId = isClaudeConversationMeta(saved) ? saved.sessionId : null;
     if (savedSessionId) {
       const savedSession = await this.deps.claude.readSession(savedSessionId, cwd);
       if (savedSession) return savedSession;
@@ -209,17 +221,14 @@ export class ClaudeConversationService {
   }
 
   private async persistConversationMeta(
-    gitDir: string,
-    meta: WorktreeMeta,
+    storage: ConversationStorage,
     cwd: string,
     sessionId: string,
   ): Promise<ClaudeWorktreeConversationMeta> {
     const nextConversation = buildClaudeConversationMeta(sessionId, cwd, this.now());
-    if (!sameConversationMeta(meta.conversation, nextConversation)) {
-      await this.writeMeta(gitDir, {
-        ...meta,
-        conversation: nextConversation,
-      });
+    const existing = await storage.load();
+    if (!sameConversationMeta(existing, nextConversation)) {
+      await storage.save(nextConversation);
     }
     return nextConversation;
   }
