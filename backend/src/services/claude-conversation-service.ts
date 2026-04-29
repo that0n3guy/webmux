@@ -18,7 +18,7 @@ import type {
 } from "../domain/model";
 import { log } from "../lib/log";
 import { buildAgentsUiWorktreeSummary } from "./agents-ui-service";
-import { probeSessionActivity, computeRunning, extractStatusWord } from "./session-activity-service";
+import { probeSessionActivity, extractStatusWord } from "./session-activity-service";
 import { err, ok, type WorktreeConversationResult } from "./worktree-conversation-result";
 
 export interface ClaudeConversationProbeContext {
@@ -117,34 +117,19 @@ export class ClaudeConversationService {
     this.writeMeta = deps.writeMeta ?? writeWorktreeMeta;
   }
 
-  private async probeSummary(
+  private probeStatusWord(
     worktree: WorktreeSnapshot,
-    sessionId: string | null,
     probe?: ClaudeConversationProbeContext,
-  ): Promise<{ running: boolean; statusWord: string | null }> {
-    if (!probe) return { running: false, statusWord: null };
+  ): string | null {
+    if (!probe) return null;
     try {
       const sessionName = buildProjectSessionName(probe.projectRoot);
       const windowName = buildWorktreeWindowName(worktree.branch);
       const paneTarget = `${sessionName}:${windowName}.0`;
       const activity = probeSessionActivity(probe.tmux, paneTarget, undefined, this.now);
-      const paneRunning = computeRunning(activity, this.now, { thresholdMs: 5000 });
-
-      let mtimeRunning = false;
-      if (!paneRunning && sessionId) {
-        const mtime = await this.deps.claude.getSessionMtime(sessionId, worktree.path);
-        if (mtime) {
-          const age = this.now().getTime() - mtime.getTime();
-          mtimeRunning = age <= 15000;
-        }
-      }
-
-      return {
-        running: paneRunning || mtimeRunning,
-        statusWord: extractStatusWord(activity.recentTailLines),
-      };
+      return extractStatusWord(activity.recentTailLines);
     } catch {
-      return { running: false, statusWord: null };
+      return null;
     }
   }
 
@@ -153,8 +138,8 @@ export class ClaudeConversationService {
     probe?: ClaudeConversationProbeContext,
   ): Promise<WorktreeConversationResult<AgentsUiWorktreeConversationResponse>> {
     return await this.withResolvedConversation(worktree, async (resolved) => {
-      const sessionId = resolved.session?.sessionId ?? null;
-      const { running, statusWord } = await this.probeSummary(worktree, sessionId, probe);
+      const running = worktree.status === "running" || worktree.status === "starting";
+      const statusWord = this.probeStatusWord(worktree, probe);
       return ok(toWorktreeConversationResponse(worktree, resolved.conversationMeta, resolved.session, running, statusWord));
     });
   }
@@ -164,8 +149,8 @@ export class ClaudeConversationService {
     probe?: ClaudeConversationProbeContext,
   ): Promise<WorktreeConversationResult<AgentsUiWorktreeConversationResponse>> {
     return await this.withResolvedConversation(worktree, async (resolved) => {
-      const sessionId = resolved.session?.sessionId ?? null;
-      const { running, statusWord } = await this.probeSummary(worktree, sessionId, probe);
+      const running = worktree.status === "running" || worktree.status === "starting";
+      const statusWord = this.probeStatusWord(worktree, probe);
       return ok(toWorktreeConversationResponse(worktree, resolved.conversationMeta, resolved.session, running, statusWord));
     });
   }

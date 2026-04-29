@@ -8,7 +8,7 @@ import type {
   CodexAppServerUserMessageItem,
 } from "../adapters/codex-app-server";
 import type { GitGateway } from "../adapters/git";
-import { buildProjectSessionName, buildWorktreeWindowName, type TmuxGateway } from "../adapters/tmux";
+import type { TmuxGateway } from "../adapters/tmux";
 import type {
   AgentsUiConversationMessage,
   AgentsUiConversationState,
@@ -22,7 +22,6 @@ import type {
 } from "../domain/model";
 import { log } from "../lib/log";
 import { buildAgentsUiWorktreeSummary } from "./agents-ui-service";
-import { probeSessionActivity, computeRunning } from "./session-activity-service";
 import { err, ok, type WorktreeConversationResult } from "./worktree-conversation-result";
 
 export interface WorktreeConversationProbeContext {
@@ -128,15 +127,13 @@ function buildConversationMessages(thread: CodexAppServerThread): AgentsUiConver
 
 export function buildConversationState(
   thread: CodexAppServerThread,
-  probeRunning?: boolean,
 ): AgentsUiConversationState {
   const activeTurn = findActiveTurn(thread);
-  const runningFromThread = thread.status.type === "active" || activeTurn !== null;
   return {
     provider: "codexAppServer",
     conversationId: thread.id,
     cwd: thread.cwd,
-    running: runningFromThread || (probeRunning ?? false),
+    running: thread.status.type === "active" || activeTurn !== null,
     activeTurnId: activeTurn?.id ?? null,
     messages: buildConversationMessages(thread),
   };
@@ -169,11 +166,10 @@ function toWorktreeConversationResponse(
   worktree: WorktreeSnapshot,
   conversationMeta: WorktreeConversationMeta,
   thread: CodexAppServerThread,
-  probeRunning?: boolean,
 ): AgentsUiWorktreeConversationResponse {
   return {
     worktree: buildAgentsUiWorktreeSummary(worktree, conversationMeta),
-    conversation: buildConversationState(thread, probeRunning),
+    conversation: buildConversationState(thread),
   };
 }
 
@@ -188,25 +184,12 @@ export class WorktreeConversationService {
     this.writeMeta = deps.writeMeta ?? writeWorktreeMeta;
   }
 
-  private probeRunning(worktree: WorktreeSnapshot, probe?: WorktreeConversationProbeContext): boolean {
-    if (!probe) return false;
-    try {
-      const sessionName = buildProjectSessionName(probe.projectRoot);
-      const windowName = buildWorktreeWindowName(worktree.branch);
-      const paneTarget = `${sessionName}:${windowName}.0`;
-      const activity = probeSessionActivity(probe.tmux, paneTarget, undefined, this.now);
-      return computeRunning(activity, this.now);
-    } catch {
-      return false;
-    }
-  }
-
   async attachWorktreeConversation(
     worktree: WorktreeSnapshot,
     probe?: WorktreeConversationProbeContext,
   ): Promise<WorktreeConversationResult<AgentsUiWorktreeConversationResponse>> {
     return await this.withResolvedConversation(worktree, true, async ({ conversationMeta, thread }) =>
-      ok(toWorktreeConversationResponse(worktree, conversationMeta, thread, this.probeRunning(worktree, probe)))
+      ok(toWorktreeConversationResponse(worktree, conversationMeta, thread))
     );
   }
 
@@ -215,7 +198,7 @@ export class WorktreeConversationService {
     probe?: WorktreeConversationProbeContext,
   ): Promise<WorktreeConversationResult<AgentsUiWorktreeConversationResponse>> {
     return await this.withResolvedConversation(worktree, false, async ({ conversationMeta, thread }) =>
-      ok(toWorktreeConversationResponse(worktree, conversationMeta, thread, this.probeRunning(worktree, probe)))
+      ok(toWorktreeConversationResponse(worktree, conversationMeta, thread))
     );
   }
 

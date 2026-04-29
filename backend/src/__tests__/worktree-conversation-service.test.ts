@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import type {
   CodexAppServerGateway,
   CodexAppServerThread,
@@ -13,13 +13,11 @@ import type {
   CodexAppServerTurnStartParams,
   CodexAppServerTurnStartResponse,
 } from "../adapters/codex-app-server";
-import { buildProjectSessionName, buildWorktreeWindowName, type TmuxGateway } from "../adapters/tmux";
 import type { WorktreeMeta, WorktreeSnapshot } from "../domain/model";
 import {
   WorktreeConversationService,
   buildConversationState,
 } from "../services/worktree-conversation-service";
-import { clearActivityCache, probeSessionActivity } from "../services/session-activity-service";
 
 class FakeGitGateway {
   resolveWorktreeGitDir(cwd: string): string {
@@ -578,161 +576,47 @@ describe("WorktreeConversationService", () => {
 
 });
 
-class FakeProbeGateway {
-  capturedLines: string[] = [];
-
-  capturePane(_target: string, _lines: number): string[] {
-    return this.capturedLines;
-  }
-
-  ensureServer(): void {}
-  ensureSession(): void {}
-  hasWindow(): boolean { return false; }
-  killWindow(): void {}
-  killSession(): void {}
-  createWindow(): void {}
-  splitWindow(): void {}
-  setWindowOption(): void {}
-  setSessionOption(): void {}
-  getSessionOption(): string | null { return null; }
-  runCommand(): void {}
-  selectPane(): void {}
-  listWindows() { return []; }
-  listAllSessions() { return []; }
-  getFirstWindowName(): string | null { return null; }
-}
-
-beforeEach(() => {
-  clearActivityCache();
-});
-
-describe("WorktreeConversationService — probe augmentation", () => {
-  it("ORs probe running with thread status: probe active overrides idle thread", async () => {
-    const metaStore = new Map<string, WorktreeMeta>();
-    const worktree = makeWorktree();
-    const gitDir = `${worktree.path}/.git`;
-    metaStore.set(gitDir, makeMeta());
-
-    const appServer = new FakeCodexAppServer();
-    const idleThread = makeThread({
-      id: "thread-idle",
-      cwd: worktree.path,
-      updatedAt: 200,
-      statusType: "idle",
-      source: "cli",
-      turns: [],
-    });
-    appServer.listedThreads = [idleThread];
-    appServer.threads.set(idleThread.id, structuredClone(idleThread));
-
-    const now = new Date("2026-04-28T10:00:00.000Z");
-    const probeGateway = new FakeProbeGateway();
-    probeGateway.capturedLines = ["active output"];
-
-    const service = new WorktreeConversationService({
-      appServer,
-      git: new FakeGitGateway(),
-      now: () => now,
-      readMeta: async (path) => structuredClone(metaStore.get(path) ?? null),
-      writeMeta: async (path, meta) => { metaStore.set(path, structuredClone(meta)); },
-    });
-
-    const result = await service.attachWorktreeConversation(worktree, {
-      tmux: probeGateway as unknown as TmuxGateway,
-      projectRoot: "/tmp/worktrees/codex-feature",
-    });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.data.conversation.running).toBe(true);
-  });
-
-  it("keeps running=true when codex thread is active even if probe shows stale activity", async () => {
-    const metaStore = new Map<string, WorktreeMeta>();
-    const worktree = makeWorktree();
-    const gitDir = `${worktree.path}/.git`;
-    metaStore.set(gitDir, makeMeta());
-
-    const appServer = new FakeCodexAppServer();
-    const activeThread = makeThread({
+describe("buildConversationState — running flag", () => {
+  it("running=true when thread status is active", () => {
+    const thread = makeThread({
       id: "thread-active",
-      cwd: worktree.path,
+      cwd: "/tmp/worktree",
       updatedAt: 200,
       statusType: "active",
       source: "cli",
       turns: [],
     });
-    appServer.listedThreads = [activeThread];
-    appServer.threads.set(activeThread.id, structuredClone(activeThread));
-
-    const now = new Date("2026-04-28T10:00:00.000Z");
-    const probeGateway = new FakeProbeGateway();
-    probeGateway.capturedLines = ["idle output"];
-
-    // Pre-seed the cache with a stale timestamp so probe shows stale activity
-    const sessionName = buildProjectSessionName("/tmp/worktrees/codex-feature");
-    const windowName = buildWorktreeWindowName(worktree.branch);
-    const paneTarget = `${sessionName}:${windowName}.0`;
-    probeSessionActivity(probeGateway as unknown as TmuxGateway, paneTarget, undefined, () => new Date(now.getTime() - 30_000));
-
-    const service = new WorktreeConversationService({
-      appServer,
-      git: new FakeGitGateway(),
-      now: () => now,
-      readMeta: async (path) => structuredClone(metaStore.get(path) ?? null),
-      writeMeta: async (path, meta) => { metaStore.set(path, structuredClone(meta)); },
-    });
-
-    const result = await service.attachWorktreeConversation(worktree, {
-      tmux: probeGateway as unknown as TmuxGateway,
-      projectRoot: "/tmp/worktrees/codex-feature",
-    });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.data.conversation.running).toBe(true);
+    expect(buildConversationState(thread).running).toBe(true);
   });
 
-  it("running=false when both thread and probe are idle", async () => {
-    const metaStore = new Map<string, WorktreeMeta>();
-    const worktree = makeWorktree();
-    const gitDir = `${worktree.path}/.git`;
-    metaStore.set(gitDir, makeMeta());
+  it("running=true when thread has an in-progress turn", () => {
+    const thread = makeThread({
+      id: "thread-turn",
+      cwd: "/tmp/worktree",
+      updatedAt: 200,
+      statusType: "idle",
+      source: "cli",
+      turns: [
+        makeTurn({
+          id: "turn-inprogress",
+          status: "inProgress",
+          startedAt: 111,
+          items: [],
+        }),
+      ],
+    });
+    expect(buildConversationState(thread).running).toBe(true);
+  });
 
-    const appServer = new FakeCodexAppServer();
-    const idleThread = makeThread({
-      id: "thread-idle2",
-      cwd: worktree.path,
+  it("running=false when thread is idle with no active turns", () => {
+    const thread = makeThread({
+      id: "thread-idle",
+      cwd: "/tmp/worktree",
       updatedAt: 200,
       statusType: "idle",
       source: "cli",
       turns: [],
     });
-    appServer.listedThreads = [idleThread];
-    appServer.threads.set(idleThread.id, structuredClone(idleThread));
-
-    const now = new Date("2026-04-28T10:00:00.000Z");
-    const probeGateway = new FakeProbeGateway();
-    probeGateway.capturedLines = ["idle output"];
-
-    // Pre-seed the cache with a stale timestamp so probe shows stale activity
-    const sessionName = buildProjectSessionName("/tmp/worktrees/codex-feature");
-    const windowName = buildWorktreeWindowName(worktree.branch);
-    const paneTarget = `${sessionName}:${windowName}.0`;
-    probeSessionActivity(probeGateway as unknown as TmuxGateway, paneTarget, undefined, () => new Date(now.getTime() - 10_000));
-
-    const service = new WorktreeConversationService({
-      appServer,
-      git: new FakeGitGateway(),
-      now: () => now,
-      readMeta: async (path) => structuredClone(metaStore.get(path) ?? null),
-      writeMeta: async (path, meta) => { metaStore.set(path, structuredClone(meta)); },
-    });
-
-    const result = await service.attachWorktreeConversation(worktree, {
-      tmux: probeGateway as unknown as TmuxGateway,
-      projectRoot: "/tmp/worktrees/codex-feature",
-    });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.data.conversation.running).toBe(false);
+    expect(buildConversationState(thread).running).toBe(false);
   });
 });
