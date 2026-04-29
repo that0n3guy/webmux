@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type {
+  AgentLifecycle,
   ArchivedWorktreeEntry,
   ClaudeWorktreeConversationMeta,
   CiCheck,
@@ -11,9 +12,10 @@ import type {
   WorktreeConversationMeta,
   WorktreeArchiveState,
   WorktreeMeta,
+  WorktreeRuntimeStatePersisted,
   WorktreeStoragePaths,
 } from "../domain/model";
-import { WORKTREE_ARCHIVE_STATE_VERSION } from "../domain/model";
+import { WORKTREE_ARCHIVE_STATE_VERSION, WORKTREE_RUNTIME_STATE_VERSION } from "../domain/model";
 
 const SAFE_ENV_VALUE_RE = /^[A-Za-z0-9_./:@%+=,-]+$/;
 const DOTENV_LINE_RE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)/;
@@ -66,6 +68,7 @@ export function getWorktreeStoragePaths(gitDir: string): WorktreeStoragePaths {
     runtimeEnvPath: join(webmuxDir, "runtime.env"),
     controlEnvPath: join(webmuxDir, "control.env"),
     prsPath: join(webmuxDir, "prs.json"),
+    runtimeStatePath: join(webmuxDir, "runtime-state.json"),
   };
 }
 
@@ -92,6 +95,39 @@ export async function readWorktreeMeta(gitDir: string): Promise<WorktreeMeta | n
 export async function writeWorktreeMeta(gitDir: string, meta: WorktreeMeta): Promise<void> {
   const { metaPath } = await ensureWorktreeStorageDirs(gitDir);
   await Bun.write(metaPath, JSON.stringify(meta, null, 2) + "\n");
+}
+
+const AGENT_LIFECYCLES: ReadonlySet<string> = new Set([
+  "closed", "starting", "running", "idle", "stopped", "error",
+]);
+
+function isAgentLifecycle(value: unknown): value is AgentLifecycle {
+  return typeof value === "string" && AGENT_LIFECYCLES.has(value);
+}
+
+function isWorktreeRuntimeStatePersisted(raw: unknown): raw is WorktreeRuntimeStatePersisted {
+  if (!isRecord(raw)) return false;
+  return typeof raw.schemaVersion === "number"
+    && raw.schemaVersion === WORKTREE_RUNTIME_STATE_VERSION
+    && isAgentLifecycle(raw.lifecycle)
+    && (raw.lastStartedAt === null || typeof raw.lastStartedAt === "string")
+    && (raw.lastEventAt === null || typeof raw.lastEventAt === "string")
+    && (raw.lastError === null || typeof raw.lastError === "string");
+}
+
+export async function readWorktreeRuntimeState(gitDir: string): Promise<WorktreeRuntimeStatePersisted | null> {
+  const { runtimeStatePath } = getWorktreeStoragePaths(gitDir);
+  try {
+    const raw: unknown = await Bun.file(runtimeStatePath).json();
+    return isWorktreeRuntimeStatePersisted(raw) ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function writeWorktreeRuntimeState(gitDir: string, state: WorktreeRuntimeStatePersisted): Promise<void> {
+  const { runtimeStatePath } = await ensureWorktreeStorageDirs(gitDir);
+  await Bun.write(runtimeStatePath, JSON.stringify(state, null, 2) + "\n");
 }
 
 function isArchivedWorktreeEntry(raw: unknown): raw is ArchivedWorktreeEntry {

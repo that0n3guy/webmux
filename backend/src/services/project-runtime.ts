@@ -4,6 +4,7 @@ import type {
   RuntimeKind,
 } from "../domain/config";
 import type {
+  AgentRuntimeState,
   ManagedWorktreeRuntimeState,
   PrEntry,
   ServiceRuntimeState,
@@ -65,9 +66,19 @@ function clonePrEntry(pr: PrEntry): PrEntry {
   };
 }
 
+export interface ProjectRuntimeDeps {
+  persistRuntimeState?: (worktreeId: string, gitDir: string, state: AgentRuntimeState) => void;
+}
+
 export class ProjectRuntime {
   private readonly worktrees = new Map<string, ManagedWorktreeRuntimeState>();
   private readonly worktreeIdsByBranch = new Map<string, string>();
+  private readonly gitDirByWorktreeId = new Map<string, string>();
+  private readonly persist: (worktreeId: string, gitDir: string, state: AgentRuntimeState) => void;
+
+  constructor(deps: ProjectRuntimeDeps = {}) {
+    this.persist = deps.persistRuntimeState ?? (() => {});
+  }
 
   upsertWorktree(input: {
     worktreeId: string;
@@ -78,7 +89,13 @@ export class ProjectRuntime {
     agentName?: AgentId | null;
     yolo?: boolean;
     runtime?: RuntimeKind;
+    gitDir?: string;
+    persistedAgent?: AgentRuntimeState | null;
   }): ManagedWorktreeRuntimeState {
+    if (input.gitDir) {
+      this.gitDirByWorktreeId.set(input.worktreeId, input.gitDir);
+    }
+
     const existing = this.worktrees.get(input.worktreeId);
     if (existing) {
       this.reindexBranch(existing.branch, input.branch, input.worktreeId);
@@ -96,6 +113,12 @@ export class ProjectRuntime {
     }
 
     const created = makeDefaultState(input);
+    if (input.persistedAgent) {
+      created.agent.lifecycle = input.persistedAgent.lifecycle;
+      created.agent.lastStartedAt = input.persistedAgent.lastStartedAt;
+      created.agent.lastEventAt = input.persistedAgent.lastEventAt;
+      created.agent.lastError = input.persistedAgent.lastError;
+    }
     this.worktrees.set(input.worktreeId, created);
     this.worktreeIdsByBranch.set(input.branch, input.worktreeId);
     return created;
@@ -105,6 +128,7 @@ export class ProjectRuntime {
     const state = this.worktrees.get(worktreeId);
     if (!state) return false;
     this.worktreeIdsByBranch.delete(state.branch);
+    this.gitDirByWorktreeId.delete(worktreeId);
     return this.worktrees.delete(worktreeId);
   }
 
@@ -165,6 +189,7 @@ export class ProjectRuntime {
       case "agent_stopped":
         state.agent.lifecycle = "stopped";
         state.agent.lastEventAt = timestamp;
+        this.scheduleAgentPersist(event.worktreeId, state.agent);
         break;
       case "agent_status_changed":
         this.applyStatusChanged(state, event, timestamp);
@@ -191,6 +216,7 @@ export class ProjectRuntime {
       state.agent.lastStartedAt = timestamp;
     }
     state.agent.lastError = null;
+    this.scheduleAgentPersist(event.worktreeId, state.agent);
   }
 
   private applyRuntimeError(
@@ -201,6 +227,14 @@ export class ProjectRuntime {
     state.agent.lifecycle = "error";
     state.agent.lastError = event.message;
     state.agent.lastEventAt = timestamp;
+    this.scheduleAgentPersist(event.worktreeId, state.agent);
+  }
+
+  private scheduleAgentPersist(worktreeId: string, agent: AgentRuntimeState): void {
+    const gitDir = this.gitDirByWorktreeId.get(worktreeId);
+    if (gitDir) {
+      this.persist(worktreeId, gitDir, agent);
+    }
   }
 
   private applyBranchChange(state: ManagedWorktreeRuntimeState, branch: string): void {

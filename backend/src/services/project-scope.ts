@@ -6,12 +6,14 @@ import type { BunLifecycleHookRunner } from "../adapters/hooks";
 import type { BunPortProbe } from "../adapters/port-probe";
 import type { BunTmuxGateway } from "../adapters/tmux";
 import { computeProjectId } from "../adapters/tmux";
+import { writeWorktreeRuntimeState } from "../adapters/fs";
 import { ArchiveStateService } from "./archive-state-service";
 import { type AutoNameService } from "./auto-name-service";
 import { LifecycleService, type CreateWorktreeProgress } from "./lifecycle-service";
 import { type NotificationService } from "./notification-service";
 import { ProjectRuntime } from "./project-runtime";
 import { ReconciliationService } from "./reconciliation-service";
+import { createRuntimeStatePersistence } from "./runtime-state-persistence";
 import { createScratchSessionService, type ScratchSessionService } from "./scratch-session-service";
 import { getAgentDefinition } from "./agent-registry";
 import { buildBareAgentInvocation } from "./agent-service";
@@ -50,7 +52,14 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
   const config = loadConfig(projectDir, { resolvedRoot: true });
 
   const archiveStateService = new ArchiveStateService(deps.git.resolveWorktreeGitDir(projectDir));
-  const projectRuntime = new ProjectRuntime();
+  const runtimeStatePersistence = createRuntimeStatePersistence({
+    writeRuntimeState: writeWorktreeRuntimeState,
+  });
+  const projectRuntime = new ProjectRuntime({
+    persistRuntimeState: (worktreeId, gitDir, state) => {
+      runtimeStatePersistence.schedule(worktreeId, gitDir, state);
+    },
+  });
   const worktreeCreationTracker = new WorktreeCreationTracker();
 
   const reconciliationService = new ReconciliationService({

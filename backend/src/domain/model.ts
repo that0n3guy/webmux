@@ -2,6 +2,7 @@ import type { AgentId, RuntimeKind } from "./config";
 
 export const WORKTREE_META_SCHEMA_VERSION = 1;
 export const WORKTREE_ARCHIVE_STATE_VERSION = 1;
+export const WORKTREE_RUNTIME_STATE_VERSION = 1;
 
 export type WorktreeConversationProvider = "codexAppServer" | "claudeCode";
 
@@ -58,6 +59,15 @@ export interface WorktreeStoragePaths {
   runtimeEnvPath: string;
   controlEnvPath: string;
   prsPath: string;
+  runtimeStatePath: string;
+}
+
+export interface WorktreeRuntimeStatePersisted {
+  schemaVersion: number;
+  lifecycle: AgentLifecycle;
+  lastStartedAt: string | null;
+  lastEventAt: string | null;
+  lastError: string | null;
 }
 
 export interface ControlEnvMap extends Record<string, string> {

@@ -3,9 +3,9 @@ import { expandTemplate } from "../adapters/config";
 import type { GitGateway, GitWorktreeEntry } from "../adapters/git";
 import type { PortProbe } from "../adapters/port-probe";
 import { buildProjectSessionName, buildWorktreeWindowName, type TmuxGateway, type TmuxWindowSummary } from "../adapters/tmux";
-import { buildRuntimeEnvMap, readWorktreeMeta, readWorktreePrs } from "../adapters/fs";
+import { buildRuntimeEnvMap, readWorktreeMeta, readWorktreePrs, readWorktreeRuntimeState } from "../adapters/fs";
 import type { AgentId, ProjectConfig } from "../domain/config";
-import type { PrEntry, ServiceRuntimeState } from "../domain/model";
+import type { AgentRuntimeState, PrEntry, ServiceRuntimeState } from "../domain/model";
 import { mapWithConcurrency } from "../lib/async";
 import { ProjectRuntime } from "./project-runtime";
 
@@ -93,6 +93,7 @@ export interface ReconcileOptions {
 
 interface ReconciledWorktreeState {
   worktreeId: string;
+  gitDir: string;
   branch: string;
   baseBranch: string | null;
   path: string;
@@ -112,6 +113,7 @@ interface ReconciledWorktreeState {
   };
   services: ServiceRuntimeState[];
   prs: PrEntry[];
+  persistedAgent: AgentRuntimeState | null;
 }
 
 export class ReconciliationService {
@@ -167,14 +169,28 @@ export class ReconciliationService {
     );
     const reconciledStates = await mapWithConcurrency(candidateEntries, this.concurrency, async (entry) => {
       const gitDir = this.deps.git.resolveWorktreeGitDir(entry.path);
-      const meta = await readWorktreeMeta(gitDir);
+      const [meta, persistedRuntime] = await Promise.all([
+        readWorktreeMeta(gitDir),
+        readWorktreeRuntimeState(gitDir),
+      ]);
       const branch = resolveBranch(entry, meta?.branch ?? null);
       const worktreeId = meta?.worktreeId ?? makeUnmanagedWorktreeId(entry.path);
       const gitStatus = this.deps.git.readWorktreeStatus(entry.path);
       const window = findWindow(windows, sessionName, branch);
 
+      const persistedAgent: AgentRuntimeState | null = persistedRuntime
+        ? {
+            runtime: meta?.runtime ?? "host",
+            lifecycle: persistedRuntime.lifecycle,
+            lastStartedAt: persistedRuntime.lastStartedAt,
+            lastEventAt: persistedRuntime.lastEventAt,
+            lastError: persistedRuntime.lastError,
+          }
+        : null;
+
       return {
         worktreeId,
+        gitDir,
         branch,
         baseBranch: meta?.baseBranch ?? null,
         path: entry.path,
@@ -204,6 +220,7 @@ export class ReconciliationService {
             })
           : [],
         prs: await readWorktreePrs(gitDir),
+        persistedAgent,
       } satisfies ReconciledWorktreeState;
     });
 
@@ -219,6 +236,8 @@ export class ReconciliationService {
         agentName: state.agentName,
         yolo: state.yolo,
         runtime: state.runtime,
+        gitDir: state.gitDir,
+        persistedAgent: state.persistedAgent,
       });
 
       this.deps.runtime.setGitState(state.worktreeId, {

@@ -7,7 +7,7 @@ import type { GitGateway, GitWorktreeEntry, GitWorktreeStatus, TryGitCommandResu
 import type { PortProbe } from "../adapters/port-probe";
 import type { TmuxGateway, TmuxWindowSummary } from "../adapters/tmux";
 import { buildProjectSessionName, buildWorktreeWindowName } from "../adapters/tmux";
-import { writeWorktreeMeta, writeWorktreePrs } from "../adapters/fs";
+import { writeWorktreeMeta, writeWorktreePrs, writeWorktreeRuntimeState } from "../adapters/fs";
 import { ProjectRuntime } from "../services/project-runtime";
 import { ReconciliationService } from "../services/reconciliation-service";
 
@@ -431,5 +431,58 @@ describe("ReconciliationService", () => {
     expect(portProbe.calls).toEqual([3010, 3010]);
     secondProbeRelease.resolve();
     await third;
+  });
+
+  it("seeds lifecycle from runtime-state.json when worktree is first seen", async () => {
+    const repoRoot = "/repo/project";
+    const managedPath = "/repo/project/__worktrees/feature-seeded";
+    const managedGitDir = await mkdtemp(join(tmpdir(), "webmux-reconcile-seeded-"));
+    tempDirs.push(managedGitDir);
+
+    await writeWorktreeMeta(managedGitDir, {
+      schemaVersion: 1,
+      worktreeId: "wt_seeded",
+      branch: "feature/seeded",
+      baseBranch: "main",
+      createdAt: "2026-04-28T00:00:00.000Z",
+      profile: "default",
+      agent: "claude",
+      runtime: "host",
+      startupEnvValues: {},
+      allocatedPorts: {},
+    });
+
+    await writeWorktreeRuntimeState(managedGitDir, {
+      schemaVersion: 1,
+      lifecycle: "stopped",
+      lastStartedAt: "2026-04-28T09:00:00.000Z",
+      lastEventAt: "2026-04-28T09:30:00.000Z",
+      lastError: null,
+    });
+
+    const runtime = new ProjectRuntime();
+    const git = new FakeGitGateway(
+      [
+        { path: repoRoot, branch: "main", head: "aaa111", detached: false, bare: false },
+        { path: managedPath, branch: "feature/seeded", head: "bbb222", detached: false, bare: false },
+      ],
+      new Map([[managedPath, managedGitDir]]),
+      new Map([[managedPath, { dirty: false, aheadCount: 0, currentCommit: "bbb222" }]]),
+    );
+
+    const service = new ReconciliationService({
+      config: TEST_CONFIG,
+      git,
+      tmux: new FakeTmuxGateway([]),
+      portProbe: new FakePortProbe(),
+      runtime,
+    });
+
+    await service.reconcile(repoRoot);
+
+    const state = runtime.getWorktree("wt_seeded");
+    expect(state?.agent.lifecycle).toBe("stopped");
+    expect(state?.agent.lastStartedAt).toBe("2026-04-28T09:00:00.000Z");
+    expect(state?.agent.lastEventAt).toBe("2026-04-28T09:30:00.000Z");
   });
 });
