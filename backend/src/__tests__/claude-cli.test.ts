@@ -62,6 +62,14 @@ describe("claude-cli adapter", () => {
           createdAt: "2026-04-14T15:00:00.000Z",
         },
         {
+          id: "assistant-thinking",
+          turnId: "user-1",
+          kind: "assistant",
+          text: "Let me inspect that.",
+          status: "completed",
+          createdAt: "2026-04-14T15:00:01.000Z",
+        },
+        {
           id: "assistant-1",
           turnId: "user-1",
           kind: "assistant",

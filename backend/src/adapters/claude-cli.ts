@@ -357,10 +357,6 @@ export function buildClaudeSessionFromText(
       continue;
     }
 
-    if (record.message.stop_reason !== "end_turn") {
-      continue;
-    }
-
     const blockEvents = parseAssistantContentBlocks(
       record,
       currentTurn.userEvent.turnId,
