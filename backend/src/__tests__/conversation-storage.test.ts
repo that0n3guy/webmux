@@ -25,6 +25,8 @@ class FakeTmuxGateway implements TmuxGateway {
   listAllSessions(): ReturnType<TmuxGateway["listAllSessions"]> { return []; }
   getFirstWindowName(_sessionName: string): string | null { return null; }
   capturePane(_target: string, _lines: number): string[] { return []; }
+  getPaneCurrentCommand(_target: string): string | null { return null; }
+  getPaneCurrentPath(_target: string): string | null { return null; }
 
   setSessionOption(sessionName: string, optionName: string, value: string): void {
     let session = this.options.get(sessionName);

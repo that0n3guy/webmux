@@ -544,6 +544,10 @@ export const ProjectScopedScratchIdParamsSchema = z.object({
   id: z.string().min(1),
 });
 
+export const ExternalSessionNameParamsSchema = z.object({
+  name: z.string().min(1),
+});
+
 export const OpenWorktreeRequestSchema = z.object({
   agentOverride: AgentIdSchema.optional(),
   shellOnly: z.boolean().optional(),
@@ -628,3 +632,4 @@ export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;
 export type CreateProjectResponse = z.infer<typeof CreateProjectResponseSchema>;
 export type RemoveProjectRequest = z.infer<typeof RemoveProjectRequestSchema>;
 export type OpenWorktreeRequest = z.infer<typeof OpenWorktreeRequestSchema>;
+export type ExternalSessionNameParams = z.infer<typeof ExternalSessionNameParamsSchema>;

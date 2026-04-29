@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { createApi } from "./client";
-import { OpenWorktreeRequestSchema } from "./schemas";
+import {
+  OpenWorktreeRequestSchema,
+  ExternalSessionNameParamsSchema,
+  ProjectScopedScratchIdParamsSchema,
+} from "./schemas";
+import { apiPaths } from "./contract";
 
 function success(body: unknown): { status: number; body: unknown; headers: Headers } {
   return {
@@ -93,5 +98,51 @@ describe("OpenWorktreeRequestSchema", () => {
 
   it("rejects an empty agentOverride string", () => {
     expect(OpenWorktreeRequestSchema.safeParse({ agentOverride: "" }).success).toBe(false);
+  });
+});
+
+describe("ExternalSessionNameParamsSchema", () => {
+  it("accepts a valid session name", () => {
+    expect(ExternalSessionNameParamsSchema.safeParse({ name: "my-session" }).success).toBe(true);
+  });
+
+  it("rejects an empty name", () => {
+    expect(ExternalSessionNameParamsSchema.safeParse({ name: "" }).success).toBe(false);
+  });
+
+  it("rejects missing name", () => {
+    expect(ExternalSessionNameParamsSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe("ProjectScopedScratchIdParamsSchema", () => {
+  it("accepts valid projectId and scratch id", () => {
+    expect(ProjectScopedScratchIdParamsSchema.safeParse({ projectId: "proj1", id: "scratch-abc" }).success).toBe(true);
+  });
+
+  it("rejects missing id", () => {
+    expect(ProjectScopedScratchIdParamsSchema.safeParse({ projectId: "proj1" }).success).toBe(false);
+  });
+
+  it("rejects empty id", () => {
+    expect(ProjectScopedScratchIdParamsSchema.safeParse({ projectId: "proj1", id: "" }).success).toBe(false);
+  });
+});
+
+describe("apiPaths — scratch + external chat routes present", () => {
+  it("has scratch chat paths", () => {
+    expect(apiPaths.attachAgentsScratchConversation).toBe("/api/projects/:projectId/scratch-sessions/:id/agent/attach");
+    expect(apiPaths.fetchAgentsScratchConversationHistory).toBe("/api/projects/:projectId/scratch-sessions/:id/agent/history");
+    expect(apiPaths.sendAgentsScratchConversationMessage).toBe("/api/projects/:projectId/scratch-sessions/:id/agent/messages");
+    expect(apiPaths.interruptAgentsScratchConversation).toBe("/api/projects/:projectId/scratch-sessions/:id/agent/interrupt");
+    expect(apiPaths.streamAgentsScratchConversation).toBe("/ws/projects/:projectId/scratch-sessions/:id/agent");
+  });
+
+  it("has external chat paths", () => {
+    expect(apiPaths.attachAgentsExternalConversation).toBe("/api/external-sessions/:name/agent/attach");
+    expect(apiPaths.fetchAgentsExternalConversationHistory).toBe("/api/external-sessions/:name/agent/history");
+    expect(apiPaths.sendAgentsExternalConversationMessage).toBe("/api/external-sessions/:name/agent/messages");
+    expect(apiPaths.interruptAgentsExternalConversation).toBe("/api/external-sessions/:name/agent/interrupt");
+    expect(apiPaths.streamAgentsExternalConversation).toBe("/ws/external-sessions/:name/agent");
   });
 });

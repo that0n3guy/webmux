@@ -92,6 +92,14 @@ class FakeTmuxGateway implements TmuxGateway {
     return [];
   }
 
+  killSession(_sessionName: string): void {}
+  setSessionOption(_sessionName: string, _optionName: string, _value: string): void {}
+  getSessionOption(_sessionName: string, _optionName: string): string | null { return null; }
+  listAllSessions(): ReturnType<TmuxGateway["listAllSessions"]> { return []; }
+  getFirstWindowName(_sessionName: string): string | null { return null; }
+  getPaneCurrentCommand(_target: string): string | null { return null; }
+  getPaneCurrentPath(_target: string): string | null { return null; }
+
   private key(sessionName: string, windowName: string): string {
     return `${sessionName}:${windowName}`;
   }

@@ -20,6 +20,8 @@ import {
   UpsertCustomAgentRequestSchema,
   WorktreeNameParamsSchema,
 } from "@webmux/api-contract";
+import { buildTmuxConversationStorage } from "./services/conversation-storage";
+import { probeSessionActivity, summarizeSessionActivity } from "./services/session-activity-service";
 import { log } from "./lib/log";
 import {
   attach,
@@ -701,6 +703,286 @@ async function apiInterruptAgentsWorktree(scope: ProjectScope, branch: string): 
     conversationId: conversationResult.data.conversation.conversationId,
     turnId: conversationResult.data.conversation.activeTurnId ?? `tmux:${crypto.randomUUID()}`,
     interrupted: true,
+  });
+}
+
+// ── Scratch session chat ─────────────────────────────────────────────────────
+
+function resolveScratchChatTarget(scope: ProjectScope, id: string): {
+  ok: true;
+  facade: WorktreeSnapshot;
+  attachTarget: { sessionName: string; windowName: string; paneIndex: number };
+} | {
+  ok: false;
+  response: Response;
+} {
+  const metas = scope.scratchSessionService.list();
+  const meta = metas.find((s) => s.id === id);
+  if (!meta) {
+    return { ok: false, response: errorResponse(`Scratch session not found: ${id}`, 404) };
+  }
+  if (meta.kind !== "agent" || !meta.agentId) {
+    return { ok: false, response: errorResponse("Chat is only available for agent-kind scratch sessions", 404) };
+  }
+  const chatSupport = resolveAgentChatSupport({
+    agentId: meta.agentId,
+    agentLabel: meta.agentId,
+    agent: getAgentDefinition(scope.config, meta.agentId),
+    action: "chat",
+  });
+  if (!chatSupport.ok) {
+    return { ok: false, response: errorResponse(chatSupport.error, chatSupport.status) };
+  }
+  const windowName = tmux.getFirstWindowName(meta.sessionName);
+  if (!windowName) {
+    return { ok: false, response: errorResponse("Scratch session has no tmux window", 409) };
+  }
+  const target = `${meta.sessionName}:${windowName}.0`;
+  const probe = probeSessionActivity(tmux, target);
+  const { running } = summarizeSessionActivity(probe, () => new Date());
+  const agentDef = getAgentDefinition(scope.config, meta.agentId);
+  const facade: WorktreeSnapshot = {
+    branch: meta.id,
+    path: meta.cwd,
+    dir: meta.cwd,
+    archived: false,
+    profile: null,
+    agentName: meta.agentId,
+    agentLabel: agentDef?.label ?? meta.agentId,
+    mux: true,
+    dirty: false,
+    unpushed: false,
+    paneCount: 1,
+    status: running ? "running" : "idle",
+    elapsed: "",
+    services: [],
+    prs: [],
+    linearIssue: null,
+    creation: null,
+  };
+  return {
+    ok: true,
+    facade,
+    attachTarget: { sessionName: meta.sessionName, windowName, paneIndex: 0 },
+  };
+}
+
+async function apiAttachAgentsScratchConversation(scope: ProjectScope, id: string): Promise<Response> {
+  touchDashboardActivity();
+  const resolved = resolveScratchChatTarget(scope, id);
+  if (!resolved.ok) return resolved.response;
+  const storage = buildTmuxConversationStorage({ tmux, sessionName: resolved.attachTarget.sessionName });
+  const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.facade, "chat");
+  if (!chatSupport.ok) return errorResponse(chatSupport.error, chatSupport.status);
+  const result = chatSupport.data.provider === "claude"
+    ? await claudeConversationService.attachWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage)
+    : await worktreeConversationService.attachWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage);
+  return result.ok ? jsonResponse(result.data) : errorResponse(result.error, result.status);
+}
+
+async function apiGetAgentsScratchConversationHistory(scope: ProjectScope, id: string): Promise<Response> {
+  touchDashboardActivity();
+  const resolved = resolveScratchChatTarget(scope, id);
+  if (!resolved.ok) return resolved.response;
+  const storage = buildTmuxConversationStorage({ tmux, sessionName: resolved.attachTarget.sessionName });
+  const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.facade, "chat");
+  if (!chatSupport.ok) return errorResponse(chatSupport.error, chatSupport.status);
+  const result = chatSupport.data.provider === "claude"
+    ? await claudeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage)
+    : await worktreeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage);
+  return result.ok ? jsonResponse(result.data) : errorResponse(result.error, result.status);
+}
+
+async function apiSendAgentsScratchConversationMessage(scope: ProjectScope, id: string, req: Request): Promise<Response> {
+  touchDashboardActivity();
+  const parsed = await parseJsonBody(req, AgentsSendMessageRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const resolved = resolveScratchChatTarget(scope, id);
+  if (!resolved.ok) return resolved.response;
+  const storage = buildTmuxConversationStorage({ tmux, sessionName: resolved.attachTarget.sessionName });
+  const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.facade, "chat");
+  if (!chatSupport.ok) return errorResponse(chatSupport.error, chatSupport.status);
+  const conversationResult = chatSupport.data.provider === "claude"
+    ? await claudeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage)
+    : await worktreeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage);
+  if (!conversationResult.ok) return errorResponse(conversationResult.error, conversationResult.status);
+  const attachTarget: import("./adapters/terminal").TerminalAttachTarget = {
+    ownerSessionName: resolved.attachTarget.sessionName,
+    windowName: resolved.attachTarget.windowName,
+  };
+  const sendResult = await sendTerminalPrompt(
+    `scratch:${id}`,
+    attachTarget,
+    parsed.data.text,
+    resolved.attachTarget.paneIndex,
+    undefined,
+    chatSupport.data.submitDelayMs,
+  );
+  if (!sendResult.ok) return errorResponse(sendResult.error, 503);
+  return jsonResponse({
+    conversationId: conversationResult.data.conversation.conversationId,
+    turnId: `tmux:${crypto.randomUUID()}`,
+    running: true as const,
+  });
+}
+
+async function apiInterruptAgentsScratchConversation(scope: ProjectScope, id: string): Promise<Response> {
+  touchDashboardActivity();
+  const resolved = resolveScratchChatTarget(scope, id);
+  if (!resolved.ok) return resolved.response;
+  const storage = buildTmuxConversationStorage({ tmux, sessionName: resolved.attachTarget.sessionName });
+  const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.facade, "interrupt");
+  if (!chatSupport.ok) return errorResponse(chatSupport.error, chatSupport.status);
+  const conversationResult = chatSupport.data.provider === "claude"
+    ? await claudeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage)
+    : await worktreeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage);
+  if (!conversationResult.ok) return errorResponse(conversationResult.error, conversationResult.status);
+  const attachTarget: import("./adapters/terminal").TerminalAttachTarget = {
+    ownerSessionName: resolved.attachTarget.sessionName,
+    windowName: resolved.attachTarget.windowName,
+  };
+  const interruptResult = await interruptPrompt(attachTarget, resolved.attachTarget.paneIndex);
+  if (!interruptResult.ok) return errorResponse(interruptResult.error, 503);
+  return jsonResponse({
+    conversationId: conversationResult.data.conversation.conversationId,
+    turnId: conversationResult.data.conversation.activeTurnId ?? `tmux:${crypto.randomUUID()}`,
+    interrupted: true as const,
+  });
+}
+
+// ── External session chat ────────────────────────────────────────────────────
+
+function resolveExternalChatTarget(sessionName: string): {
+  ok: true;
+  facade: WorktreeSnapshot;
+  attachTarget: { sessionName: string; windowName: string; paneIndex: number };
+  agentProvider: "claude" | "codex";
+  submitDelayMs: number;
+} | {
+  ok: false;
+  response: Response;
+} {
+  const allSessions = tmux.listAllSessions();
+  const sessionEntry = allSessions.find((s) => s.name === sessionName);
+  if (!sessionEntry) {
+    return { ok: false, response: errorResponse(`External session not found: ${sessionName}`, 404) };
+  }
+  const windowName = tmux.getFirstWindowName(sessionName);
+  if (!windowName) {
+    return { ok: false, response: errorResponse("External session has no tmux window", 409) };
+  }
+  const paneTarget = `${sessionName}:${windowName}.0`;
+  const currentCommand = tmux.getPaneCurrentCommand(paneTarget);
+  const baseName = currentCommand ? currentCommand.split("/").pop() ?? currentCommand : null;
+  const agentId = baseName === "claude" ? "claude" : baseName === "codex" ? "codex" : null;
+  if (!agentId) {
+    return { ok: false, response: errorResponse("Chat is only supported for Claude and Codex sessions", 404) };
+  }
+  const cwd = tmux.getPaneCurrentPath(paneTarget) ?? sessionName;
+  const probe = probeSessionActivity(tmux, paneTarget);
+  const { running } = summarizeSessionActivity(probe, () => new Date());
+  const agentLabel = agentId === "claude" ? "Claude" : "Codex";
+  const facade: WorktreeSnapshot = {
+    branch: sessionName,
+    path: cwd,
+    dir: cwd,
+    archived: false,
+    profile: null,
+    agentName: agentId,
+    agentLabel,
+    mux: true,
+    dirty: false,
+    unpushed: false,
+    paneCount: 1,
+    status: running ? "running" : "idle",
+    elapsed: "",
+    services: [],
+    prs: [],
+    linearIssue: null,
+    creation: null,
+  };
+  const submitDelayMs = agentId === "codex" ? 200 : 0;
+  return {
+    ok: true,
+    facade,
+    attachTarget: { sessionName, windowName, paneIndex: 0 },
+    agentProvider: agentId,
+    submitDelayMs,
+  };
+}
+
+async function apiAttachAgentsExternalConversation(sessionName: string): Promise<Response> {
+  touchDashboardActivity();
+  const resolved = resolveExternalChatTarget(sessionName);
+  if (!resolved.ok) return resolved.response;
+  const storage = buildTmuxConversationStorage({ tmux, sessionName });
+  const result = resolved.agentProvider === "claude"
+    ? await claudeConversationService.attachWorktreeConversation(resolved.facade, { tmux, projectRoot: sessionName }, storage)
+    : await worktreeConversationService.attachWorktreeConversation(resolved.facade, undefined, storage);
+  return result.ok ? jsonResponse(result.data) : errorResponse(result.error, result.status);
+}
+
+async function apiGetAgentsExternalConversationHistory(sessionName: string): Promise<Response> {
+  touchDashboardActivity();
+  const resolved = resolveExternalChatTarget(sessionName);
+  if (!resolved.ok) return resolved.response;
+  const storage = buildTmuxConversationStorage({ tmux, sessionName });
+  const result = resolved.agentProvider === "claude"
+    ? await claudeConversationService.readWorktreeConversation(resolved.facade, { tmux, projectRoot: sessionName }, storage)
+    : await worktreeConversationService.readWorktreeConversation(resolved.facade, undefined, storage);
+  return result.ok ? jsonResponse(result.data) : errorResponse(result.error, result.status);
+}
+
+async function apiSendAgentsExternalConversationMessage(sessionName: string, req: Request): Promise<Response> {
+  touchDashboardActivity();
+  const parsed = await parseJsonBody(req, AgentsSendMessageRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const resolved = resolveExternalChatTarget(sessionName);
+  if (!resolved.ok) return resolved.response;
+  const storage = buildTmuxConversationStorage({ tmux, sessionName });
+  const conversationResult = resolved.agentProvider === "claude"
+    ? await claudeConversationService.readWorktreeConversation(resolved.facade, { tmux, projectRoot: sessionName }, storage)
+    : await worktreeConversationService.readWorktreeConversation(resolved.facade, undefined, storage);
+  if (!conversationResult.ok) return errorResponse(conversationResult.error, conversationResult.status);
+  const attachTarget: import("./adapters/terminal").TerminalAttachTarget = {
+    ownerSessionName: resolved.attachTarget.sessionName,
+    windowName: resolved.attachTarget.windowName,
+  };
+  const sendResult = await sendTerminalPrompt(
+    `external:${sessionName}`,
+    attachTarget,
+    parsed.data.text,
+    resolved.attachTarget.paneIndex,
+    undefined,
+    resolved.submitDelayMs,
+  );
+  if (!sendResult.ok) return errorResponse(sendResult.error, 503);
+  return jsonResponse({
+    conversationId: conversationResult.data.conversation.conversationId,
+    turnId: `tmux:${crypto.randomUUID()}`,
+    running: true as const,
+  });
+}
+
+async function apiInterruptAgentsExternalConversation(sessionName: string): Promise<Response> {
+  touchDashboardActivity();
+  const resolved = resolveExternalChatTarget(sessionName);
+  if (!resolved.ok) return resolved.response;
+  const storage = buildTmuxConversationStorage({ tmux, sessionName });
+  const conversationResult = resolved.agentProvider === "claude"
+    ? await claudeConversationService.readWorktreeConversation(resolved.facade, { tmux, projectRoot: sessionName }, storage)
+    : await worktreeConversationService.readWorktreeConversation(resolved.facade, undefined, storage);
+  if (!conversationResult.ok) return errorResponse(conversationResult.error, conversationResult.status);
+  const attachTarget: import("./adapters/terminal").TerminalAttachTarget = {
+    ownerSessionName: resolved.attachTarget.sessionName,
+    windowName: resolved.attachTarget.windowName,
+  };
+  const interruptResult = await interruptPrompt(attachTarget, resolved.attachTarget.paneIndex);
+  if (!interruptResult.ok) return errorResponse(interruptResult.error, 503);
+  return jsonResponse({
+    conversationId: conversationResult.data.conversation.conversationId,
+    turnId: conversationResult.data.conversation.activeTurnId ?? `tmux:${crypto.randomUUID()}`,
+    interrupted: true as const,
   });
 }
 
@@ -1622,6 +1904,78 @@ Bun.serve({
         const parsed = parseScratchSessionIdParam(req.params);
         if (!parsed.ok) return parsed.response;
         return catching("DELETE /api/projects/:projectId/scratch-sessions/:id", () => apiRemoveScratchSession(parsedProject.data.scope, parsed.data));
+      },
+    },
+
+    [apiPaths.attachAgentsScratchConversation]: {
+      POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
+        const parsed = parseScratchSessionIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching(`POST ${apiPaths.attachAgentsScratchConversation}`, () => apiAttachAgentsScratchConversation(parsedProject.data.scope, parsed.data));
+      },
+    },
+
+    [apiPaths.fetchAgentsScratchConversationHistory]: {
+      GET: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
+        const parsed = parseScratchSessionIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching(`GET ${apiPaths.fetchAgentsScratchConversationHistory}`, () => apiGetAgentsScratchConversationHistory(parsedProject.data.scope, parsed.data));
+      },
+    },
+
+    [apiPaths.sendAgentsScratchConversationMessage]: {
+      POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
+        const parsed = parseScratchSessionIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching(`POST ${apiPaths.sendAgentsScratchConversationMessage}`, () => apiSendAgentsScratchConversationMessage(parsedProject.data.scope, parsed.data, req));
+      },
+    },
+
+    [apiPaths.interruptAgentsScratchConversation]: {
+      POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
+        const parsed = parseScratchSessionIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching(`POST ${apiPaths.interruptAgentsScratchConversation}`, () => apiInterruptAgentsScratchConversation(parsedProject.data.scope, parsed.data));
+      },
+    },
+
+    [apiPaths.attachAgentsExternalConversation]: {
+      POST: (req) => {
+        const name = req.params.name;
+        if (!name || name.length === 0) return errorResponse("Missing session name", 400);
+        return catching(`POST ${apiPaths.attachAgentsExternalConversation}`, () => apiAttachAgentsExternalConversation(name));
+      },
+    },
+
+    [apiPaths.fetchAgentsExternalConversationHistory]: {
+      GET: (req) => {
+        const name = req.params.name;
+        if (!name || name.length === 0) return errorResponse("Missing session name", 400);
+        return catching(`GET ${apiPaths.fetchAgentsExternalConversationHistory}`, () => apiGetAgentsExternalConversationHistory(name));
+      },
+    },
+
+    [apiPaths.sendAgentsExternalConversationMessage]: {
+      POST: (req) => {
+        const name = req.params.name;
+        if (!name || name.length === 0) return errorResponse("Missing session name", 400);
+        return catching(`POST ${apiPaths.sendAgentsExternalConversationMessage}`, () => apiSendAgentsExternalConversationMessage(name, req));
+      },
+    },
+
+    [apiPaths.interruptAgentsExternalConversation]: {
+      POST: (req) => {
+        const name = req.params.name;
+        if (!name || name.length === 0) return errorResponse("Missing session name", 400);
+        return catching(`POST ${apiPaths.interruptAgentsExternalConversation}`, () => apiInterruptAgentsExternalConversation(name));
       },
     },
 

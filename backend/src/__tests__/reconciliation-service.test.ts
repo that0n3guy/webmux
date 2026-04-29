@@ -144,6 +144,14 @@ class FakeTmuxGateway implements TmuxGateway {
   capturePane(_target: string, _lines: number): string[] {
     return [];
   }
+
+  killSession(): void { throw new Error("not implemented"); }
+  setSessionOption(): void { throw new Error("not implemented"); }
+  getSessionOption(): string | null { throw new Error("not implemented"); }
+  listAllSessions(): ReturnType<TmuxGateway["listAllSessions"]> { throw new Error("not implemented"); }
+  getFirstWindowName(): string | null { throw new Error("not implemented"); }
+  getPaneCurrentCommand(): string | null { return null; }
+  getPaneCurrentPath(): string | null { return null; }
 }
 
 class FakePortProbe implements PortProbe {

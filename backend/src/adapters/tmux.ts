@@ -43,6 +43,8 @@ export interface TmuxGateway {
   listAllSessions(): TmuxSessionSummary[];
   getFirstWindowName(sessionName: string): string | null;
   capturePane(target: string, lines: number): string[];
+  getPaneCurrentCommand(target: string): string | null;
+  getPaneCurrentPath(target: string): string | null;
 }
 
 function runTmux(args: string[]): { stdout: string; stderr: string; exitCode: number } {
@@ -265,6 +267,20 @@ export class BunTmuxGateway implements TmuxGateway {
       .split("\n")
       .map((line) => line.trimEnd())
       .filter((line) => line.length > 0);
+  }
+
+  getPaneCurrentCommand(target: string): string | null {
+    const result = runTmux(["display-message", "-t", target, "-p", "-F", "#{pane_current_command}"]);
+    if (result.exitCode !== 0) return null;
+    const trimmed = result.stdout.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  getPaneCurrentPath(target: string): string | null {
+    const result = runTmux(["display-message", "-t", target, "-p", "-F", "#{pane_current_path}"]);
+    if (result.exitCode !== 0) return null;
+    const trimmed = result.stdout.trim();
+    return trimmed.length > 0 ? trimmed : null;
   }
 
 }

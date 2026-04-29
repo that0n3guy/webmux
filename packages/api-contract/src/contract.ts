@@ -34,6 +34,7 @@ import {
   ProjectIdParamsSchema,
   ProjectScopedWorktreeNameParamsSchema,
   ProjectScopedScratchIdParamsSchema,
+  ExternalSessionNameParamsSchema,
   ProjectListResponseSchema,
   CreateProjectRequestSchema,
   CreateProjectResponseSchema,
@@ -81,6 +82,16 @@ export const apiPaths = {
   fetchScratchSessions: "/api/projects/:projectId/scratch-sessions",
   createScratchSession: "/api/projects/:projectId/scratch-sessions",
   removeScratchSession: "/api/projects/:projectId/scratch-sessions/:id",
+  attachAgentsScratchConversation: "/api/projects/:projectId/scratch-sessions/:id/agent/attach",
+  fetchAgentsScratchConversationHistory: "/api/projects/:projectId/scratch-sessions/:id/agent/history",
+  sendAgentsScratchConversationMessage: "/api/projects/:projectId/scratch-sessions/:id/agent/messages",
+  interruptAgentsScratchConversation: "/api/projects/:projectId/scratch-sessions/:id/agent/interrupt",
+  streamAgentsScratchConversation: "/ws/projects/:projectId/scratch-sessions/:id/agent",
+  attachAgentsExternalConversation: "/api/external-sessions/:name/agent/attach",
+  fetchAgentsExternalConversationHistory: "/api/external-sessions/:name/agent/history",
+  sendAgentsExternalConversationMessage: "/api/external-sessions/:name/agent/messages",
+  interruptAgentsExternalConversation: "/api/external-sessions/:name/agent/interrupt",
+  streamAgentsExternalConversation: "/ws/external-sessions/:name/agent",
 } as const;
 
 const commonErrorResponses = {
@@ -436,6 +447,84 @@ export const apiContract = c.router({
     body: c.noBody(),
     responses: {
       200: OkResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  attachAgentsScratchConversation: {
+    method: "POST",
+    path: apiPaths.attachAgentsScratchConversation,
+    pathParams: ProjectScopedScratchIdParamsSchema,
+    body: c.noBody(),
+    responses: {
+      200: AgentsUiWorktreeConversationResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  fetchAgentsScratchConversationHistory: {
+    method: "GET",
+    path: apiPaths.fetchAgentsScratchConversationHistory,
+    pathParams: ProjectScopedScratchIdParamsSchema,
+    responses: {
+      200: AgentsUiWorktreeConversationResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  sendAgentsScratchConversationMessage: {
+    method: "POST",
+    path: apiPaths.sendAgentsScratchConversationMessage,
+    pathParams: ProjectScopedScratchIdParamsSchema,
+    body: AgentsSendMessageRequestSchema,
+    responses: {
+      200: AgentsUiSendMessageResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  interruptAgentsScratchConversation: {
+    method: "POST",
+    path: apiPaths.interruptAgentsScratchConversation,
+    pathParams: ProjectScopedScratchIdParamsSchema,
+    body: c.noBody(),
+    responses: {
+      200: AgentsUiInterruptResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  attachAgentsExternalConversation: {
+    method: "POST",
+    path: apiPaths.attachAgentsExternalConversation,
+    pathParams: ExternalSessionNameParamsSchema,
+    body: c.noBody(),
+    responses: {
+      200: AgentsUiWorktreeConversationResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  fetchAgentsExternalConversationHistory: {
+    method: "GET",
+    path: apiPaths.fetchAgentsExternalConversationHistory,
+    pathParams: ExternalSessionNameParamsSchema,
+    responses: {
+      200: AgentsUiWorktreeConversationResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  sendAgentsExternalConversationMessage: {
+    method: "POST",
+    path: apiPaths.sendAgentsExternalConversationMessage,
+    pathParams: ExternalSessionNameParamsSchema,
+    body: AgentsSendMessageRequestSchema,
+    responses: {
+      200: AgentsUiSendMessageResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  interruptAgentsExternalConversation: {
+    method: "POST",
+    path: apiPaths.interruptAgentsExternalConversation,
+    pathParams: ExternalSessionNameParamsSchema,
+    body: c.noBody(),
+    responses: {
+      200: AgentsUiInterruptResponseSchema,
       ...commonErrorResponses,
     },
   },
