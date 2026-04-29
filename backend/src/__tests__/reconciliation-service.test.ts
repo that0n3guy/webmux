@@ -235,6 +235,7 @@ describe("ReconciliationService", () => {
       runtime: "host",
       startupEnvValues: {},
       allocatedPorts: { FRONTEND_PORT: 3010 },
+      yolo: true,
     });
     await writeWorktreePrs(managedGitDir, [
       {
@@ -313,6 +314,7 @@ describe("ReconciliationService", () => {
         comments: [],
       },
     ]);
+    expect(state?.yolo).toBe(true);
     expect(runtime.getWorktree("wt_stale")).toBeNull();
   });
 
@@ -346,6 +348,7 @@ describe("ReconciliationService", () => {
     expect(state?.worktreeId.startsWith("unmanaged:")).toBe(true);
     expect(state?.profile).toBeNull();
     expect(state?.agentName).toBeNull();
+    expect(state?.yolo).toBe(false);
     expect(state?.services).toEqual([]);
   });
 

@@ -113,6 +113,7 @@ export interface CreateWorktreeProgress {
   profile: string;
   agent: AgentId;
   phase: WorktreeCreationPhase;
+  yolo?: boolean;
 }
 
 export interface LifecycleServiceDependencies {
@@ -925,6 +926,7 @@ export class LifecycleService {
       path: worktreePath,
       profile: profileName,
       agent: input.agent,
+      ...(input.yolo !== undefined ? { yolo: input.yolo } : {}),
     } satisfies Omit<CreateWorktreeProgress, "phase">;
     const deleteBranchOnRollback = input.mode === "new" || branchAvailability.deleteBranchOnRollback;
     let initialized: InitializeManagedWorktreeResult | null = null;

@@ -14,6 +14,7 @@ describe("buildProjectSnapshot", () => {
       profile: "default",
       agentName: "claude",
       runtime: "host",
+      yolo: true,
     });
     runtime.setGitState("wt_search", {
       dirty: true,
@@ -74,6 +75,7 @@ describe("buildProjectSnapshot", () => {
           profile: "default",
           agentName: "claude",
           phase: "starting_session",
+          yolo: true,
         },
       ],
       notifications: notifications.list(),
@@ -154,6 +156,7 @@ describe("buildProjectSnapshot", () => {
         creation: {
           phase: "starting_session",
         },
+        yolo: true,
       },
     ]);
     expect(snapshot.notifications).toHaveLength(1);
@@ -181,6 +184,7 @@ describe("buildProjectSnapshot", () => {
     expect(snapshot.worktrees[0]?.prs).toEqual([]);
     expect(snapshot.worktrees[0]?.linearIssue).toBeNull();
     expect(snapshot.worktrees[0]?.creation).toBeNull();
+    expect(snapshot.worktrees[0]?.yolo).toBe(false);
   });
 
   it("includes placeholder snapshots for worktrees that are still being created", () => {
@@ -199,6 +203,7 @@ describe("buildProjectSnapshot", () => {
           profile: "default",
           agentName: "codex",
           phase: "creating_worktree",
+          yolo: false,
         },
       ],
       findLinearIssue: (branch) =>
@@ -246,8 +251,52 @@ describe("buildProjectSnapshot", () => {
         creation: {
           phase: "creating_worktree",
         },
+        yolo: false,
       },
     ]);
+  });
+
+  it("propagates yolo=true from runtime state into the snapshot", () => {
+    const runtime = new ProjectRuntime();
+    runtime.upsertWorktree({
+      worktreeId: "wt_yolo",
+      branch: "feature/yolo-test",
+      path: "/repo/__worktrees/feature-yolo-test",
+      runtime: "host",
+      yolo: true,
+    });
+
+    const snapshot = buildProjectSnapshot({
+      projectName: "Project",
+      mainBranch: "main",
+      runtime,
+      notifications: [],
+    });
+
+    expect(snapshot.worktrees[0]?.yolo).toBe(true);
+  });
+
+  it("propagates yolo from creating worktree state into the snapshot", () => {
+    const runtime = new ProjectRuntime();
+
+    const snapshot = buildProjectSnapshot({
+      projectName: "Project",
+      mainBranch: "main",
+      runtime,
+      notifications: [],
+      creatingWorktrees: [
+        {
+          branch: "feature/yolo-creating",
+          path: "/repo/__worktrees/feature-yolo-creating",
+          profile: "default",
+          agentName: "claude",
+          phase: "creating_worktree",
+          yolo: true,
+        },
+      ],
+    });
+
+    expect(snapshot.worktrees[0]?.yolo).toBe(true);
   });
 
   it("keeps merged runtime and creating worktrees sorted by branch", () => {
@@ -277,6 +326,7 @@ describe("buildProjectSnapshot", () => {
           profile: "default",
           agentName: "claude",
           phase: "creating_worktree",
+          yolo: false,
         },
       ],
       findAgentLabel: (agentId) => agentId === "claude" ? "Claude" : agentId,

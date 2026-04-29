@@ -107,6 +107,7 @@ export interface WorktreeInfo {
   linearIssue: LinkedLinearIssue | null;
   creating: boolean;
   creationPhase: WorktreeCreationPhase | null;
+  yolo: boolean;
 }
 
 export interface WorktreeListRow {

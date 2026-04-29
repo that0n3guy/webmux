@@ -61,6 +61,7 @@ function mapWorktree(snapshot: ProjectWorktreeSnapshot): WorktreeInfo {
     linearIssue: snapshot.linearIssue,
     creating: snapshot.creation !== null,
     creationPhase: snapshot.creation?.phase ?? null,
+    yolo: snapshot.yolo,
   };
 }
 

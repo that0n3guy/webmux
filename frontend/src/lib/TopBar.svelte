@@ -154,6 +154,9 @@
             onclick={ondirtyclick}
           >{worktree.dirty ? "dirty" : "unpushed"}</button>
         {/if}
+        {#if worktree?.yolo}
+          <span class="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-accent/50 text-accent tracking-wider uppercase">yolo</span>
+        {/if}
         {#if worktree?.linearIssue}
           <LinearBadge issue={worktree.linearIssue} clickable={true} />
         {/if}

@@ -152,6 +152,9 @@
           {#if wt.profile}
             <span>{wt.profile}</span>
           {/if}
+          {#if wt.yolo}
+            <span class="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-accent/50 text-accent tracking-wider uppercase">yolo</span>
+          {/if}
         </span>
         {#if wt.services.length > 0}
           <span class="flex gap-2 text-[11px] text-muted font-mono">

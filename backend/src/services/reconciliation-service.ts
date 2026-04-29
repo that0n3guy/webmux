@@ -98,6 +98,7 @@ interface ReconciledWorktreeState {
   path: string;
   profile: string | null;
   agentName: AgentId | null;
+  yolo: boolean;
   runtime: "host" | "docker";
   git: {
     dirty: boolean;
@@ -179,6 +180,7 @@ export class ReconciliationService {
         path: entry.path,
         profile: meta?.profile ?? null,
         agentName: meta?.agent ?? null,
+        yolo: meta?.yolo === true,
         runtime: meta?.runtime ?? "host",
         git: {
           dirty: gitStatus.dirty,
@@ -215,6 +217,7 @@ export class ReconciliationService {
         path: state.path,
         profile: state.profile,
         agentName: state.agentName,
+        yolo: state.yolo,
         runtime: state.runtime,
       });
 

@@ -8,6 +8,7 @@ export interface WorktreeCreationProgress {
   profile: string;
   agent: AgentId;
   phase: WorktreeCreationPhase;
+  yolo?: boolean;
 }
 
 export class WorktreeCreationTracker {
@@ -21,6 +22,7 @@ export class WorktreeCreationTracker {
       profile: progress.profile,
       agentName: progress.agent,
       phase: progress.phase,
+      yolo: progress.yolo ?? false,
     };
     this.worktrees.set(progress.branch, next);
   }

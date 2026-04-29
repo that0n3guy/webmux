@@ -154,6 +154,7 @@ export interface CreatingWorktreeState {
   profile: string | null;
   agentName: AgentId | null;
   phase: WorktreeCreationPhase;
+  yolo: boolean;
 }
 
 export interface WorktreeCreationSnapshot {
@@ -167,6 +168,7 @@ export interface ManagedWorktreeRuntimeState {
   path: string;
   profile: string | null;
   agentName: AgentId | null;
+  yolo: boolean;
   git: GitWorktreeRuntimeState;
   session: SessionRuntimeState;
   agent: AgentRuntimeState;
@@ -202,6 +204,7 @@ export interface WorktreeSnapshot {
   prs: PrEntry[];
   linearIssue: LinkedLinearIssue | null;
   creation: WorktreeCreationSnapshot | null;
+  yolo: boolean;
 }
 
 export interface ProjectSnapshot {

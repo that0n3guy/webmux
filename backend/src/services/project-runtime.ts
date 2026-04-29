@@ -21,6 +21,7 @@ function makeDefaultState(input: {
   path: string;
   profile?: string | null;
   agentName?: AgentId | null;
+  yolo?: boolean;
   runtime?: RuntimeKind;
 }): ManagedWorktreeRuntimeState {
   return {
@@ -30,6 +31,7 @@ function makeDefaultState(input: {
     path: input.path,
     profile: input.profile ?? null,
     agentName: input.agentName ?? null,
+    yolo: input.yolo ?? false,
     git: {
       exists: true,
       branch: input.branch,
@@ -74,6 +76,7 @@ export class ProjectRuntime {
     path: string;
     profile?: string | null;
     agentName?: AgentId | null;
+    yolo?: boolean;
     runtime?: RuntimeKind;
   }): ManagedWorktreeRuntimeState {
     const existing = this.worktrees.get(input.worktreeId);
@@ -84,6 +87,7 @@ export class ProjectRuntime {
       if (input.baseBranch !== undefined) existing.baseBranch = input.baseBranch;
       existing.profile = input.profile ?? existing.profile;
       existing.agentName = input.agentName ?? existing.agentName;
+      if (input.yolo !== undefined) existing.yolo = input.yolo;
       if (input.runtime) existing.agent.runtime = input.runtime;
       existing.git.exists = true;
       existing.git.branch = input.branch;
