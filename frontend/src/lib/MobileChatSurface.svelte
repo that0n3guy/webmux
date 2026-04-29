@@ -173,7 +173,7 @@
       ? currentState.unchangedTicks + 1
       : 0;
 
-    if (sawProgress && unchangedTicks >= REFRESH_POLL_SETTLE_TICKS) {
+    if (sawProgress && unchangedTicks >= REFRESH_POLL_SETTLE_TICKS && !nextConversation.running) {
       refreshPollingState = null;
       return;
     }
