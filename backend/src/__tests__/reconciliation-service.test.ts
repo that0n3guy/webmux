@@ -140,6 +140,14 @@ class FakeTmuxGateway implements TmuxGateway {
   listWindows(): TmuxWindowSummary[] {
     return this.windows;
   }
+
+  capturePane(_target: string, _lines: number): string[] {
+    return [];
+  }
+
+  getPaneLastActivity(_target: string): { lastActivityAt: string | null } {
+    return { lastActivityAt: null };
+  }
 }
 
 class FakePortProbe implements PortProbe {

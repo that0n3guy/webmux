@@ -174,6 +174,14 @@ class FakeTmuxGateway implements TmuxGateway {
   listWindows() {
     return [];
   }
+
+  capturePane(_target: string, _lines: number): string[] {
+    return [];
+  }
+
+  getPaneLastActivity(_target: string): { lastActivityAt: string | null } {
+    return { lastActivityAt: null };
+  }
 }
 
 function makeMeta(): WorktreeMeta {

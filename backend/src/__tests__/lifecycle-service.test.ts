@@ -88,6 +88,14 @@ class FakeTmuxGateway implements TmuxGateway {
     return [...this.windows.values()].map((window) => ({ ...window }));
   }
 
+  capturePane(_target: string, _lines: number): string[] {
+    return [];
+  }
+
+  getPaneLastActivity(_target: string): { lastActivityAt: string | null } {
+    return { lastActivityAt: null };
+  }
+
   private key(sessionName: string, windowName: string): string {
     return `${sessionName}:${windowName}`;
   }

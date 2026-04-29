@@ -76,8 +76,8 @@ import {
 } from "./services/agents-ui-stream-service";
 import { classifyAgentsTerminalWorktreeError } from "./services/agents-ui-action-service";
 import { buildProjectSnapshot } from "./services/snapshot-service";
-import { ClaudeConversationService } from "./services/claude-conversation-service";
-import { WorktreeConversationService } from "./services/worktree-conversation-service";
+import { ClaudeConversationService, type ClaudeConversationProbeContext } from "./services/claude-conversation-service";
+import { WorktreeConversationService, type WorktreeConversationProbeContext } from "./services/worktree-conversation-service";
 import { parseRuntimeEvent } from "./domain/events";
 import type { AgentsUiConversationEvent, AgentsUiWorktreeConversationResponse } from "./domain/agents-ui";
 import type { ProjectSnapshot, WorktreeSnapshot } from "./domain/model";
@@ -454,6 +454,10 @@ async function getWorktreeGitDirs(scope: ProjectScope): Promise<Map<string, stri
   return gitDirs;
 }
 
+function buildConversationProbeContext(scope: ProjectScope): ClaudeConversationProbeContext & WorktreeConversationProbeContext {
+  return { tmux, projectRoot: scope.projectDir };
+}
+
 function makeCallbacks(ws: { send: (data: string) => void; readyState: number }): {
   onData: (data: string) => void;
   onExit: (exitCode: number) => void;
@@ -518,7 +522,7 @@ async function apiGetWorktrees(scope: ProjectScope): Promise<Response> {
 
 async function apiListExternalSessions(): Promise<Response> {
   const all = tmux.listAllSessions();
-  const sessions = listExternalSessions(all);
+  const sessions = listExternalSessions(all, tmux);
   return jsonResponse({ sessions });
 }
 
@@ -596,8 +600,8 @@ async function apiAttachAgentsWorktree(scope: ProjectScope, branch: string): Pro
   }
 
   const result = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.attachWorktreeConversation(resolved.worktree)
-    : await worktreeConversationService.attachWorktreeConversation(resolved.worktree);
+    ? await claudeConversationService.attachWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope))
+    : await worktreeConversationService.attachWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope));
   return result.ok
     ? jsonResponse(result.data)
     : errorResponse(result.error, result.status);
@@ -614,8 +618,8 @@ async function apiGetAgentsWorktreeHistory(scope: ProjectScope, branch: string):
   }
 
   const result = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.readWorktreeConversation(resolved.worktree)
-    : await worktreeConversationService.readWorktreeConversation(resolved.worktree);
+    ? await claudeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope))
+    : await worktreeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope));
   return result.ok
     ? jsonResponse(result.data)
     : errorResponse(result.error, result.status);
@@ -638,8 +642,8 @@ async function apiSendAgentsWorktreeMessage(scope: ProjectScope, branch: string,
   }
 
   const conversationResult = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.readWorktreeConversation(resolved.worktree)
-    : await worktreeConversationService.readWorktreeConversation(resolved.worktree);
+    ? await claudeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope))
+    : await worktreeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope));
   if (!conversationResult.ok) {
     return errorResponse(conversationResult.error, conversationResult.status);
   }
@@ -680,8 +684,8 @@ async function apiInterruptAgentsWorktree(scope: ProjectScope, branch: string): 
   }
 
   const conversationResult = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.readWorktreeConversation(resolved.worktree)
-    : await worktreeConversationService.readWorktreeConversation(resolved.worktree);
+    ? await claudeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope))
+    : await worktreeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope));
   if (!conversationResult.ok) {
     return errorResponse(conversationResult.error, conversationResult.status);
   }
@@ -727,8 +731,8 @@ async function loadAgentsConversationSnapshot(
   }
 
   const result = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.readWorktreeConversation(resolved.worktree)
-    : await worktreeConversationService.readWorktreeConversation(resolved.worktree);
+    ? await claudeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope))
+    : await worktreeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope));
   return result.ok
     ? { ok: true, data: result.data }
     : { ok: false, message: result.error };

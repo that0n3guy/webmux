@@ -45,6 +45,7 @@ export interface AgentsUiConversationState {
   running: boolean;
   activeTurnId: string | null;
   messages: AgentsUiConversationMessage[];
+  statusWord?: string | null;
 }
 
 export interface AgentsUiWorktreeConversationResponse {

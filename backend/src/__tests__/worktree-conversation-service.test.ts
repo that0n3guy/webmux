@@ -13,6 +13,7 @@ import type {
   CodexAppServerTurnStartParams,
   CodexAppServerTurnStartResponse,
 } from "../adapters/codex-app-server";
+import type { TmuxGateway } from "../adapters/tmux";
 import type { WorktreeMeta, WorktreeSnapshot } from "../domain/model";
 import {
   WorktreeConversationService,
@@ -574,4 +575,112 @@ describe("WorktreeConversationService", () => {
     expect(metaStore.get(gitDir)?.conversation).toBeUndefined();
   });
 
+});
+
+class FakeProbeGateway {
+  lastActivityAt: string | null = null;
+
+  capturePane(_target: string, _lines: number): string[] {
+    return [];
+  }
+
+  getPaneLastActivity(_target: string): { lastActivityAt: string | null } {
+    return { lastActivityAt: this.lastActivityAt };
+  }
+
+  ensureServer(): void {}
+  ensureSession(): void {}
+  hasWindow(): boolean { return false; }
+  killWindow(): void {}
+  killSession(): void {}
+  createWindow(): void {}
+  splitWindow(): void {}
+  setWindowOption(): void {}
+  setSessionOption(): void {}
+  getSessionOption(): string | null { return null; }
+  runCommand(): void {}
+  selectPane(): void {}
+  listWindows() { return []; }
+  listAllSessions() { return []; }
+  getFirstWindowName(): string | null { return null; }
+}
+
+describe("WorktreeConversationService — probe augmentation", () => {
+  it("ORs probe running with thread status: probe active overrides idle thread", async () => {
+    const metaStore = new Map<string, WorktreeMeta>();
+    const worktree = makeWorktree();
+    const gitDir = `${worktree.path}/.git`;
+    metaStore.set(gitDir, makeMeta());
+
+    const appServer = new FakeCodexAppServer();
+    const idleThread = makeThread({
+      id: "thread-idle",
+      cwd: worktree.path,
+      updatedAt: 200,
+      statusType: "idle",
+      source: "cli",
+      turns: [],
+    });
+    appServer.listedThreads = [idleThread];
+    appServer.threads.set(idleThread.id, structuredClone(idleThread));
+
+    const now = new Date("2026-04-28T10:00:00.000Z");
+    const probeGateway = new FakeProbeGateway();
+    probeGateway.lastActivityAt = new Date(now.getTime() - 500).toISOString();
+
+    const service = new WorktreeConversationService({
+      appServer,
+      git: new FakeGitGateway(),
+      now: () => now,
+      readMeta: async (path) => structuredClone(metaStore.get(path) ?? null),
+      writeMeta: async (path, meta) => { metaStore.set(path, structuredClone(meta)); },
+    });
+
+    const result = await service.attachWorktreeConversation(worktree, {
+      tmux: probeGateway as unknown as TmuxGateway,
+      projectRoot: "/tmp/worktrees/codex-feature",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.conversation.running).toBe(true);
+  });
+
+  it("running=false when both thread and probe are idle", async () => {
+    const metaStore = new Map<string, WorktreeMeta>();
+    const worktree = makeWorktree();
+    const gitDir = `${worktree.path}/.git`;
+    metaStore.set(gitDir, makeMeta());
+
+    const appServer = new FakeCodexAppServer();
+    const idleThread = makeThread({
+      id: "thread-idle2",
+      cwd: worktree.path,
+      updatedAt: 200,
+      statusType: "idle",
+      source: "cli",
+      turns: [],
+    });
+    appServer.listedThreads = [idleThread];
+    appServer.threads.set(idleThread.id, structuredClone(idleThread));
+
+    const now = new Date("2026-04-28T10:00:00.000Z");
+    const probeGateway = new FakeProbeGateway();
+    probeGateway.lastActivityAt = new Date(now.getTime() - 10000).toISOString();
+
+    const service = new WorktreeConversationService({
+      appServer,
+      git: new FakeGitGateway(),
+      now: () => now,
+      readMeta: async (path) => structuredClone(metaStore.get(path) ?? null),
+      writeMeta: async (path, meta) => { metaStore.set(path, structuredClone(meta)); },
+    });
+
+    const result = await service.attachWorktreeConversation(worktree, {
+      tmux: probeGateway as unknown as TmuxGateway,
+      projectRoot: "/tmp/worktrees/codex-feature",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.conversation.running).toBe(false);
+  });
 });

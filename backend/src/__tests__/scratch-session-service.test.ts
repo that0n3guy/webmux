@@ -40,6 +40,8 @@ function makeFakeGateway(initial: TmuxSessionSummary[] = []): {
     listWindows: () => [],
     listAllSessions: () => state.sessions,
     getFirstWindowName: () => "0",
+    capturePane: () => [],
+    getPaneLastActivity: () => ({ lastActivityAt: null }),
   };
   return { gw, state };
 }

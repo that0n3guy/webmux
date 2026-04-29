@@ -4,6 +4,7 @@ import type {
   ClaudeCliGateway,
   ClaudeCliSession,
 } from "../adapters/claude-cli";
+import { buildProjectSessionName, buildWorktreeWindowName, type TmuxGateway } from "../adapters/tmux";
 import type {
   AgentsUiConversationMessage,
   AgentsUiConversationState,
@@ -17,7 +18,13 @@ import type {
 } from "../domain/model";
 import { log } from "../lib/log";
 import { buildAgentsUiWorktreeSummary } from "./agents-ui-service";
+import { probeSessionActivity, computeRunning, extractStatusWord } from "./session-activity-service";
 import { err, ok, type WorktreeConversationResult } from "./worktree-conversation-result";
+
+export interface ClaudeConversationProbeContext {
+  tmux: TmuxGateway;
+  projectRoot: string;
+}
 
 export interface ClaudeConversationServiceDependencies {
   claude: Pick<ClaudeCliGateway, "listSessions" | "readSession">;
@@ -72,14 +79,17 @@ function normalizeSessionMessages(messages: ClaudeCliConversationMessage[]): Age
 function buildConversationState(
   worktree: WorktreeSnapshot,
   session: ClaudeCliSession | null,
+  running: boolean,
+  statusWord: string | null,
 ): AgentsUiConversationState {
   return {
     provider: "claudeCode",
     conversationId: session?.sessionId ?? buildPendingConversationId(worktree),
     cwd: worktree.path,
-    running: false,
+    running,
     activeTurnId: null,
     messages: normalizeSessionMessages(session?.messages ?? []),
+    statusWord,
   };
 }
 
@@ -87,10 +97,12 @@ function toWorktreeConversationResponse(
   worktree: WorktreeSnapshot,
   conversationMeta: ClaudeWorktreeConversationMeta | null,
   session: ClaudeCliSession | null,
+  running: boolean,
+  statusWord: string | null,
 ): AgentsUiWorktreeConversationResponse {
   return {
     worktree: buildAgentsUiWorktreeSummary(worktree, conversationMeta),
-    conversation: buildConversationState(worktree, session),
+    conversation: buildConversationState(worktree, session, running, statusWord),
   };
 }
 
@@ -105,20 +117,40 @@ export class ClaudeConversationService {
     this.writeMeta = deps.writeMeta ?? writeWorktreeMeta;
   }
 
+  private probeSummary(worktree: WorktreeSnapshot, probe?: ClaudeConversationProbeContext): { running: boolean; statusWord: string | null } {
+    if (!probe) return { running: false, statusWord: null };
+    try {
+      const sessionName = buildProjectSessionName(probe.projectRoot);
+      const windowName = buildWorktreeWindowName(worktree.branch);
+      const paneTarget = `${sessionName}:${windowName}.0`;
+      const activity = probeSessionActivity(probe.tmux, paneTarget);
+      return {
+        running: computeRunning(activity, this.now),
+        statusWord: extractStatusWord(activity.recentTailLines),
+      };
+    } catch {
+      return { running: false, statusWord: null };
+    }
+  }
+
   async attachWorktreeConversation(
     worktree: WorktreeSnapshot,
+    probe?: ClaudeConversationProbeContext,
   ): Promise<WorktreeConversationResult<AgentsUiWorktreeConversationResponse>> {
-    return await this.withResolvedConversation(worktree, async (resolved) =>
-      ok(toWorktreeConversationResponse(worktree, resolved.conversationMeta, resolved.session))
-    );
+    return await this.withResolvedConversation(worktree, async (resolved) => {
+      const { running, statusWord } = this.probeSummary(worktree, probe);
+      return ok(toWorktreeConversationResponse(worktree, resolved.conversationMeta, resolved.session, running, statusWord));
+    });
   }
 
   async readWorktreeConversation(
     worktree: WorktreeSnapshot,
+    probe?: ClaudeConversationProbeContext,
   ): Promise<WorktreeConversationResult<AgentsUiWorktreeConversationResponse>> {
-    return await this.withResolvedConversation(worktree, async (resolved) =>
-      ok(toWorktreeConversationResponse(worktree, resolved.conversationMeta, resolved.session))
-    );
+    return await this.withResolvedConversation(worktree, async (resolved) => {
+      const { running, statusWord } = this.probeSummary(worktree, probe);
+      return ok(toWorktreeConversationResponse(worktree, resolved.conversationMeta, resolved.session, running, statusWord));
+    });
   }
 
   private async withResolvedConversation<T>(

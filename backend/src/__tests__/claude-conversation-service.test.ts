@@ -4,6 +4,7 @@ import type {
   ClaudeCliSession,
   ClaudeCliSessionSummary,
 } from "../adapters/claude-cli";
+import type { TmuxGateway } from "../adapters/tmux";
 import type { WorktreeMeta, WorktreeSnapshot } from "../domain/model";
 import { ClaudeConversationService } from "../services/claude-conversation-service";
 
@@ -143,5 +144,155 @@ describe("ClaudeConversationService", () => {
       cwd: worktree.path,
       lastSeenAt: "2026-04-14T12:00:00.000Z",
     });
+  });
+});
+
+class FakeProbeGateway {
+  lastActivityAt: string | null = null;
+  capturedLines: string[] = [];
+
+  capturePane(_target: string, _lines: number): string[] {
+    return this.capturedLines;
+  }
+
+  getPaneLastActivity(_target: string): { lastActivityAt: string | null } {
+    return { lastActivityAt: this.lastActivityAt };
+  }
+
+  ensureServer(): void {}
+  ensureSession(): void {}
+  hasWindow(): boolean { return false; }
+  killWindow(): void {}
+  killSession(): void {}
+  createWindow(): void {}
+  splitWindow(): void {}
+  setWindowOption(): void {}
+  setSessionOption(): void {}
+  getSessionOption(): string | null { return null; }
+  runCommand(): void {}
+  selectPane(): void {}
+  listWindows() { return []; }
+  listAllSessions() { return []; }
+  getFirstWindowName(): string | null { return null; }
+}
+
+describe("ClaudeConversationService — probe-driven running", () => {
+  it("reports running=true when the probe reports recent activity", async () => {
+    const metaStore = new Map<string, WorktreeMeta>();
+    const worktree = makeWorktree();
+    const gitDir = `${worktree.path}/.git`;
+    metaStore.set(gitDir, makeMeta());
+
+    const session = makeSession({
+      sessionId: "session-probe",
+      cwd: worktree.path,
+      messages: [],
+    });
+
+    const claude = new FakeClaudeCliGateway();
+    claude.listedSessions = [{
+      sessionId: session.sessionId,
+      cwd: worktree.path,
+      path: session.path,
+      lastSeenAt: "2026-04-14T10:05:00.000Z",
+    }];
+    claude.sessions.set(session.sessionId, structuredClone(session));
+
+    const now = new Date("2026-04-14T12:00:00.000Z");
+    const probeGateway = new FakeProbeGateway();
+    probeGateway.lastActivityAt = new Date(now.getTime() - 500).toISOString();
+
+    const service = new ClaudeConversationService({
+      claude,
+      git: new FakeGitGateway(),
+      now: () => now,
+      readMeta: async (path) => structuredClone(metaStore.get(path) ?? null),
+      writeMeta: async (path, meta) => { metaStore.set(path, structuredClone(meta)); },
+    });
+
+    const result = await service.attachWorktreeConversation(worktree, {
+      tmux: probeGateway as unknown as TmuxGateway,
+      projectRoot: "/tmp/worktrees/claude-feature",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.conversation.running).toBe(true);
+  });
+
+  it("reports running=false when the probe reports stale activity", async () => {
+    const metaStore = new Map<string, WorktreeMeta>();
+    const worktree = makeWorktree();
+    const gitDir = `${worktree.path}/.git`;
+    metaStore.set(gitDir, makeMeta());
+
+    const session = makeSession({
+      sessionId: "session-stale",
+      cwd: worktree.path,
+      messages: [],
+    });
+
+    const claude = new FakeClaudeCliGateway();
+    claude.listedSessions = [{
+      sessionId: session.sessionId,
+      cwd: worktree.path,
+      path: session.path,
+      lastSeenAt: "2026-04-14T10:05:00.000Z",
+    }];
+    claude.sessions.set(session.sessionId, structuredClone(session));
+
+    const now = new Date("2026-04-14T12:00:00.000Z");
+    const probeGateway = new FakeProbeGateway();
+    probeGateway.lastActivityAt = new Date(now.getTime() - 10000).toISOString();
+
+    const service = new ClaudeConversationService({
+      claude,
+      git: new FakeGitGateway(),
+      now: () => now,
+      readMeta: async (path) => structuredClone(metaStore.get(path) ?? null),
+      writeMeta: async (path, meta) => { metaStore.set(path, structuredClone(meta)); },
+    });
+
+    const result = await service.attachWorktreeConversation(worktree, {
+      tmux: probeGateway as unknown as TmuxGateway,
+      projectRoot: "/tmp/worktrees/claude-feature",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.conversation.running).toBe(false);
+  });
+
+  it("reports running=false when no probe context is provided", async () => {
+    const metaStore = new Map<string, WorktreeMeta>();
+    const worktree = makeWorktree();
+    const gitDir = `${worktree.path}/.git`;
+    metaStore.set(gitDir, makeMeta());
+
+    const session = makeSession({
+      sessionId: "session-noprobe",
+      cwd: worktree.path,
+      messages: [],
+    });
+
+    const claude = new FakeClaudeCliGateway();
+    claude.listedSessions = [{
+      sessionId: session.sessionId,
+      cwd: worktree.path,
+      path: session.path,
+      lastSeenAt: "2026-04-14T10:05:00.000Z",
+    }];
+    claude.sessions.set(session.sessionId, structuredClone(session));
+
+    const service = new ClaudeConversationService({
+      claude,
+      git: new FakeGitGateway(),
+      now: () => new Date("2026-04-14T12:00:00.000Z"),
+      readMeta: async (path) => structuredClone(metaStore.get(path) ?? null),
+      writeMeta: async (path, meta) => { metaStore.set(path, structuredClone(meta)); },
+    });
+
+    const result = await service.attachWorktreeConversation(worktree);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.conversation.running).toBe(false);
   });
 });

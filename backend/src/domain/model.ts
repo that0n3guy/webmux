@@ -228,6 +228,8 @@ export interface ExternalTmuxSession {
   name: string;
   windowCount: number;
   attached: boolean;
+  agentStatus?: "running" | "idle";
+  statusWord?: string | null;
 }
 
 export type ScratchSessionKind = "shell" | "agent";
@@ -252,4 +254,6 @@ export interface ScratchSessionSnapshot {
   createdAt: string;
   windowCount: number;
   attached: boolean;
+  agentStatus?: "running" | "idle";
+  statusWord?: string | null;
 }

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { SCRATCH_SESSION_PREFIX, type TmuxGateway } from "../adapters/tmux";
 import type { ScratchSessionKind, ScratchSessionMeta, ScratchSessionSnapshot } from "../domain/model";
+import { probeSessionActivity, summarizeSessionActivity } from "./session-activity-service";
 
 export interface CreateScratchSessionInput {
   displayName: string;
@@ -23,21 +24,45 @@ interface Deps {
   projectId: string;
   idGenerator?: () => string;
   now?: () => string;
+  nowDate?: () => Date;
   getAgentLaunchCommand?: (agentId: string, opts: { yolo?: boolean }) => string | null;
 }
 
-function buildSnapshot(meta: ScratchSessionMeta, byName: Map<string, { windowCount: number; attached: boolean }>): ScratchSessionSnapshot {
+function buildSnapshot(
+  meta: ScratchSessionMeta,
+  byName: Map<string, { windowCount: number; attached: boolean }>,
+  tmux: TmuxGateway,
+  nowDate: () => Date,
+): ScratchSessionSnapshot {
   const summary = byName.get(meta.sessionName);
-  return {
+  const snapshot: ScratchSessionSnapshot = {
     ...meta,
     windowCount: summary?.windowCount ?? 0,
     attached: summary?.attached ?? false,
   };
+
+  if (summary) {
+    try {
+      const windowName = tmux.getFirstWindowName(meta.sessionName);
+      if (windowName) {
+        const target = `${meta.sessionName}:${windowName}.0`;
+        const probe = probeSessionActivity(tmux, target);
+        const { running, statusWord } = summarizeSessionActivity(probe, nowDate);
+        snapshot.agentStatus = running ? "running" : "idle";
+        snapshot.statusWord = statusWord;
+      }
+    } catch {
+      // probe failure is non-fatal
+    }
+  }
+
+  return snapshot;
 }
 
 export function createScratchSessionService(deps: Deps): ScratchSessionService {
   const idGen = deps.idGenerator ?? randomUUID;
   const now = deps.now ?? (() => new Date().toISOString());
+  const nowDate = deps.nowDate ?? (() => new Date());
   const metas = new Map<string, ScratchSessionMeta>();
   const projectPrefix = `${SCRATCH_SESSION_PREFIX}${deps.projectId}-`;
 
@@ -72,7 +97,7 @@ export function createScratchSessionService(deps: Deps): ScratchSessionService {
     list() {
       const live = deps.tmux.listAllSessions();
       const byName = new Map(live.map((s) => [s.name, { windowCount: s.windowCount, attached: s.attached }] as const));
-      return [...metas.values()].map((m) => buildSnapshot(m, byName));
+      return [...metas.values()].map((m) => buildSnapshot(m, byName, deps.tmux, nowDate));
     },
     remove(id) {
       const meta = metas.get(id);

@@ -336,6 +336,7 @@ export const AgentsUiConversationStateSchema = z.object({
   running: z.boolean(),
   activeTurnId: z.string().nullable(),
   messages: z.array(AgentsUiConversationMessageSchema),
+  statusWord: z.string().nullable().optional(),
 });
 
 export const AgentsUiWorktreeConversationResponseSchema = z.object({
@@ -455,6 +456,8 @@ export const ExternalTmuxSessionSchema = z.object({
   name: z.string(),
   windowCount: z.number().int().nonnegative(),
   attached: z.boolean(),
+  agentStatus: z.enum(["running", "idle"]).optional(),
+  statusWord: z.string().nullable().optional(),
 });
 
 export const ExternalTmuxSessionListResponseSchema = z.object({
@@ -473,6 +476,8 @@ export const ScratchSessionSnapshotSchema = z.object({
   createdAt: z.string(),
   windowCount: z.number().int().nonnegative(),
   attached: z.boolean(),
+  agentStatus: z.enum(["running", "idle"]).optional(),
+  statusWord: z.string().nullable().optional(),
 });
 
 export const ScratchSessionListResponseSchema = z.object({
