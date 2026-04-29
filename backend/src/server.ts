@@ -1771,9 +1771,14 @@ Bun.serve({
 
     [apiPaths.fetchConfig]: {
       GET: (req) => {
-        // fetchConfig remains single-project for backward compat; use first project
-        const first = runtime.projectRegistry.list()[0];
-        const scope = first ? runtime.projectRegistry.get(first.id) : null;
+        const url = new URL(req.url);
+        const projectId = url.searchParams.get("projectId");
+        const scope = projectId
+          ? runtime.projectRegistry.get(projectId)
+          : (() => {
+              const first = runtime.projectRegistry.list()[0];
+              return first ? runtime.projectRegistry.get(first.id) : null;
+            })();
         if (!scope) return errorResponse("No project available", 404);
         return jsonResponse(getFrontendConfig(scope));
       },

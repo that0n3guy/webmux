@@ -62,7 +62,6 @@
   import { setToastController } from "./lib/toast-context";
   import {
     api,
-    fetchAgents,
     fetchWorktrees,
     fetchProjects,
     subscribeNotifications,
@@ -541,9 +540,9 @@
   $effect(() => {
     const id = currentProjectId;
     if (!id) return;
-    fetchAgents(id)
-      .then((details) => {
-        config.agents = details.map(({ id, label, kind, capabilities }) => ({ id, label, kind, capabilities }));
+    api.fetchConfig({ query: { projectId: id } })
+      .then((c) => {
+        config = c;
       })
       .catch(() => {});
   });

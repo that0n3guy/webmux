@@ -110,6 +110,7 @@ export const apiContract = c.router({
   fetchConfig: {
     method: "GET",
     path: apiPaths.fetchConfig,
+    query: z.object({ projectId: z.string().optional() }).optional(),
     responses: {
       200: AppConfigSchema,
     },
