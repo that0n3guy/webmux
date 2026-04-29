@@ -373,4 +373,36 @@ describe("MobileChatSurface", () => {
       expect(interruptButton).not.toBeDisabled();
     });
   });
+
+  it("ignores a second interrupt call while the first is in flight", async () => {
+    let resolveInterrupt!: (value: { conversationId: string; turnId: string; interrupted: true }) => void;
+    const interruptPromise = new Promise<{ conversationId: string; turnId: string; interrupted: true }>((resolve) => {
+      resolveInterrupt = resolve;
+    });
+
+    vi.mocked(attachWorktreeConversation).mockResolvedValue(createConversationResponse("claudeCode", {
+      running: true,
+      activeTurnId: "turn-1",
+    }));
+    vi.mocked(interruptWorktreeConversation).mockReturnValue(interruptPromise);
+    vi.mocked(fetchWorktreeConversationHistory).mockResolvedValue(createConversationResponse("claudeCode", { running: false }));
+
+    render(MobileChatSurface, {
+      props: {
+        projectId: "test-project-1",
+        worktree: createWorktree(),
+      },
+    });
+
+    const interruptButton = await screen.findByRole("button", { name: "Interrupt" });
+
+    await fireEvent.click(interruptButton);
+    await fireEvent.click(interruptButton);
+
+    await waitFor(() => {
+      expect(interruptWorktreeConversation).toHaveBeenCalledTimes(1);
+    });
+
+    resolveInterrupt({ conversationId: "session-1", turnId: "turn-1", interrupted: true });
+  });
 });
