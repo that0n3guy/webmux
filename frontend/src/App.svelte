@@ -1417,6 +1417,7 @@
       archiving={isSelectedArchiving}
     />
 
+
     {#if showMobileChat && selection?.kind === "worktree"}
       {#key selectedBranch}
         <MobileChatSurface projectId={currentProjectId!} worktree={selectedWorktree!} />
