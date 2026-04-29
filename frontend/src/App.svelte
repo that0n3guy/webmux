@@ -1141,6 +1141,7 @@
     selectedBranch = null;
     saveSelectedWorktree(null);
     selectedExternalSession = name;
+    if (isMobile) sidebarOpen = false;
   }
 
   function handleSelectScratch(projectId: string, id: string, sessionName: string): void {
@@ -1149,6 +1150,7 @@
     saveSelectedWorktree(null);
     currentProjectId = projectId;
     selectedScratchSession = { id, sessionName };
+    if (isMobile) sidebarOpen = false;
   }
 
   onMount(() => {
