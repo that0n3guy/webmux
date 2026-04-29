@@ -474,7 +474,15 @@
             : null
   );
   let canConnect = $derived(!!selectedBranch && selectedWorktree?.mux === "✓" && !selectedWorktree?.creating);
-  let showMobileChat = $derived(isMobile && canConnect && supportsWorktreeChat(selectedWorktree));
+  let mobileViewOverride = $state<"auto" | "terminal" | "chat">("auto");
+  let showMobileChat = $derived(
+    mobileViewOverride === "terminal"
+      ? false
+      : mobileViewOverride === "chat"
+        ? canConnect && supportsWorktreeChat(selectedWorktree)
+        : isMobile && canConnect && supportsWorktreeChat(selectedWorktree),
+  );
+  let showViewToggle = $derived(isMobile && canConnect && supportsWorktreeChat(selectedWorktree));
   let isSelectedOpening = $derived(selectedBranch ? openingBranches.has(selectedBranch) : false);
   let isSelectedArchiving = $derived(selectedBranch ? archivingBranches.has(selectedBranch) : false);
   let pollIntervalMs = $derived(
@@ -490,6 +498,13 @@
         ? "No active worktrees."
         : "No worktrees found.",
   );
+
+  $effect(() => {
+    selectedBranch;
+    selectedExternalSession;
+    selectedScratchSession;
+    mobileViewOverride = "auto";
+  });
 
   $effect(() => {
     // Don't auto-select a worktree while a non-worktree session is active
@@ -1397,9 +1412,14 @@
       {sshHost}
       linkedRepos={config.linkedRepos ?? []}
       {isMobile}
+      {showMobileChat}
+      {showViewToggle}
       {notificationHistory}
       {unreadCount}
       ontogglesidebar={() => (sidebarOpen = !sidebarOpen)}
+      ontoggleview={() => {
+        mobileViewOverride = showMobileChat ? "terminal" : "chat";
+      }}
       onclose={handleClose}
       onarchive={handleArchiveToggle}
       onmerge={() => {

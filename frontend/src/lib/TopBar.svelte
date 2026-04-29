@@ -17,9 +17,12 @@
     sshHost,
     linkedRepos = [],
     isMobile = false,
+    showMobileChat = false,
+    showViewToggle = false,
     notificationHistory = [],
     unreadCount = 0,
     ontogglesidebar,
+    ontoggleview,
     onclose,
     onarchive,
     onmerge,
@@ -37,9 +40,12 @@
     sshHost: string;
     linkedRepos?: LinkedRepoInfo[];
     isMobile?: boolean;
+    showMobileChat?: boolean;
+    showViewToggle?: boolean;
     notificationHistory?: AppNotification[];
     unreadCount?: number;
     ontogglesidebar?: () => void;
+    ontoggleview?: () => void;
     onclose: () => void;
     onarchive: () => void;
     onmerge: () => void;
@@ -247,6 +253,16 @@
           </div>
         {/if}
       </div>
+    {/if}
+
+    {#if showViewToggle}
+      <button
+        type="button"
+        class="p-1.5 rounded-md cursor-pointer bg-transparent border border-transparent text-muted hover:text-primary hover:border-edge"
+        title={showMobileChat ? "Switch to terminal" : "Switch to chat"}
+        aria-label={showMobileChat ? "Switch to terminal view" : "Switch to chat view"}
+        onclick={ontoggleview}
+      >{showMobileChat ? "⌨" : "💬"}</button>
     {/if}
 
     <!-- svelte-ignore a11y_no_static_element_interactions -->

@@ -43,6 +43,7 @@ export interface ClaudeCliRunHandle {
 export interface ClaudeCliGateway {
   listSessions(cwd: string): Promise<ClaudeCliSessionSummary[]>;
   readSession(sessionId: string, cwd: string): Promise<ClaudeCliSession | null>;
+  getSessionMtime(sessionId: string, cwd: string): Promise<Date | null>;
   sendMessage(
     params: {
       cwd: string;
@@ -290,6 +291,13 @@ export class ClaudeCliClient implements ClaudeCliGateway {
     const filePath = await findClaudeSessionPath(sessionId, cwd);
     if (!filePath) return null;
     return await this.readSessionFile(filePath);
+  }
+
+  async getSessionMtime(sessionId: string, cwd: string): Promise<Date | null> {
+    const filePath = await findClaudeSessionPath(sessionId, cwd);
+    if (!filePath) return null;
+    const info = await stat(filePath).catch(() => null);
+    return info ? info.mtime : null;
   }
 
   sendMessage(

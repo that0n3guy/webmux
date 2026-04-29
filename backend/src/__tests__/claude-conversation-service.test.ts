@@ -14,10 +14,11 @@ class FakeGitGateway {
   }
 }
 
-class FakeClaudeCliGateway implements Pick<ClaudeCliGateway, "listSessions" | "readSession"> {
+class FakeClaudeCliGateway implements Pick<ClaudeCliGateway, "listSessions" | "readSession" | "getSessionMtime"> {
   readonly calls: string[] = [];
   readonly sessions = new Map<string, ClaudeCliSession>();
   listedSessions: ClaudeCliSessionSummary[] = [];
+  sessionMtimes = new Map<string, Date>();
 
   async listSessions(cwd: string): Promise<ClaudeCliSessionSummary[]> {
     this.calls.push(`listSessions:${cwd}`);
@@ -27,6 +28,10 @@ class FakeClaudeCliGateway implements Pick<ClaudeCliGateway, "listSessions" | "r
   async readSession(sessionId: string, cwd: string): Promise<ClaudeCliSession | null> {
     this.calls.push(`readSession:${sessionId}:${cwd}`);
     return structuredClone(this.sessions.get(sessionId) ?? null);
+  }
+
+  async getSessionMtime(sessionId: string, _cwd: string): Promise<Date | null> {
+    return this.sessionMtimes.get(sessionId) ?? null;
   }
 }
 
@@ -291,6 +296,79 @@ describe("ClaudeConversationService — probe-driven running", () => {
     });
 
     const result = await service.attachWorktreeConversation(worktree);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.conversation.running).toBe(false);
+  });
+});
+
+describe("ClaudeConversationService — jsonl mtime fallback", () => {
+  function makeSessionAndClaude(sessionId: string, worktree: ReturnType<typeof makeWorktree>) {
+    const session = makeSession({ sessionId, cwd: worktree.path, messages: [] });
+    const claude = new FakeClaudeCliGateway();
+    claude.listedSessions = [{
+      sessionId: session.sessionId,
+      cwd: worktree.path,
+      path: session.path,
+      lastSeenAt: "2026-04-14T10:05:00.000Z",
+    }];
+    claude.sessions.set(session.sessionId, structuredClone(session));
+    return { session, claude };
+  }
+
+  it("reports running=true when pane is stale but jsonl mtime is recent", async () => {
+    const metaStore = new Map<string, WorktreeMeta>();
+    const worktree = makeWorktree();
+    metaStore.set(`${worktree.path}/.git`, makeMeta());
+
+    const now = new Date("2026-04-14T12:00:00.000Z");
+    const { session, claude } = makeSessionAndClaude("session-mtime-recent", worktree);
+    claude.sessionMtimes.set(session.sessionId, new Date(now.getTime() - 5000));
+
+    const probeGateway = new FakeProbeGateway();
+    probeGateway.lastActivityAt = new Date(now.getTime() - 20000).toISOString();
+
+    const service = new ClaudeConversationService({
+      claude,
+      git: new FakeGitGateway(),
+      now: () => now,
+      readMeta: async (path) => structuredClone(metaStore.get(path) ?? null),
+      writeMeta: async (path, meta) => { metaStore.set(path, structuredClone(meta)); },
+    });
+
+    const result = await service.attachWorktreeConversation(worktree, {
+      tmux: probeGateway as unknown as TmuxGateway,
+      projectRoot: "/tmp/worktrees/claude-feature",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.conversation.running).toBe(true);
+  });
+
+  it("reports running=false when pane is stale and jsonl mtime is also stale", async () => {
+    const metaStore = new Map<string, WorktreeMeta>();
+    const worktree = makeWorktree();
+    metaStore.set(`${worktree.path}/.git`, makeMeta());
+
+    const now = new Date("2026-04-14T12:00:00.000Z");
+    const { session, claude } = makeSessionAndClaude("session-mtime-stale", worktree);
+    claude.sessionMtimes.set(session.sessionId, new Date(now.getTime() - 30000));
+
+    const probeGateway = new FakeProbeGateway();
+    probeGateway.lastActivityAt = new Date(now.getTime() - 20000).toISOString();
+
+    const service = new ClaudeConversationService({
+      claude,
+      git: new FakeGitGateway(),
+      now: () => now,
+      readMeta: async (path) => structuredClone(metaStore.get(path) ?? null),
+      writeMeta: async (path, meta) => { metaStore.set(path, structuredClone(meta)); },
+    });
+
+    const result = await service.attachWorktreeConversation(worktree, {
+      tmux: probeGateway as unknown as TmuxGateway,
+      projectRoot: "/tmp/worktrees/claude-feature",
+    });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.data.conversation.running).toBe(false);
