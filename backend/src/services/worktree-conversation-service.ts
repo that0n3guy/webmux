@@ -89,7 +89,7 @@ function findActiveTurn(thread: CodexAppServerThread): CodexAppServerTurn | null
   return null;
 }
 
-function extractCodexToolSummary(item: CodexAppServerGenericItem): { name: string; summary: string } | null {
+function extractCodexToolSummary(item: CodexAppServerGenericItem): { name: string; summary: string; details: string } | null {
   if (item.type !== "toolCall" && item.type !== "toolUse") return null;
   const raw = item as CodexAppServerGenericItem & Record<string, unknown>;
   const name = typeof raw.name === "string" ? raw.name : typeof raw.tool === "string" ? raw.tool : "Tool";
@@ -98,7 +98,8 @@ function extractCodexToolSummary(item: CodexAppServerGenericItem): { name: strin
     : isRecord(raw.parameters) ? raw.parameters
     : {};
   const summary = formatCodexToolSummary(name, args);
-  return { name, summary };
+  const details = JSON.stringify(args, null, 2);
+  return { name, summary, details };
 }
 
 function formatCodexToolSummary(name: string, args: Record<string, unknown>): string {
@@ -173,6 +174,7 @@ function buildConversationMessages(thread: CodexAppServerThread): AgentsUiConver
           summary: toolInfo.summary,
           status: "ok",
           createdAt: toIsoTimestamp(turn.startedAt),
+          details: toolInfo.details,
         });
         continue;
       }
@@ -193,6 +195,7 @@ function buildConversationMessages(thread: CodexAppServerThread): AgentsUiConver
             turnId: turn.id,
             text: truncated,
             createdAt: toIsoTimestamp(turn.startedAt),
+            details: thinkingText,
           });
         }
       }

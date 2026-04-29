@@ -20,6 +20,7 @@ export interface ClaudeCliToolEvent {
   summary: string;
   status: "running" | "ok" | "error";
   createdAt: string | null;
+  details?: string;
 }
 
 export interface ClaudeCliThinkingEvent {
@@ -28,6 +29,7 @@ export interface ClaudeCliThinkingEvent {
   turnId: string;
   text: string;
   createdAt: string | null;
+  details?: string;
 }
 
 export type ClaudeCliConversationEvent = ClaudeCliTextMessage | ClaudeCliToolEvent | ClaudeCliThinkingEvent;
@@ -275,6 +277,7 @@ function parseAssistantContentBlocks(
       const toolId = typeof block.id === "string" ? block.id : record.uuid;
       const input = isRecord(block.input) ? block.input : {};
       const summary = formatToolSummary(name, input);
+      const details = JSON.stringify(input, null, 2);
       events.push({
         kind: "tool",
         id: toolId,
@@ -284,6 +287,7 @@ function parseAssistantContentBlocks(
         summary,
         status: "ok",
         createdAt,
+        details,
       });
       pendingToolIds.add(toolId);
       continue;
@@ -300,6 +304,7 @@ function parseAssistantContentBlocks(
           turnId,
           text,
           createdAt,
+          details: thinking,
         });
       }
       continue;

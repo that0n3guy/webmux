@@ -146,6 +146,7 @@ describe("claude-cli adapter", () => {
       turnId: "user-1",
       text: "I should read the file first.",
       createdAt: "2026-04-28T10:00:05.000Z",
+      details: "I should read the file first.\nThen summarize.",
     });
 
     expect(toolMsg).toEqual({
@@ -157,6 +158,7 @@ describe("claude-cli adapter", () => {
       summary: "frontend/src/lib/types.ts:1-50",
       status: "ok",
       createdAt: "2026-04-28T10:00:05.000Z",
+      details: JSON.stringify({ file_path: "frontend/src/lib/types.ts", start_line: 1, end_line: 50 }, null, 2),
     });
 
     expect(assistantMsg).toMatchObject({
@@ -164,6 +166,57 @@ describe("claude-cli adapter", () => {
       turnId: "user-1",
       text: "Here are the file contents.",
       status: "completed",
+    });
+  });
+
+  it("populates details with full JSON input for tool events and full text for thinking events", () => {
+    const session = buildClaudeSessionFromText({
+      path: "/tmp/session.jsonl",
+      sessionId: "session-details",
+      text: [
+        JSON.stringify({
+          type: "user",
+          uuid: "user-1",
+          timestamp: "2026-04-28T10:00:00.000Z",
+          cwd: "/tmp/repo",
+          message: { role: "user", content: "Think and act\n" },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          uuid: "assistant-details",
+          timestamp: "2026-04-28T10:00:05.000Z",
+          message: {
+            role: "assistant",
+            stop_reason: "end_turn",
+            content: [
+              {
+                type: "thinking",
+                thinking: "Line one.\nLine two.\nLine three.",
+              },
+              {
+                type: "tool_use",
+                id: "tool-details-1",
+                name: "Bash",
+                input: { command: "bun test", timeout: 30 },
+              },
+            ],
+          },
+        }),
+      ].join("\n"),
+    });
+
+    const thinkMsg = session.messages.find((m) => m.kind === "thinking");
+    expect(thinkMsg).toMatchObject({
+      kind: "thinking",
+      text: "Line one.",
+      details: "Line one.\nLine two.\nLine three.",
+    });
+
+    const toolMsg = session.messages.find((m) => m.kind === "tool");
+    expect(toolMsg).toMatchObject({
+      kind: "tool",
+      name: "Bash",
+      details: JSON.stringify({ command: "bun test", timeout: 30 }, null, 2),
     });
   });
 

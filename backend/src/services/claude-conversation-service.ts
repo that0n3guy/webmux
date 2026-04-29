@@ -91,6 +91,7 @@ function normalizeSessionMessages(messages: ClaudeCliConversationEvent[]): Agent
         summary: event.summary,
         status: event.status,
         createdAt: event.createdAt,
+        ...(event.details !== undefined ? { details: event.details } : {}),
       }];
     }
     if (event.kind === "thinking") {
@@ -100,6 +101,7 @@ function normalizeSessionMessages(messages: ClaudeCliConversationEvent[]): Agent
         turnId: event.turnId,
         text: event.text,
         createdAt: event.createdAt,
+        ...(event.details !== undefined ? { details: event.details } : {}),
       }];
     }
     return [];

@@ -614,6 +614,7 @@ describe("buildConversationState — tool and thinking items", () => {
       kind: "tool",
       name: "bash",
       status: "ok",
+      details: JSON.stringify({ command: "grep -r foo src/" }, null, 2),
     });
   });
 
@@ -651,6 +652,45 @@ describe("buildConversationState — tool and thinking items", () => {
     expect(thinkMsg).toMatchObject({
       kind: "thinking",
       text: "I should break this down step by step.",
+      details: "I should break this down step by step.",
+    });
+  });
+
+  it("populates details with full text for multi-line reasoning items", () => {
+    const fullText = "First thought.\nSecond thought.\nThird thought.";
+    const thread = makeThread({
+      id: "thread-thinking-ml",
+      cwd: "/tmp/worktree",
+      updatedAt: 200,
+      statusType: "idle",
+      source: "cli",
+      turns: [
+        makeTurn({
+          id: "turn-1",
+          status: "completed",
+          startedAt: 111,
+          items: [
+            {
+              type: "userMessage",
+              id: "user-1",
+              content: [{ type: "text", text: "Think deeply" }],
+            },
+            {
+              type: "reasoning",
+              id: "think-ml",
+              text: fullText,
+            } as unknown as import("../adapters/codex-app-server").CodexAppServerGenericItem,
+          ],
+        }),
+      ],
+    });
+
+    const state = buildConversationState(thread);
+    const thinkMsg = state.messages.find((m) => m.kind === "thinking");
+    expect(thinkMsg).toMatchObject({
+      kind: "thinking",
+      text: "First thought.",
+      details: fullText,
     });
   });
 });

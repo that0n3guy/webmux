@@ -53,6 +53,7 @@ export type AgentsUiConversationMessage =
       summary: string;
       status: "running" | "ok" | "error";
       createdAt: string | null;
+      details?: string;
     }
   | {
       kind: "thinking";
@@ -60,6 +61,7 @@ export type AgentsUiConversationMessage =
       turnId: string;
       text: string;
       createdAt: string | null;
+      details?: string;
     };
 
 export interface AgentsUiConversationState {

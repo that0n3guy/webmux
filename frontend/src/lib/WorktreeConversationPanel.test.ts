@@ -165,6 +165,112 @@ describe("WorktreeConversationPanel", () => {
     expect(screen.getByText("· I should analyze this carefully.")).toBeInTheDocument();
   });
 
+  it("tool row without details has no chevron and no expand affordance", () => {
+    renderPanel({
+      conversation: createConversation({
+        messages: [
+          {
+            kind: "tool",
+            id: "tool-no-details",
+            turnId: "turn-1",
+            name: "Read",
+            summary: "src/foo.ts",
+            status: "ok",
+            createdAt: null,
+          },
+        ],
+      }),
+    });
+
+    expect(screen.queryByText("▾")).not.toBeInTheDocument();
+    expect(screen.queryByText("▴")).not.toBeInTheDocument();
+  });
+
+  it("thinking row without details has no chevron", () => {
+    renderPanel({
+      conversation: createConversation({
+        messages: [
+          {
+            kind: "thinking",
+            id: "think-no-details",
+            turnId: "turn-1",
+            text: "Plain thinking.",
+            createdAt: null,
+          },
+        ],
+      }),
+    });
+
+    expect(screen.queryByText("▾")).not.toBeInTheDocument();
+    expect(screen.queryByText("▴")).not.toBeInTheDocument();
+  });
+
+  it("clicking a tool row with details toggles aria-expanded and shows the details block", async () => {
+    const details = '{\n  "file_path": "src/lib/types.ts"\n}';
+    renderPanel({
+      conversation: createConversation({
+        messages: [
+          {
+            kind: "tool",
+            id: "tool-with-details",
+            turnId: "turn-1",
+            name: "Read",
+            summary: "src/lib/types.ts",
+            status: "ok",
+            createdAt: null,
+            details,
+          },
+        ],
+      }),
+    });
+
+    const toolButton = screen.getByRole("button", { name: /▸ Read/ });
+    expect(toolButton).toHaveAttribute("aria-expanded", "false");
+    expect(document.querySelector("pre")).not.toBeInTheDocument();
+
+    await fireEvent.click(toolButton);
+    expect(toolButton).toHaveAttribute("aria-expanded", "true");
+    const pre = document.querySelector("pre");
+    expect(pre).toBeInTheDocument();
+    expect(pre?.textContent).toBe(details);
+
+    await fireEvent.click(toolButton);
+    expect(toolButton).toHaveAttribute("aria-expanded", "false");
+    expect(document.querySelector("pre")).not.toBeInTheDocument();
+  });
+
+  it("clicking a thinking row with details toggles aria-expanded and shows the details block", async () => {
+    const details = "First line.\nSecond line.\nThird line.";
+    renderPanel({
+      conversation: createConversation({
+        messages: [
+          {
+            kind: "thinking",
+            id: "think-with-details",
+            turnId: "turn-1",
+            text: "First line.",
+            createdAt: null,
+            details,
+          },
+        ],
+      }),
+    });
+
+    const thinkButton = screen.getByRole("button", { name: /· First line\./ });
+    expect(thinkButton).toHaveAttribute("aria-expanded", "false");
+    expect(document.querySelector("pre")).not.toBeInTheDocument();
+
+    await fireEvent.click(thinkButton);
+    expect(thinkButton).toHaveAttribute("aria-expanded", "true");
+    const pre = document.querySelector("pre");
+    expect(pre).toBeInTheDocument();
+    expect(pre?.textContent).toBe(details);
+
+    await fireEvent.click(thinkButton);
+    expect(thinkButton).toHaveAttribute("aria-expanded", "false");
+    expect(document.querySelector("pre")).not.toBeInTheDocument();
+  });
+
   it("renders tool and thinking events between user and assistant bubbles", () => {
     renderPanel({
       conversation: createConversation({

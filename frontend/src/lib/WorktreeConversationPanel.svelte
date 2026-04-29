@@ -61,6 +61,17 @@
   let transcriptViewport = $state<HTMLDivElement | null>(null);
   let isPinnedToBottom = $state(true);
   let lastConversationId = $state<string | null>(null);
+  let expandedIds = $state<Set<string>>(new Set());
+
+  function toggleExpanded(id: string): void {
+    const next = new Set(expandedIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    expandedIds = next;
+  }
 
   function handleTranscriptScroll(): void {
     if (!transcriptViewport) return;
@@ -182,20 +193,48 @@
                 {/if}
               </div>
             {:else if message.kind === "tool"}
-              <div class="flex min-w-0 items-center gap-1.5 self-start px-1 text-xs text-muted">
-                {#if message.status === "running"}
-                  <span class="inline-block h-3 w-3 animate-spin rounded-full border border-muted border-t-transparent"></span>
-                {:else if message.status === "error"}
-                  <span class="text-danger">✗</span>
-                {:else}
-                  <span class="text-success">✓</span>
+              <div class="min-w-0 self-start">
+                <button
+                  type="button"
+                  class="flex min-h-6 min-w-0 cursor-default items-center gap-1.5 px-1 text-xs text-muted {message.details ? 'cursor-pointer' : ''}"
+                  aria-expanded={message.details ? expandedIds.has(message.id) : undefined}
+                  onclick={() => { if (message.details) toggleExpanded(message.id); }}
+                  disabled={!message.details}
+                >
+                  {#if message.details}
+                    <span class="shrink-0 text-[10px] opacity-60">{expandedIds.has(message.id) ? "▴" : "▾"}</span>
+                  {/if}
+                  {#if message.status === "running"}
+                    <span class="inline-block h-3 w-3 animate-spin rounded-full border border-muted border-t-transparent"></span>
+                  {:else if message.status === "error"}
+                    <span class="text-danger">✗</span>
+                  {:else}
+                    <span class="text-success">✓</span>
+                  {/if}
+                  <span class="shrink-0 font-medium">▸ {message.name}</span>
+                  <span class="truncate overflow-hidden whitespace-nowrap text-ellipsis opacity-70">{message.summary}</span>
+                </button>
+                {#if message.details && expandedIds.has(message.id)}
+                  <pre class="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-topbar px-2 py-1.5 text-[11px] text-muted opacity-80">{message.details}</pre>
                 {/if}
-                <span class="shrink-0 font-medium">▸ {message.name}</span>
-                <span class="truncate overflow-hidden whitespace-nowrap text-ellipsis opacity-70">{message.summary}</span>
               </div>
             {:else if message.kind === "thinking"}
-              <div class="min-w-0 self-start px-1 text-xs italic text-muted opacity-60">
-                <span class="truncate overflow-hidden whitespace-nowrap text-ellipsis">· {message.text}</span>
+              <div class="min-w-0 self-start">
+                <button
+                  type="button"
+                  class="flex min-h-6 min-w-0 items-center gap-1 px-1 text-xs italic text-muted opacity-60 {message.details ? 'cursor-pointer' : 'cursor-default'}"
+                  aria-expanded={message.details ? expandedIds.has(message.id) : undefined}
+                  onclick={() => { if (message.details) toggleExpanded(message.id); }}
+                  disabled={!message.details}
+                >
+                  {#if message.details}
+                    <span class="shrink-0 text-[10px] not-italic">{expandedIds.has(message.id) ? "▴" : "▾"}</span>
+                  {/if}
+                  <span class="truncate overflow-hidden whitespace-nowrap text-ellipsis">· {message.text}</span>
+                </button>
+                {#if message.details && expandedIds.has(message.id)}
+                  <pre class="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-topbar px-2 py-1.5 text-[11px] text-muted opacity-80">{message.details}</pre>
+                {/if}
               </div>
             {/if}
           {/each}

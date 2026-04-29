@@ -346,6 +346,7 @@ const AgentsUiConversationMessageToolSchema = z.object({
   summary: z.string(),
   status: z.enum(["running", "ok", "error"]),
   createdAt: z.string().nullable(),
+  details: z.string().optional(),
 });
 
 const AgentsUiConversationMessageThinkingSchema = z.object({
@@ -354,6 +355,7 @@ const AgentsUiConversationMessageThinkingSchema = z.object({
   turnId: z.string(),
   text: z.string(),
   createdAt: z.string().nullable(),
+  details: z.string().optional(),
 });
 
 export const AgentsUiConversationMessageSchema = z.discriminatedUnion("kind", [
