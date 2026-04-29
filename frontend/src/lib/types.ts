@@ -70,6 +70,11 @@ export type Selection =
   | { kind: "scratch"; projectId: string; id: string; sessionName: string }
   | { kind: "external"; sessionName: string };
 
+export type SessionTarget =
+  | { kind: "worktree"; projectId: string; branch: string }
+  | { kind: "scratch"; projectId: string; scratchId: string }
+  | { kind: "external"; sessionName: string };
+
 export interface FileUploadResult {
   files: Array<{ path: string }>;
 }

@@ -100,6 +100,21 @@
     return agent?.capabilities.inAppChat ?? (worktree.agentName === "codex" || worktree.agentName === "claude");
   }
 
+  function supportsSessionChat(sel: Selection | null): boolean {
+    if (!sel) return false;
+    if (sel.kind === "worktree") {
+      return canConnect && supportsWorktreeChat(selectedWorktree);
+    }
+    if (sel.kind === "scratch") {
+      const sessions = scratchByProject.get(sel.projectId) ?? [];
+      const session = sessions.find((s) => s.id === sel.id);
+      if (!session?.agentId) return false;
+      const agent = config.agents.find((candidate) => candidate.id === session.agentId);
+      return agent?.capabilities.inAppChat ?? (session.agentId === "claude" || session.agentId === "codex");
+    }
+    return false;
+  }
+
   let config = $state<AppConfig>(createDefaultConfig());
   let projects = $state<ProjectInfo[]>([]);
   let currentProjectId = $state<string | null>(null);
@@ -479,10 +494,10 @@
     mobileViewOverride === "terminal"
       ? false
       : mobileViewOverride === "chat"
-        ? canConnect && supportsWorktreeChat(selectedWorktree)
-        : isMobile && canConnect && supportsWorktreeChat(selectedWorktree),
+        ? supportsSessionChat(selection)
+        : isMobile && supportsSessionChat(selection),
   );
-  let showViewToggle = $derived(isMobile && canConnect && supportsWorktreeChat(selectedWorktree));
+  let showViewToggle = $derived(isMobile && supportsSessionChat(selection));
   let isSelectedOpening = $derived(selectedBranch ? openingBranches.has(selectedBranch) : false);
   let isSelectedArchiving = $derived(selectedBranch ? archivingBranches.has(selectedBranch) : false);
   let pollIntervalMs = $derived(
@@ -1441,6 +1456,13 @@
     {#if showMobileChat && selection?.kind === "worktree"}
       {#key selectedBranch}
         <MobileChatSurface projectId={currentProjectId!} worktree={selectedWorktree!} />
+      {/key}
+    {:else if showMobileChat && selection?.kind === "scratch"}
+      {#key selection.id}
+        <MobileChatSurface
+          projectId={currentProjectId!}
+          target={{ kind: "scratch", projectId: currentProjectId!, scratchId: selection.id }}
+        />
       {/key}
     {:else if selection && (selection.kind !== "worktree" || canConnect)}
       {#key selection.kind === "worktree" ? selection.branch : selection.kind === "external" ? selection.sessionName : selection.id}

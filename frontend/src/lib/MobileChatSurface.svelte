@@ -1,31 +1,33 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import {
-    attachWorktreeConversation,
-    connectWorktreeConversationStream,
-    fetchWorktreeConversationHistory,
-    interruptWorktreeConversation,
-    sendWorktreeConversationMessage,
-  } from "./api";
-  import {
     applyConversationMessageDelta,
     buildConversationProgressSignature,
     markConversationTurnStarted,
   } from "./worktree-conversation";
+  import { makeConversationClient } from "./session-conversation-client";
   import type {
     AgentsUiConversationEvent,
     AgentsUiConversationState,
     AgentsUiWorktreeConversationResponse,
+    SessionTarget,
     WorktreeInfo,
   } from "./types";
   import WorktreeConversationPanel from "./WorktreeConversationPanel.svelte";
 
   interface Props {
     projectId: string;
-    worktree: WorktreeInfo;
+    worktree?: WorktreeInfo;
+    target?: SessionTarget;
   }
 
-  const { projectId, worktree }: Props = $props();
+  const { projectId, worktree, target }: Props = $props();
+
+  const resolvedTarget = $derived<SessionTarget>(
+    target ?? (worktree ? { kind: "worktree", projectId, branch: worktree.branch } : { kind: "worktree", projectId, branch: "" }),
+  );
+
+  const client = $derived(makeConversationClient(resolvedTarget));
 
   let conversation = $state<AgentsUiConversationState | null>(null);
   let conversationError = $state<string | null>(null);
@@ -109,7 +111,7 @@
     }
 
     closeConversationStream();
-    const disconnect = connectWorktreeConversationStream(projectId, worktree.branch, {
+    const disconnect = client.connectStream({
       onEvent: (event) => {
         handleConversationStreamEvent(conversationId, event);
       },
@@ -124,9 +126,7 @@
   }
 
   function requestConversation(mode: "attach" | "history"): Promise<AgentsUiWorktreeConversationResponse> {
-    return mode === "attach"
-      ? attachWorktreeConversation(projectId, worktree.branch)
-      : fetchWorktreeConversationHistory(projectId, worktree.branch);
+    return mode === "attach" ? client.attach() : client.fetchHistory();
   }
 
   async function loadConversation(mode: "attach" | "history"): Promise<void> {
@@ -195,7 +195,7 @@
     isSending = true;
     conversationError = null;
     try {
-      const response = await sendWorktreeConversationMessage(projectId, worktree.branch, { text });
+      const response = await client.sendMessage({ text });
       composerText = "";
       if (conversation.conversationId !== response.conversationId) {
         conversation = {
@@ -219,7 +219,7 @@
     isInterrupting = true;
     conversationError = null;
     try {
-      await interruptWorktreeConversation(projectId, worktree.branch);
+      await client.interrupt();
       startRefreshPolling(baselineConversation);
     } catch (error) {
       conversationError = error instanceof Error ? error.message : String(error);
@@ -268,6 +268,7 @@
 
 <WorktreeConversationPanel
   {worktree}
+  target={resolvedTarget}
   {conversation}
   {conversationError}
   {conversationLoading}

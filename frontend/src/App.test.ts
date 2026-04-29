@@ -26,11 +26,20 @@ vi.mock("./lib/api", () => ({
   fetchScratchSessions: vi.fn(),
   subscribeNotifications: vi.fn(),
   openWorktree: vi.fn(),
+  createScratchSession: vi.fn(),
+  removeScratchSession: vi.fn(),
+  createProject: vi.fn(),
+  removeProject: vi.fn(),
+  attachScratchConversation: vi.fn(),
+  fetchScratchConversationHistory: vi.fn(),
+  sendScratchConversationMessage: vi.fn(),
+  interruptScratchConversation: vi.fn(),
+  connectScratchConversationStream: vi.fn(),
 }));
 
 import App from "./App.svelte";
-import { api, fetchAgents, fetchWorktrees, fetchProjects, fetchExternalSessions, fetchScratchSessions, subscribeNotifications, openWorktree } from "./lib/api";
-import type { ProjectInfo } from "./lib/types";
+import { api, fetchAgents, fetchWorktrees, fetchProjects, fetchExternalSessions, fetchScratchSessions, subscribeNotifications, openWorktree, attachScratchConversation, connectScratchConversationStream } from "./lib/api";
+import type { ProjectInfo, ScratchSessionSnapshot } from "./lib/types";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -888,5 +897,75 @@ describe("App create selection", () => {
 
     const codexItem = screen.getByRole("menuitem", { name: /Codex/ });
     expect(codexItem).not.toBeDisabled();
+  });
+
+  it("shows the chat/terminal view toggle on mobile when a scratch+claude session is selected", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: query === "(max-width: 768px)",
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    const scratchSession: ScratchSessionSnapshot = {
+      id: "scratch-1",
+      sessionName: "wm-scratch-test-project-1-scratch-1",
+      displayName: "My AI Session",
+      kind: "agent",
+      agentId: "claude",
+      cwd: "/tmp",
+      createdAt: "2026-04-28T12:00:00.000Z",
+      windowCount: 1,
+      attached: false,
+    };
+
+    vi.mocked(fetchScratchSessions).mockResolvedValue([scratchSession]);
+    vi.mocked(connectScratchConversationStream).mockReturnValue(() => {});
+    vi.mocked(attachScratchConversation).mockResolvedValue({
+      worktree: {
+        branch: "",
+        path: "",
+        archived: false,
+        dirty: false,
+        unpushed: false,
+        status: "idle",
+        services: [],
+        prs: [],
+        creating: false,
+        creationPhase: null,
+        agentName: "claude",
+        agentLabel: "Claude",
+        profile: null,
+        mux: false,
+        conversation: null,
+      },
+      conversation: {
+        provider: "claudeCode",
+        conversationId: "session-1",
+        cwd: "/tmp",
+        running: false,
+        activeTurnId: null,
+        messages: [],
+      },
+    });
+
+    render(App);
+
+    await screen.findByText("My AI Session");
+    await fireEvent.click(screen.getByText("My AI Session"));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTitle("Switch to chat") ?? screen.queryByTitle("Switch to terminal"),
+      ).toBeTruthy();
+    });
   });
 });

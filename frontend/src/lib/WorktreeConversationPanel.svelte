@@ -1,9 +1,10 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import type { AgentsUiConversationState, WorktreeInfo } from "./types";
+  import type { AgentsUiConversationState, SessionTarget, WorktreeInfo } from "./types";
 
   interface Props {
-    worktree: WorktreeInfo;
+    worktree?: WorktreeInfo;
+    target?: SessionTarget;
     conversation: AgentsUiConversationState | null;
     conversationError: string | null;
     conversationLoading: boolean;
@@ -19,6 +20,7 @@
 
   const {
     worktree,
+    target,
     conversation,
     conversationError,
     conversationLoading,
@@ -32,9 +34,20 @@
     onSend,
   }: Props = $props();
 
-  const agentLabel = $derived(worktree.agentLabel ?? (worktree.agentName === "claude" ? "Claude" : "Codex"));
-  const supportsAgentChat = $derived(worktree.agentName === "codex" || worktree.agentName === "claude");
-  const chatAvailable = $derived(supportsAgentChat && worktree.mux === "✓");
+  const agentLabel = $derived(
+    worktree?.agentLabel
+      ?? (worktree?.agentName === "claude" ? "Claude" : worktree?.agentName === "codex" ? "Codex" : "Agent"),
+  );
+  const supportsAgentChat = $derived(
+    worktree
+      ? worktree.agentName === "codex" || worktree.agentName === "claude"
+      : target?.kind === "scratch" || target?.kind === "external",
+  );
+  const chatAvailable = $derived(
+    worktree
+      ? supportsAgentChat && worktree.mux === "✓"
+      : supportsAgentChat,
+  );
   const showInterrupt = $derived(chatAvailable && (conversation?.running ?? false));
   const canSend = $derived(
     chatAvailable
@@ -110,7 +123,7 @@
 
 {#if !supportsAgentChat}
   <div class="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted">
-    Chat is not available for this worktree yet.
+    Chat is not available for this session yet.
   </div>
 {:else if !chatAvailable}
   <div class="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted">

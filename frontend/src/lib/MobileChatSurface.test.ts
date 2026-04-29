@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AgentsUiSendMessageResponse,
   AgentsUiWorktreeConversationResponse,
+  SessionTarget,
   WorktreeInfo,
 } from "./types";
 
@@ -12,6 +13,16 @@ vi.mock("./api", () => ({
   fetchWorktreeConversationHistory: vi.fn(),
   interruptWorktreeConversation: vi.fn(),
   sendWorktreeConversationMessage: vi.fn(),
+  attachScratchConversation: vi.fn(),
+  connectScratchConversationStream: vi.fn(),
+  fetchScratchConversationHistory: vi.fn(),
+  interruptScratchConversation: vi.fn(),
+  sendScratchConversationMessage: vi.fn(),
+  attachExternalConversation: vi.fn(),
+  connectExternalConversationStream: vi.fn(),
+  fetchExternalConversationHistory: vi.fn(),
+  interruptExternalConversation: vi.fn(),
+  sendExternalConversationMessage: vi.fn(),
 }));
 
 import MobileChatSurface from "./MobileChatSurface.svelte";
@@ -21,6 +32,10 @@ import {
   fetchWorktreeConversationHistory,
   interruptWorktreeConversation,
   sendWorktreeConversationMessage,
+  attachScratchConversation,
+  connectScratchConversationStream,
+  fetchScratchConversationHistory,
+  sendScratchConversationMessage,
 } from "./api";
 
 function createWorktree(overrides: Partial<WorktreeInfo> = {}): WorktreeInfo {
@@ -101,6 +116,7 @@ describe("MobileChatSurface", () => {
     vi.useFakeTimers();
     vi.clearAllMocks();
     vi.mocked(connectWorktreeConversationStream).mockReturnValue(() => {});
+    vi.mocked(connectScratchConversationStream).mockReturnValue(() => {});
   });
 
   afterEach(() => {
@@ -404,5 +420,71 @@ describe("MobileChatSurface", () => {
     });
 
     resolveInterrupt({ conversationId: "session-1", turnId: "turn-1", interrupted: true });
+  });
+
+  it("calls scratch API when rendered with a scratch target", async () => {
+    vi.mocked(attachScratchConversation).mockResolvedValue(createConversationResponse("claudeCode"));
+    vi.mocked(sendScratchConversationMessage).mockResolvedValue({
+      conversationId: "session-1",
+      turnId: "turn-1",
+      running: true,
+    } satisfies AgentsUiSendMessageResponse);
+    vi.mocked(fetchScratchConversationHistory).mockResolvedValue(createConversationResponse("claudeCode", {
+      running: false,
+      messages: [
+        {
+          id: "user-1",
+          turnId: "turn-1",
+          role: "user",
+          text: "Hello scratch",
+          status: "completed",
+          createdAt: "2026-04-28T12:00:00.000Z",
+        },
+        {
+          id: "assistant-1",
+          turnId: "turn-1",
+          role: "assistant",
+          text: "Scratch response.",
+          status: "completed",
+          createdAt: "2026-04-28T12:00:01.000Z",
+        },
+      ],
+    }));
+
+    const scratchTarget: SessionTarget = {
+      kind: "scratch",
+      projectId: "test-project-1",
+      scratchId: "scratch-abc",
+    };
+
+    render(MobileChatSurface, {
+      props: {
+        projectId: "test-project-1",
+        target: scratchTarget,
+      },
+    });
+
+    await screen.findByText("No messages yet. Send the first prompt to start this chat.");
+
+    expect(attachScratchConversation).toHaveBeenCalledWith("test-project-1", "scratch-abc");
+    expect(attachWorktreeConversation).not.toHaveBeenCalled();
+
+    await fireEvent.input(screen.getByLabelText("Message"), {
+      target: { value: "Hello scratch" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(sendScratchConversationMessage).toHaveBeenCalledWith("test-project-1", "scratch-abc", { text: "Hello scratch" });
+    });
+    expect(sendWorktreeConversationMessage).not.toHaveBeenCalled();
+    await screen.findByText("Hello scratch");
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await waitFor(() => {
+      expect(fetchScratchConversationHistory).toHaveBeenCalledWith("test-project-1", "scratch-abc");
+    });
+    await screen.findByText("Scratch response.");
   });
 });

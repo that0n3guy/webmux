@@ -18,6 +18,7 @@ import type {
   ValidateCustomAgentResponse,
   WorktreeInfo,
 } from "./types";
+import type { SessionTarget } from "./types";
 
 export const api = createApi("");
 
@@ -97,6 +98,63 @@ export function interruptWorktreeConversation(projectId: string, branch: string)
   });
 }
 
+export function attachScratchConversation(projectId: string, scratchId: string): Promise<AgentsUiWorktreeConversationResponse> {
+  return api.attachAgentsScratchConversation({
+    params: { projectId, id: scratchId },
+  });
+}
+
+export function fetchScratchConversationHistory(projectId: string, scratchId: string): Promise<AgentsUiWorktreeConversationResponse> {
+  return api.fetchAgentsScratchConversationHistory({
+    params: { projectId, id: scratchId },
+  });
+}
+
+export function sendScratchConversationMessage(
+  projectId: string,
+  scratchId: string,
+  body: AgentsUiSendMessageRequest,
+): Promise<AgentsUiSendMessageResponse> {
+  return api.sendAgentsScratchConversationMessage({
+    params: { projectId, id: scratchId },
+    body,
+  });
+}
+
+export function interruptScratchConversation(projectId: string, scratchId: string): Promise<AgentsUiInterruptResponse> {
+  return api.interruptAgentsScratchConversation({
+    params: { projectId, id: scratchId },
+  });
+}
+
+export function attachExternalConversation(name: string): Promise<AgentsUiWorktreeConversationResponse> {
+  return api.attachAgentsExternalConversation({
+    params: { name },
+  });
+}
+
+export function fetchExternalConversationHistory(name: string): Promise<AgentsUiWorktreeConversationResponse> {
+  return api.fetchAgentsExternalConversationHistory({
+    params: { name },
+  });
+}
+
+export function sendExternalConversationMessage(
+  name: string,
+  body: AgentsUiSendMessageRequest,
+): Promise<AgentsUiSendMessageResponse> {
+  return api.sendAgentsExternalConversationMessage({
+    params: { name },
+    body,
+  });
+}
+
+export function interruptExternalConversation(name: string): Promise<AgentsUiInterruptResponse> {
+  return api.interruptAgentsExternalConversation({
+    params: { name },
+  });
+}
+
 function withProjectAndWorktree(path: string, projectId: string, branch: string): string {
   return path.replace(":projectId", encodeURIComponent(projectId)).replace(":name", encodeURIComponent(branch));
 }
@@ -110,10 +168,22 @@ export function connectWorktreeConversationStream(
     onClose?: () => void;
   },
 ): () => void {
+  return openConversationStream(
+    withProjectAndWorktree(apiPaths.streamAgentsWorktreeConversation, projectId, branch),
+    callbacks,
+  );
+}
+
+function openConversationStream(
+  wsPath: string,
+  callbacks: {
+    onEvent: (event: AgentsUiConversationEvent) => void;
+    onError: (message: string) => void;
+    onClose?: () => void;
+  },
+): () => void {
   const socket = new WebSocket(
-    `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}${
-      withProjectAndWorktree(apiPaths.streamAgentsWorktreeConversation, projectId, branch)
-    }`,
+    `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}${wsPath}`,
   );
   let closedByClient = false;
 
@@ -140,6 +210,34 @@ export function connectWorktreeConversationStream(
     closedByClient = true;
     socket.close();
   };
+}
+
+export function connectScratchConversationStream(
+  projectId: string,
+  scratchId: string,
+  callbacks: {
+    onEvent: (event: AgentsUiConversationEvent) => void;
+    onError: (message: string) => void;
+    onClose?: () => void;
+  },
+): () => void {
+  const wsPath = apiPaths.streamAgentsScratchConversation
+    .replace(":projectId", encodeURIComponent(projectId))
+    .replace(":id", encodeURIComponent(scratchId));
+  return openConversationStream(wsPath, callbacks);
+}
+
+export function connectExternalConversationStream(
+  sessionName: string,
+  callbacks: {
+    onEvent: (event: AgentsUiConversationEvent) => void;
+    onError: (message: string) => void;
+    onClose?: () => void;
+  },
+): () => void {
+  const wsPath = apiPaths.streamAgentsExternalConversation
+    .replace(":name", encodeURIComponent(sessionName));
+  return openConversationStream(wsPath, callbacks);
 }
 
 export function fetchAgents(projectId: string): Promise<AgentDetails[]> {
