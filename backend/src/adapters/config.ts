@@ -38,7 +38,6 @@ interface LocalProjectConfigOverlay {
 
 const DEFAULT_PANES: PaneTemplate[] = [
   { id: "agent", kind: "agent", focus: true },
-  { id: "shell", kind: "shell", split: "right", sizePct: 25 },
 ];
 
 const DEFAULT_CONFIG: ProjectConfig = {
