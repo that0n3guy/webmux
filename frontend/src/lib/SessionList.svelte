@@ -1,6 +1,13 @@
 <script lang="ts">
   import type { ExternalTmuxSession, ScratchSessionSnapshot, Selection } from "./types";
   import { sortByName, attachedBadge } from "./session-utils";
+  import AgentStatusIcon from "./AgentStatusIcon.svelte";
+
+  function agentSessionStatus(s: { agentStatus?: "running" | "idle" }): "working" | "done" | null {
+    if (s.agentStatus === "running") return "working";
+    if (s.agentStatus === "idle") return "done";
+    return null;
+  }
 
   let {
     mode = "both",
@@ -51,7 +58,14 @@
             onclick={() => onSelect({ kind: "scratch", projectId, id: s.id, sessionName: s.sessionName })}
           >
             <span class="flex-1 truncate">{s.displayName}</span>
-            <span class="text-xs opacity-60 ml-2">{attachedBadge(s)}</span>
+            {#if agentSessionStatus(s)}
+              <span class="shrink-0 ml-2"><AgentStatusIcon status={agentSessionStatus(s)!} size={14} /></span>
+              {#if s.statusWord}
+                <span class="text-[10px] opacity-60 ml-1 truncate max-w-[80px]">{s.statusWord}</span>
+              {/if}
+            {:else}
+              <span class="text-xs opacity-60 ml-2">{attachedBadge(s)}</span>
+            {/if}
             <button
               type="button"
               class="ml-2 opacity-50 hover:opacity-100"
@@ -80,7 +94,14 @@
             onclick={() => onSelect({ kind: "external", sessionName: s.name })}
           >
             <span class="flex-1 truncate">{s.name}</span>
-            <span class="text-xs opacity-60 ml-2">{attachedBadge(s)}</span>
+            {#if agentSessionStatus(s)}
+              <span class="shrink-0 ml-2"><AgentStatusIcon status={agentSessionStatus(s)!} size={14} /></span>
+              {#if s.statusWord}
+                <span class="text-[10px] opacity-60 ml-1 truncate max-w-[80px]">{s.statusWord}</span>
+              {/if}
+            {:else}
+              <span class="text-xs opacity-60 ml-2">{attachedBadge(s)}</span>
+            {/if}
           </li>
         {/each}
       </ul>

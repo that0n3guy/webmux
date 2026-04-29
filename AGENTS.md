@@ -47,6 +47,49 @@ Do not ship a feature that only works from one surface.
 - Don't add comments, docstrings, or type annotations to code you didn't change.
 - Don't add error handling for scenarios that can't happen. Trust internal code and framework guarantees.
 
+## Project-specific gotchas (learned the hard way)
+
+### Persisted state lives next to git meta
+
+- `WorktreeMeta` (`.git/worktrees/<branch>/webmux/meta.json`) — agent, profile, yolo, conversation-id mapping. Read via `readWorktreeMeta`, written via `writeWorktreeMeta`.
+- `WorktreeRuntimeStatePersisted` (`.git/worktrees/<branch>/webmux/runtime-state.json`) — agent lifecycle, lastEventAt, lastError. Survives webmux restarts. Reconciliation reads it on startup; `ProjectRuntime` writes via the debounced `runtime-state-persistence` service. **Don't add new persisted state to in-memory only — it'll silently reset on every restart.**
+
+### fetchConfig is per-project
+
+Frontend must call `api.fetchConfig({ query: { projectId: currentProjectId } })`. The legacy unscoped form returns the *first* project's config and causes "Unknown profile: default" errors when the user switches projects. The App.svelte effect refetches on `currentProjectId` change.
+
+### Worktree status comes from control-channel events, not the activity probe
+
+For **worktrees**, `state.agent.lifecycle` is updated by `agent_status_changed` and `agent_stopped` events that the agent CLI hooks POST to `/api/runtime/events`. Hook commands are wired in `backend/src/adapters/agent-runtime.ts`. The activity probe is **only** for scratch + external sessions (no hooks available there). Don't replace the lifecycle pipeline with the probe.
+
+### External tmux sessions are never chat-eligible
+
+External (unmanaged) tmux sessions surfaced under "External tmux" are always shell-launched by definition. `supportsSessionChat` must return `false` for `selection.kind === "external"`. Don't try to detect `pane_current_command === "claude"` and promote them.
+
+### Discriminated unions, narrow on `kind`
+
+`AgentsUiConversationMessage` is a discriminated union: `kind: "user" | "assistant" | "tool" | "thinking"`. Don't reach for `role` — that field is gone. When adding new event types, extend the union and update both backend parsers (`claude-cli.ts`, `worktree-conversation-service.ts`) and the frontend renderer (`WorktreeConversationPanel.svelte`).
+
+### Claude session parser walks every assistant record
+
+`backend/src/adapters/claude-cli.ts` `buildClaudeSessionFromText` walks **all** `type: "assistant"` records, not just `stop_reason: "end_turn"`. Tool-use blocks live on intermediate records with `stop_reason: "tool_use"`. If you filter for `end_turn` only, tool/thinking events get silently dropped.
+
+### Activity probe uses content-diff, not pane_last_activity
+
+`tmux display-message -F '#{pane_last_activity}'` returns empty unless `monitor-activity` is enabled per-window — webmux doesn't enable that. The probe (`session-activity-service.ts`) caches a hash of `capture-pane` output and detects activity by diff. If you add new probe consumers, use the existing `summarizeSessionActivity` — don't reinvent.
+
+### Polling settles only on `running=false` stable
+
+`MobileChatSurface.svelte`'s refresh polling only stops once `running` flips to false for `REFRESH_POLL_SETTLE_TICKS` consecutive ticks. Don't add a settle path that fires while `running=true` — Claude has natural >3s silent pauses mid-turn.
+
+### Default profile is agent-only
+
+`DEFAULT_PANES` in `backend/src/adapters/config.ts` is just `[{ id: "agent", kind: "agent", focus: true }]` — no shell pane. Users override with `panes:` in their `.webmux.yaml` if they want one. Don't reintroduce the shell pane to the default.
+
+### Yolo persistence
+
+`WorktreeMeta.yolo` is the source of truth. `openWorktree` reads it; the create/edit dialogs write it. Surfaced as a chip on the sidebar row + topbar via `WorktreeSnapshot.yolo`. Don't introduce a parallel transient yolo flag — store on meta or pass per-call (like `--yolo` on `webmux open`).
+
 ## Debugging
 
 When you are uncertain about the root cause of an issue, **add extensive debug logging before guessing at a fix**. This is mandatory, not optional.
