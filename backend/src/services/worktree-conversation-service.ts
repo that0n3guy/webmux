@@ -194,7 +194,7 @@ export class WorktreeConversationService {
       const sessionName = buildProjectSessionName(probe.projectRoot);
       const windowName = buildWorktreeWindowName(worktree.branch);
       const paneTarget = `${sessionName}:${windowName}.0`;
-      const activity = probeSessionActivity(probe.tmux, paneTarget);
+      const activity = probeSessionActivity(probe.tmux, paneTarget, undefined, this.now);
       return computeRunning(activity, this.now);
     } catch {
       return false;

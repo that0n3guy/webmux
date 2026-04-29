@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import type {
   CodexAppServerGateway,
   CodexAppServerThread,
@@ -13,12 +13,13 @@ import type {
   CodexAppServerTurnStartParams,
   CodexAppServerTurnStartResponse,
 } from "../adapters/codex-app-server";
-import type { TmuxGateway } from "../adapters/tmux";
+import { buildProjectSessionName, buildWorktreeWindowName, type TmuxGateway } from "../adapters/tmux";
 import type { WorktreeMeta, WorktreeSnapshot } from "../domain/model";
 import {
   WorktreeConversationService,
   buildConversationState,
 } from "../services/worktree-conversation-service";
+import { clearActivityCache, probeSessionActivity } from "../services/session-activity-service";
 
 class FakeGitGateway {
   resolveWorktreeGitDir(cwd: string): string {
@@ -578,14 +579,10 @@ describe("WorktreeConversationService", () => {
 });
 
 class FakeProbeGateway {
-  lastActivityAt: string | null = null;
+  capturedLines: string[] = [];
 
   capturePane(_target: string, _lines: number): string[] {
-    return [];
-  }
-
-  getPaneLastActivity(_target: string): { lastActivityAt: string | null } {
-    return { lastActivityAt: this.lastActivityAt };
+    return this.capturedLines;
   }
 
   ensureServer(): void {}
@@ -604,6 +601,10 @@ class FakeProbeGateway {
   listAllSessions() { return []; }
   getFirstWindowName(): string | null { return null; }
 }
+
+beforeEach(() => {
+  clearActivityCache();
+});
 
 describe("WorktreeConversationService — probe augmentation", () => {
   it("ORs probe running with thread status: probe active overrides idle thread", async () => {
@@ -626,7 +627,7 @@ describe("WorktreeConversationService — probe augmentation", () => {
 
     const now = new Date("2026-04-28T10:00:00.000Z");
     const probeGateway = new FakeProbeGateway();
-    probeGateway.lastActivityAt = new Date(now.getTime() - 500).toISOString();
+    probeGateway.capturedLines = ["active output"];
 
     const service = new WorktreeConversationService({
       appServer,
@@ -665,8 +666,13 @@ describe("WorktreeConversationService — probe augmentation", () => {
 
     const now = new Date("2026-04-28T10:00:00.000Z");
     const probeGateway = new FakeProbeGateway();
-    // Probe shows stale activity: last active 30 seconds ago (well beyond the 2500 ms threshold)
-    probeGateway.lastActivityAt = new Date(now.getTime() - 30_000).toISOString();
+    probeGateway.capturedLines = ["idle output"];
+
+    // Pre-seed the cache with a stale timestamp so probe shows stale activity
+    const sessionName = buildProjectSessionName("/tmp/worktrees/codex-feature");
+    const windowName = buildWorktreeWindowName(worktree.branch);
+    const paneTarget = `${sessionName}:${windowName}.0`;
+    probeSessionActivity(probeGateway as unknown as TmuxGateway, paneTarget, undefined, () => new Date(now.getTime() - 30_000));
 
     const service = new WorktreeConversationService({
       appServer,
@@ -705,7 +711,13 @@ describe("WorktreeConversationService — probe augmentation", () => {
 
     const now = new Date("2026-04-28T10:00:00.000Z");
     const probeGateway = new FakeProbeGateway();
-    probeGateway.lastActivityAt = new Date(now.getTime() - 10000).toISOString();
+    probeGateway.capturedLines = ["idle output"];
+
+    // Pre-seed the cache with a stale timestamp so probe shows stale activity
+    const sessionName = buildProjectSessionName("/tmp/worktrees/codex-feature");
+    const windowName = buildWorktreeWindowName(worktree.branch);
+    const paneTarget = `${sessionName}:${windowName}.0`;
+    probeSessionActivity(probeGateway as unknown as TmuxGateway, paneTarget, undefined, () => new Date(now.getTime() - 10_000));
 
     const service = new WorktreeConversationService({
       appServer,

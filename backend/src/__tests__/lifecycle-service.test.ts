@@ -92,10 +92,6 @@ class FakeTmuxGateway implements TmuxGateway {
     return [];
   }
 
-  getPaneLastActivity(_target: string): { lastActivityAt: string | null } {
-    return { lastActivityAt: null };
-  }
-
   private key(sessionName: string, windowName: string): string {
     return `${sessionName}:${windowName}`;
   }

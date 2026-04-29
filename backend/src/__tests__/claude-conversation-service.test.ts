@@ -1,12 +1,13 @@
-import { describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import type {
   ClaudeCliGateway,
   ClaudeCliSession,
   ClaudeCliSessionSummary,
 } from "../adapters/claude-cli";
-import type { TmuxGateway } from "../adapters/tmux";
+import { buildProjectSessionName, buildWorktreeWindowName, type TmuxGateway } from "../adapters/tmux";
 import type { WorktreeMeta, WorktreeSnapshot } from "../domain/model";
 import { ClaudeConversationService } from "../services/claude-conversation-service";
+import { clearActivityCache, probeSessionActivity } from "../services/session-activity-service";
 
 class FakeGitGateway {
   resolveWorktreeGitDir(cwd: string): string {
@@ -153,15 +154,10 @@ describe("ClaudeConversationService", () => {
 });
 
 class FakeProbeGateway {
-  lastActivityAt: string | null = null;
   capturedLines: string[] = [];
 
   capturePane(_target: string, _lines: number): string[] {
     return this.capturedLines;
-  }
-
-  getPaneLastActivity(_target: string): { lastActivityAt: string | null } {
-    return { lastActivityAt: this.lastActivityAt };
   }
 
   ensureServer(): void {}
@@ -180,6 +176,10 @@ class FakeProbeGateway {
   listAllSessions() { return []; }
   getFirstWindowName(): string | null { return null; }
 }
+
+beforeEach(() => {
+  clearActivityCache();
+});
 
 describe("ClaudeConversationService — probe-driven running", () => {
   it("reports running=true when the probe reports recent activity", async () => {
@@ -205,7 +205,7 @@ describe("ClaudeConversationService — probe-driven running", () => {
 
     const now = new Date("2026-04-14T12:00:00.000Z");
     const probeGateway = new FakeProbeGateway();
-    probeGateway.lastActivityAt = new Date(now.getTime() - 500).toISOString();
+    probeGateway.capturedLines = ["active output"];
 
     const service = new ClaudeConversationService({
       claude,
@@ -247,7 +247,14 @@ describe("ClaudeConversationService — probe-driven running", () => {
 
     const now = new Date("2026-04-14T12:00:00.000Z");
     const probeGateway = new FakeProbeGateway();
-    probeGateway.lastActivityAt = new Date(now.getTime() - 10000).toISOString();
+    probeGateway.capturedLines = ["idle output"];
+
+    // Pre-seed the cache with a stale timestamp so the service's probe sees unchanged content
+    const sessionName = buildProjectSessionName("/tmp/worktrees/claude-feature");
+    const windowName = buildWorktreeWindowName(worktree.branch);
+    const paneTarget = `${sessionName}:${windowName}.0`;
+    const staleNow = () => new Date(now.getTime() - 10000);
+    probeSessionActivity(probeGateway as unknown as TmuxGateway, paneTarget, undefined, staleNow);
 
     const service = new ClaudeConversationService({
       claude,
@@ -326,7 +333,13 @@ describe("ClaudeConversationService — jsonl mtime fallback", () => {
     claude.sessionMtimes.set(session.sessionId, new Date(now.getTime() - 5000));
 
     const probeGateway = new FakeProbeGateway();
-    probeGateway.lastActivityAt = new Date(now.getTime() - 20000).toISOString();
+    probeGateway.capturedLines = ["idle output"];
+
+    // Pre-seed the cache with a stale timestamp so paneRunning = false
+    const sessionName = buildProjectSessionName("/tmp/worktrees/claude-feature");
+    const windowName = buildWorktreeWindowName(worktree.branch);
+    const paneTarget = `${sessionName}:${windowName}.0`;
+    probeSessionActivity(probeGateway as unknown as TmuxGateway, paneTarget, undefined, () => new Date(now.getTime() - 20000));
 
     const service = new ClaudeConversationService({
       claude,
@@ -355,7 +368,13 @@ describe("ClaudeConversationService — jsonl mtime fallback", () => {
     claude.sessionMtimes.set(session.sessionId, new Date(now.getTime() - 30000));
 
     const probeGateway = new FakeProbeGateway();
-    probeGateway.lastActivityAt = new Date(now.getTime() - 20000).toISOString();
+    probeGateway.capturedLines = ["idle output"];
+
+    // Pre-seed the cache with a stale timestamp so paneRunning = false
+    const sessionName = buildProjectSessionName("/tmp/worktrees/claude-feature");
+    const windowName = buildWorktreeWindowName(worktree.branch);
+    const paneTarget = `${sessionName}:${windowName}.0`;
+    probeSessionActivity(probeGateway as unknown as TmuxGateway, paneTarget, undefined, () => new Date(now.getTime() - 20000));
 
     const service = new ClaudeConversationService({
       claude,

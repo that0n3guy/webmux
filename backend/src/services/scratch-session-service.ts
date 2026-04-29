@@ -46,7 +46,7 @@ function buildSnapshot(
       const windowName = tmux.getFirstWindowName(meta.sessionName);
       if (windowName) {
         const target = `${meta.sessionName}:${windowName}.0`;
-        const probe = probeSessionActivity(tmux, target);
+        const probe = probeSessionActivity(tmux, target, undefined, nowDate);
         const { running, statusWord } = summarizeSessionActivity(probe, nowDate);
         snapshot.agentStatus = running ? "running" : "idle";
         snapshot.statusWord = statusWord;

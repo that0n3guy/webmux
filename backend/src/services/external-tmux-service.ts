@@ -17,7 +17,7 @@ export function listExternalSessions(
         const windowName = tmux.getFirstWindowName(s.name);
         if (!windowName) return base;
         const target = `${s.name}:${windowName}.0`;
-        const probe = probeSessionActivity(tmux, target);
+        const probe = probeSessionActivity(tmux, target, undefined, nowFn);
         const { running, statusWord } = summarizeSessionActivity(probe, nowFn);
         return { ...base, agentStatus: running ? "running" : "idle", statusWord };
       } catch {

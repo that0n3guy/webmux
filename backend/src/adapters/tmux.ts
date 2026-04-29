@@ -43,7 +43,6 @@ export interface TmuxGateway {
   listAllSessions(): TmuxSessionSummary[];
   getFirstWindowName(sessionName: string): string | null;
   capturePane(target: string, lines: number): string[];
-  getPaneLastActivity(target: string): { lastActivityAt: string | null };
 }
 
 function runTmux(args: string[]): { stdout: string; stderr: string; exitCode: number } {
@@ -268,13 +267,4 @@ export class BunTmuxGateway implements TmuxGateway {
       .filter((line) => line.length > 0);
   }
 
-  getPaneLastActivity(target: string): { lastActivityAt: string | null } {
-    const result = runTmux(["display-message", "-p", "-t", target, "#{pane_last_activity}"]);
-    if (result.exitCode !== 0) return { lastActivityAt: null };
-    const raw = result.stdout.trim();
-    if (raw.length === 0 || raw === "0") return { lastActivityAt: null };
-    const epochSeconds = parseInt(raw, 10);
-    if (isNaN(epochSeconds) || epochSeconds <= 0) return { lastActivityAt: null };
-    return { lastActivityAt: new Date(epochSeconds * 1000).toISOString() };
-  }
 }

@@ -1,6 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import type { TmuxGateway } from "../adapters/tmux";
 import {
+  clearActivityCache,
   computeRunning,
   extractStatusWord,
   probeSessionActivity,
@@ -8,18 +9,11 @@ import {
 
 class FakeTmuxGateway {
   readonly capturePaneCalls: Array<{ target: string; lines: number }> = [];
-  readonly lastActivityCalls: string[] = [];
   capturedLines: string[] = [];
-  lastActivityAt: string | null = null;
 
   capturePane(target: string, lines: number): string[] {
     this.capturePaneCalls.push({ target, lines });
     return this.capturedLines;
-  }
-
-  getPaneLastActivity(target: string): { lastActivityAt: string | null } {
-    this.lastActivityCalls.push(target);
-    return { lastActivityAt: this.lastActivityAt };
   }
 
   // Unused TmuxGateway stubs
@@ -40,10 +34,14 @@ class FakeTmuxGateway {
   getFirstWindowName(): string | null { return null; }
 }
 
+beforeEach(() => {
+  clearActivityCache();
+});
+
 describe("computeRunning", () => {
   const now = new Date("2026-04-28T10:00:00.000Z");
 
-  it("returns true when lastActivityAt is within the default threshold (2500ms)", () => {
+  it("returns true when lastActivityAt is within the default threshold (7000ms)", () => {
     const probe = {
       agentBinary: null as null,
       lastActivityAt: new Date(now.getTime() - 1000).toISOString(),
@@ -55,7 +53,7 @@ describe("computeRunning", () => {
   it("returns false when lastActivityAt is beyond the default threshold", () => {
     const probe = {
       agentBinary: null as null,
-      lastActivityAt: new Date(now.getTime() - 3000).toISOString(),
+      lastActivityAt: new Date(now.getTime() - 8000).toISOString(),
       recentTailLines: [],
     };
     expect(computeRunning(probe, () => now)).toBe(false);
@@ -83,7 +81,7 @@ describe("computeRunning", () => {
   it("returns true exactly at the threshold boundary", () => {
     const probe = {
       agentBinary: null as null,
-      lastActivityAt: new Date(now.getTime() - 2500).toISOString(),
+      lastActivityAt: new Date(now.getTime() - 7000).toISOString(),
       recentTailLines: [],
     };
     expect(computeRunning(probe, () => now)).toBe(true);
@@ -121,19 +119,57 @@ describe("extractStatusWord", () => {
 });
 
 describe("probeSessionActivity", () => {
-  it("calls capturePane and getPaneLastActivity with the right target", () => {
+  it("seeds cache on first probe and returns lastActivityAt = now", () => {
     const fake = new FakeTmuxGateway();
-    fake.lastActivityAt = "2026-04-28T10:00:00.000Z";
     fake.capturedLines = ["line1", "line2"];
+    const t0 = new Date("2026-04-28T10:00:00.000Z");
 
-    const result = probeSessionActivity(fake as unknown as TmuxGateway, "my-session:window.0");
+    const result = probeSessionActivity(fake as unknown as TmuxGateway, "my-session:window.0", undefined, () => t0);
 
     expect(fake.capturePaneCalls).toHaveLength(1);
     expect(fake.capturePaneCalls[0]).toMatchObject({ target: "my-session:window.0" });
-    expect(fake.lastActivityCalls).toEqual(["my-session:window.0"]);
-    expect(result.lastActivityAt).toBe("2026-04-28T10:00:00.000Z");
+    expect(result.lastActivityAt).toBe(t0.toISOString());
     expect(result.recentTailLines).toEqual(["line1", "line2"]);
     expect(result.agentBinary).toBeNull();
+  });
+
+  it("returns cached lastActivityAt when content is unchanged on second probe", () => {
+    const fake = new FakeTmuxGateway();
+    fake.capturedLines = ["same content"];
+    const t0 = new Date("2026-04-28T10:00:00.000Z");
+    const t1 = new Date("2026-04-28T10:00:05.000Z");
+
+    probeSessionActivity(fake as unknown as TmuxGateway, "target.0", undefined, () => t0);
+    const second = probeSessionActivity(fake as unknown as TmuxGateway, "target.0", undefined, () => t1);
+
+    expect(second.lastActivityAt).toBe(t0.toISOString());
+  });
+
+  it("updates lastActivityAt when content changes on second probe", () => {
+    const fake = new FakeTmuxGateway();
+    const t0 = new Date("2026-04-28T10:00:00.000Z");
+    const t1 = new Date("2026-04-28T10:00:05.000Z");
+
+    fake.capturedLines = ["old content"];
+    probeSessionActivity(fake as unknown as TmuxGateway, "target.0", undefined, () => t0);
+
+    fake.capturedLines = ["new content"];
+    const second = probeSessionActivity(fake as unknown as TmuxGateway, "target.0", undefined, () => t1);
+
+    expect(second.lastActivityAt).toBe(t1.toISOString());
+  });
+
+  it("clearActivityCache resets state so next probe re-seeds", () => {
+    const fake = new FakeTmuxGateway();
+    fake.capturedLines = ["content"];
+    const t0 = new Date("2026-04-28T10:00:00.000Z");
+    const t1 = new Date("2026-04-28T10:01:00.000Z");
+
+    probeSessionActivity(fake as unknown as TmuxGateway, "target.0", undefined, () => t0);
+    clearActivityCache();
+    const second = probeSessionActivity(fake as unknown as TmuxGateway, "target.0", undefined, () => t1);
+
+    expect(second.lastActivityAt).toBe(t1.toISOString());
   });
 
   it("respects custom tailLines option", () => {
@@ -146,5 +182,25 @@ describe("probeSessionActivity", () => {
     const fake = new FakeTmuxGateway();
     probeSessionActivity(fake as unknown as TmuxGateway, "target.0");
     expect(fake.capturePaneCalls[0]?.lines).toBe(50);
+  });
+
+  it("computeRunning returns true immediately after cache miss (first probe)", () => {
+    const fake = new FakeTmuxGateway();
+    fake.capturedLines = ["output"];
+    const t0 = new Date("2026-04-28T10:00:00.000Z");
+
+    const probe = probeSessionActivity(fake as unknown as TmuxGateway, "target.0", undefined, () => t0);
+    expect(computeRunning(probe, () => t0)).toBe(true);
+  });
+
+  it("computeRunning returns false when content unchanged and elapsed exceeds threshold", () => {
+    const fake = new FakeTmuxGateway();
+    fake.capturedLines = ["idle output"];
+    const t0 = new Date("2026-04-28T10:00:00.000Z");
+    const t1 = new Date("2026-04-28T10:00:08.000Z");
+
+    probeSessionActivity(fake as unknown as TmuxGateway, "target.0", undefined, () => t0);
+    const probe = probeSessionActivity(fake as unknown as TmuxGateway, "target.0", undefined, () => t1);
+    expect(computeRunning(probe, () => t1)).toBe(false);
   });
 });

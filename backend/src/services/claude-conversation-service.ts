@@ -127,7 +127,7 @@ export class ClaudeConversationService {
       const sessionName = buildProjectSessionName(probe.projectRoot);
       const windowName = buildWorktreeWindowName(worktree.branch);
       const paneTarget = `${sessionName}:${windowName}.0`;
-      const activity = probeSessionActivity(probe.tmux, paneTarget);
+      const activity = probeSessionActivity(probe.tmux, paneTarget, undefined, this.now);
       const paneRunning = computeRunning(activity, this.now, { thresholdMs: 5000 });
 
       let mtimeRunning = false;

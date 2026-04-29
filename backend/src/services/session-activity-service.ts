@@ -17,18 +17,50 @@ function stripAnsi(line: string): string {
   return line.replace(ANSI_ESCAPE_RE, "");
 }
 
+interface CacheEntry {
+  hash: number;
+  lastChangedAt: Date;
+}
+
+const activityCache = new Map<string, CacheEntry>();
+
+function hashLines(lines: string[]): number {
+  return Bun.hash(lines.join("\n")) as number;
+}
+
+export function clearActivityCache(): void {
+  activityCache.clear();
+}
+
 export function probeSessionActivity(
   tmux: TmuxGateway,
   target: string,
   opts?: { tailLines?: number },
+  now: () => Date = () => new Date(),
 ): SessionActivityProbe {
   const tailLines = opts?.tailLines ?? 50;
-  const { lastActivityAt } = tmux.getPaneLastActivity(target);
   const recentTailLines = tmux.capturePane(target, tailLines);
+  const hash = hashLines(recentTailLines);
+  const currentNow = now();
+
+  const cached = activityCache.get(target);
+  if (!cached) {
+    activityCache.set(target, { hash, lastChangedAt: currentNow });
+    return {
+      agentBinary: null,
+      lastActivityAt: currentNow.toISOString(),
+      recentTailLines,
+    };
+  }
+
+  if (hash !== cached.hash) {
+    cached.hash = hash;
+    cached.lastChangedAt = currentNow;
+  }
+
   return {
-    // agentBinary is intentionally null in Task 4; Task 2 will populate it from pane_current_command for external session detection.
     agentBinary: null,
-    lastActivityAt,
+    lastActivityAt: cached.lastChangedAt.toISOString(),
     recentTailLines,
   };
 }
@@ -39,7 +71,7 @@ export function computeRunning(
   opts?: { thresholdMs?: number },
 ): boolean {
   if (probe.lastActivityAt === null) return false;
-  const threshold = opts?.thresholdMs ?? 2500;
+  const threshold = opts?.thresholdMs ?? 7000;
   const activityTime = new Date(probe.lastActivityAt).getTime();
   const nowTime = now().getTime();
   return nowTime - activityTime <= threshold;
