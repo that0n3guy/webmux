@@ -46,6 +46,14 @@
   );
 
   let transcriptViewport = $state<HTMLDivElement | null>(null);
+  let isPinnedToBottom = $state(true);
+  let lastConversationId = $state<string | null>(null);
+
+  function handleTranscriptScroll(): void {
+    if (!transcriptViewport) return;
+    const distanceFromBottom = transcriptViewport.scrollHeight - transcriptViewport.scrollTop - transcriptViewport.clientHeight;
+    isPinnedToBottom = distanceFromBottom < 64;
+  }
 
   function handleComposerInput(event: Event): void {
     const target = event.currentTarget;
@@ -75,6 +83,11 @@
     const lastMessageId = messageCount > 0 ? conversation?.messages[messageCount - 1]?.id ?? null : null;
     const lastMessageTextLength = messageCount > 0 ? conversation?.messages[messageCount - 1]?.text.length ?? 0 : 0;
     if (!conversationId || !transcriptViewport) return;
+    if (conversationId !== lastConversationId) {
+      isPinnedToBottom = true;
+      lastConversationId = conversationId;
+    }
+    if (!isPinnedToBottom) return;
     void scrollTranscriptToBottom();
     void conversationId;
     void messageCount;
@@ -130,7 +143,7 @@
         <div>{conversationLoading && !conversation ? `Connecting to ${agentLabel}` : agentLabel}</div>
       </div>
 
-      <div bind:this={transcriptViewport} class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden pb-4 pr-1">
+      <div bind:this={transcriptViewport} onscroll={handleTranscriptScroll} class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden pb-4 pr-1">
         {#if conversationLoading && !conversation}
           <div class="rounded-md border border-edge bg-topbar px-4 py-5 text-sm text-muted">
             Connecting to the {agentLabel} session...
