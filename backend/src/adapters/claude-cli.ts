@@ -198,6 +198,67 @@ async function findClaudeSessionPath(sessionId: string, cwd: string): Promise<st
   return null;
 }
 
+function formatToolDetails(name: string, input: Record<string, unknown>): string {
+  const str = (v: unknown): string => (typeof v === "string" ? v : "");
+  const lines: string[] = [];
+  const push = (label: string, value: unknown): void => {
+    if (value === undefined || value === null) return;
+    if (typeof value === "string" && value.length === 0) return;
+    const rendered = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    lines.push(`${label}: ${rendered}`);
+  };
+  switch (name) {
+    case "Bash":
+      push("Description", str(input.description));
+      push("Command", str(input.command));
+      push("Timeout", input.timeout);
+      push("Run in background", input.run_in_background);
+      break;
+    case "Read":
+      push("File", str(input.file_path));
+      if (input.start_line !== undefined || input.end_line !== undefined) {
+        push("Lines", `${input.start_line ?? 1}-${input.end_line ?? "end"}`);
+      }
+      break;
+    case "Edit":
+      push("File", str(input.file_path));
+      push("Old", str(input.old_string));
+      push("New", str(input.new_string));
+      if (input.replace_all !== undefined) push("Replace all", input.replace_all);
+      break;
+    case "Write":
+      push("File", str(input.file_path));
+      push("Content", str(input.content));
+      break;
+    case "MultiEdit":
+      push("File", str(input.file_path));
+      push("Edits", input.edits);
+      break;
+    case "Grep":
+      push("Pattern", str(input.pattern));
+      push("Path", str(input.path));
+      push("Glob", str(input.glob));
+      push("Output mode", str(input.output_mode));
+      break;
+    case "Glob":
+      push("Pattern", str(input.pattern));
+      push("Path", str(input.path));
+      break;
+    case "WebFetch":
+    case "WebSearch":
+      push("URL", str(input.url));
+      push("Query", str(input.query));
+      push("Prompt", str(input.prompt));
+      break;
+    case "TodoWrite":
+      push("Todos", input.todos);
+      break;
+    default:
+      return JSON.stringify(input, null, 2);
+  }
+  return lines.length > 0 ? lines.join("\n\n") : JSON.stringify(input, null, 2);
+}
+
 function formatToolSummary(name: string, input: Record<string, unknown>): string {
   const str = (v: unknown): string => (typeof v === "string" ? v : "");
   switch (name) {
@@ -277,7 +338,7 @@ function parseAssistantContentBlocks(
       const toolId = typeof block.id === "string" ? block.id : record.uuid;
       const input = isRecord(block.input) ? block.input : {};
       const summary = formatToolSummary(name, input);
-      const details = JSON.stringify(input, null, 2);
+      const details = formatToolDetails(name, input);
       events.push({
         kind: "tool",
         id: toolId,

@@ -158,7 +158,7 @@ describe("claude-cli adapter", () => {
       summary: "frontend/src/lib/types.ts:1-50",
       status: "ok",
       createdAt: "2026-04-28T10:00:05.000Z",
-      details: JSON.stringify({ file_path: "frontend/src/lib/types.ts", start_line: 1, end_line: 50 }, null, 2),
+      details: "File: frontend/src/lib/types.ts\n\nLines: 1-50",
     });
 
     expect(assistantMsg).toMatchObject({
@@ -216,7 +216,7 @@ describe("claude-cli adapter", () => {
     expect(toolMsg).toMatchObject({
       kind: "tool",
       name: "Bash",
-      details: JSON.stringify({ command: "bun test", timeout: 30 }, null, 2),
+      details: "Command: bun test\n\nTimeout: 30",
     });
   });
 
