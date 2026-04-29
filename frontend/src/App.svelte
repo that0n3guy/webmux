@@ -985,9 +985,12 @@
     const projectId = currentProjectId!;
     await updateWorktree(projectId, branch, { yolo, agent });
     const worktree = currentWorktrees.find((w) => w.branch === branch);
+    const wasSelected = selectedBranch === branch;
     if (worktree?.mux === "✓") {
       await api.closeWorktree({ params: { projectId, name: branch } });
+      if (wasSelected) selectedBranch = null;
       await openWorktree(projectId, branch);
+      if (wasSelected) selectedBranch = branch;
     }
     editWorktreeBranch = null;
     await refresh();
