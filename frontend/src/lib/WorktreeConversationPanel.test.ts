@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import WorktreeConversationPanel from "./WorktreeConversationPanel.svelte";
 import type { AgentsUiConversationState, WorktreeInfo } from "./types";
+import { renderAssistantMarkdown } from "./markdown";
 
 function createWorktree(overrides: Partial<WorktreeInfo> = {}): WorktreeInfo {
   return {
@@ -315,5 +316,86 @@ describe("WorktreeConversationPanel", () => {
     expect(screen.getByText("· Reading the file now.")).toBeInTheDocument();
     expect(screen.getByText("▸ Read")).toBeInTheDocument();
     expect(screen.getByText("Here it is.")).toBeInTheDocument();
+  });
+});
+
+describe("renderAssistantMarkdown", () => {
+  it("renders bold markdown as <strong>", () => {
+    const result = renderAssistantMarkdown("**bold text**");
+    expect(result).toContain("<strong>bold text</strong>");
+  });
+
+  it("renders ## heading as <h2>", () => {
+    const result = renderAssistantMarkdown("## My Heading");
+    expect(result).toContain("<h2>My Heading</h2>");
+  });
+
+  it("renders inline code as <code>", () => {
+    const result = renderAssistantMarkdown("use `foo()` here");
+    expect(result).toContain("<code>foo()</code>");
+  });
+
+  it("renders links with target=_blank and rel=noreferrer noopener", () => {
+    const result = renderAssistantMarkdown("[click](https://example.com)");
+    expect(result).toContain('href="https://example.com"');
+    expect(result).toContain('target="_blank"');
+    expect(result).toContain('rel="noreferrer noopener"');
+  });
+
+  it("strips table tags (not in allowed list)", () => {
+    const result = renderAssistantMarkdown("| a | b |\n|---|---|\n| 1 | 2 |");
+    expect(result).not.toContain("<table");
+  });
+
+  it("strips script tags (XSS prevention)", () => {
+    const result = renderAssistantMarkdown('<script>alert("xss")</script>plain text');
+    expect(result).not.toContain("<script");
+  });
+});
+
+describe("WorktreeConversationPanel markdown rendering", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("user message with **bold** stays plain text", () => {
+    renderPanel({
+      conversation: createConversation({
+        messages: [
+          {
+            kind: "user",
+            id: "user-md",
+            turnId: "turn-1",
+            text: "**bold**",
+            status: "completed",
+            createdAt: null,
+          },
+        ],
+      }),
+    });
+
+    expect(screen.getByText("**bold**")).toBeInTheDocument();
+    expect(document.querySelector("strong")).not.toBeInTheDocument();
+  });
+
+  it("tool summary stays plain text", () => {
+    renderPanel({
+      conversation: createConversation({
+        messages: [
+          {
+            kind: "tool",
+            id: "tool-md",
+            turnId: "turn-1",
+            name: "Bash",
+            summary: "**not bold**",
+            status: "ok",
+            createdAt: null,
+          },
+        ],
+      }),
+    });
+
+    expect(screen.getByText("**not bold**")).toBeInTheDocument();
+    expect(document.querySelector("strong")).not.toBeInTheDocument();
   });
 });

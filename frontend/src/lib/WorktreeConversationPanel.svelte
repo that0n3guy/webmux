@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import type { AgentsUiConversationState, SessionTarget, WorktreeInfo } from "./types";
+  import { renderAssistantMarkdown } from "./markdown";
 
   interface Props {
     worktree?: WorktreeInfo;
@@ -133,6 +134,29 @@
   </button>
 {/snippet}
 
+<style>
+  :global(.markdown-body h1) { font-size: 1rem; font-weight: 600; margin-top: 0.5rem; margin-bottom: 0.25rem; }
+  :global(.markdown-body h2) { font-size: 0.9375rem; font-weight: 600; margin-top: 0.5rem; margin-bottom: 0.25rem; }
+  :global(.markdown-body h3) { font-size: 0.875rem; font-weight: 600; margin-top: 0.5rem; margin-bottom: 0.125rem; }
+  :global(.markdown-body h4),
+  :global(.markdown-body h5),
+  :global(.markdown-body h6) { font-size: 0.875rem; font-weight: 500; margin-top: 0.375rem; margin-bottom: 0.125rem; }
+  :global(.markdown-body p) { margin-top: 0.25rem; margin-bottom: 0.25rem; }
+  :global(.markdown-body ul),
+  :global(.markdown-body ol) { padding-left: 1.25rem; margin-top: 0.25rem; margin-bottom: 0.25rem; }
+  :global(.markdown-body ul) { list-style-type: disc; }
+  :global(.markdown-body ol) { list-style-type: decimal; }
+  :global(.markdown-body li) { margin-top: 0.125rem; margin-bottom: 0.125rem; }
+  :global(.markdown-body code) { font-family: ui-monospace, monospace; font-size: 0.75rem; padding: 0.125rem 0.25rem; border-radius: 0.25rem; background-color: var(--color-surface); color: var(--color-accent); }
+  :global(.markdown-body pre) { font-family: ui-monospace, monospace; font-size: 0.75rem; padding: 0.5rem; border-radius: 0.375rem; background-color: var(--color-surface); overflow-x: auto; margin-top: 0.5rem; margin-bottom: 0.5rem; }
+  :global(.markdown-body pre code) { background-color: transparent; padding: 0; color: inherit; }
+  :global(.markdown-body a) { color: var(--color-accent); text-decoration: underline; text-underline-offset: 2px; }
+  :global(.markdown-body blockquote) { border-left: 2px solid var(--color-edge); padding-left: 0.75rem; color: var(--color-muted); margin-top: 0.25rem; margin-bottom: 0.25rem; }
+  :global(.markdown-body hr) { border-color: var(--color-edge); margin-top: 0.5rem; margin-bottom: 0.5rem; }
+  :global(.markdown-body > :first-child) { margin-top: 0; }
+  :global(.markdown-body > :last-child) { margin-bottom: 0; }
+</style>
+
 {#if !supportsAgentChat}
   <div class="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted">
     Chat is not available for this session yet.
@@ -185,7 +209,7 @@
               </div>
             {:else if message.kind === "assistant"}
               <div class="max-w-[88%] min-w-0 self-start rounded-2xl border border-edge bg-topbar px-4 py-3 text-sm text-primary">
-                <div class="whitespace-pre-wrap break-words">{message.text}</div>
+                <div class="markdown-body break-words">{@html renderAssistantMarkdown(message.text)}</div>
                 {#if message.status === "inProgress"}
                   <div class="mt-2 text-[10px] uppercase tracking-[0.12em] text-muted">
                     typing
