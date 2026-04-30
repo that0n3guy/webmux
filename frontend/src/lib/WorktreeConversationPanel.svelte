@@ -62,9 +62,24 @@
   );
 
   let transcriptViewport = $state<HTMLDivElement | null>(null);
+  let composerEl = $state<HTMLTextAreaElement | null>(null);
   let isPinnedToBottom = $state(true);
   let lastConversationId = $state<string | null>(null);
   let expandedIds = $state<Set<string>>(new Set());
+
+  function autoResizeComposer(): void {
+    if (!composerEl || !compact) return;
+    composerEl.style.height = "auto";
+    const max = parseFloat(getComputedStyle(composerEl).lineHeight) * 4
+      + parseFloat(getComputedStyle(composerEl).paddingTop)
+      + parseFloat(getComputedStyle(composerEl).paddingBottom);
+    composerEl.style.height = `${Math.min(composerEl.scrollHeight, max)}px`;
+  }
+
+  $effect(() => {
+    void composerText;
+    autoResizeComposer();
+  });
 
   function toggleExpanded(id: string): void {
     const next = new Set(expandedIds);
@@ -274,9 +289,11 @@
       style="padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));"
     >
       <textarea
+        bind:this={composerEl}
         id="conversation-composer"
         aria-label="Message"
-        class="block w-full max-w-full rounded-md border border-edge bg-surface px-3 py-2 text-sm text-primary outline-none transition focus:border-accent {compact ? 'min-h-[3rem]' : 'min-h-[7rem]'}"
+        rows={compact ? 1 : 4}
+        class="block w-full max-w-full rounded-md border border-edge bg-surface px-3 py-2 text-sm text-primary outline-none transition focus:border-accent resize-none {compact ? '' : 'min-h-[7rem]'}"
         placeholder="ask anything"
         value={composerText}
         oninput={handleComposerInput}
