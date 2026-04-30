@@ -88,22 +88,22 @@ describe("ProjectRegistry", () => {
     await expect(reg.add({ path: dir })).rejects.toThrow(/already registered|duplicate/i);
   });
 
-  test("add() initializes .webmux.yaml when absent", async () => {
+  test("add() stores displayName in registry, does NOT write .webmux.yaml", async () => {
     const reg = createProjectRegistry(buildDeps());
     await reg.load();
     const dir = makeProjectDir("gamma", false);
-    const info = await reg.add({ path: dir, displayName: "Gamma", mainBranch: "develop" });
+    const info = await reg.add({ path: dir, displayName: "Gamma" });
     expect(info.name).toBe("Gamma");
-    expect(info.mainBranch).toBe("develop");
-    expect(existsSync(join(dir, ".webmux.yaml"))).toBe(true);
+    expect(existsSync(join(dir, ".webmux.yaml"))).toBe(false);
   });
 
-  test("add() reads existing .webmux.yaml and ignores body init fields", async () => {
+  test("add() registry displayName takes precedence over yaml name", async () => {
     const reg = createProjectRegistry(buildDeps());
     await reg.load();
     const dir = makeProjectDir("delta", true);
-    const info = await reg.add({ path: dir, displayName: "OverrideAttempt", mainBranch: "develop" });
-    expect(info.name).toBe("delta");
+    const info = await reg.add({ path: dir, displayName: "OverrideAttempt" });
+    expect(info.name).toBe("OverrideAttempt");
+    // mainBranch still comes from yaml
     expect(info.mainBranch).toBe("main");
   });
 
@@ -171,6 +171,31 @@ describe("ProjectRegistry", () => {
     const info = await reg.add({ path: dir });
     expect(info.path).toBe(resolve(dir));
     expect(existsSync(join(dir, ".git"))).toBe(true);
-    expect(existsSync(join(dir, ".webmux.yaml"))).toBe(true);
+    expect(existsSync(join(dir, ".webmux.yaml"))).toBe(false);
+  });
+
+  test("load() preserves the registry name across reload", async () => {
+    const dir = makeProjectDir("named-proj");
+    const id = computeProjectId(dir);
+    writeFileSync(
+      registryPath,
+      `schemaVersion: 1\nprojects:\n  - id: ${id}\n    path: ${dir}\n    addedAt: "2026-04-27T17:00:00Z"\n    name: "My Project"\n`
+    );
+    const reg = createProjectRegistry(buildDeps());
+    await reg.load();
+    expect(reg.list()[0].name).toBe("My Project");
+  });
+
+  test("registry name takes precedence over yaml name", async () => {
+    // makeProjectDir("alpha-yaml") creates a .webmux.yaml with name: alpha-yaml
+    const dir = makeProjectDir("alpha-yaml");
+    const id = computeProjectId(dir);
+    writeFileSync(
+      registryPath,
+      `schemaVersion: 1\nprojects:\n  - id: ${id}\n    path: ${dir}\n    addedAt: "2026-04-27T17:00:00Z"\n    name: "Custom Name"\n`
+    );
+    const reg = createProjectRegistry(buildDeps());
+    await reg.load();
+    expect(reg.list()[0].name).toBe("Custom Name");
   });
 });

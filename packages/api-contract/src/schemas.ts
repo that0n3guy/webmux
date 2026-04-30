@@ -553,9 +553,6 @@ export const ProjectListResponseSchema = z.object({
 export const CreateProjectRequestSchema = z.object({
   path: z.string().min(1).max(1024),
   displayName: z.string().min(1).max(128).optional(),
-  mainBranch: z.string().optional(),
-  defaultAgent: z.string().optional(),
-  worktreeRoot: z.string().optional(),
 });
 
 export const CreateProjectResponseSchema = z.object({

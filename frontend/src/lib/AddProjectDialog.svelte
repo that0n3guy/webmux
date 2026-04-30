@@ -13,8 +13,6 @@
 
   let path = $state("");
   let displayName = $state("");
-  let mainBranch = $state("main");
-  let defaultAgent = $state("claude");
   let busy = $state(false);
   let error = $state<string | null>(null);
 
@@ -27,8 +25,6 @@
       await onCreate({
         path: path.trim(),
         displayName: displayName.trim() || undefined,
-        mainBranch: mainBranch.trim() || undefined,
-        defaultAgent: defaultAgent.trim() || undefined,
       });
       onClose();
     } catch (err: unknown) {
@@ -53,7 +49,7 @@
         placeholder="/home/mercer/projects/foo"
         class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] placeholder:text-muted/50 outline-none focus:border-accent"
       />
-      <p class="mt-1 text-[11px] text-muted">If the path already has a <code>.webmux.yaml</code>, it'll be read; the fields below are ignored.</p>
+      <p class="mt-1 text-[11px] text-muted">For non-default workspace settings (main branch, default agent), add a <code>.webmux.yaml</code> to the project.</p>
     </div>
 
     <div>
@@ -64,28 +60,6 @@
         autocomplete="off"
         class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] outline-none focus:border-accent"
       />
-    </div>
-
-    <div class="flex gap-3">
-      <div class="flex-1">
-        <label class="block text-xs text-muted mb-1.5" for="proj-mainbranch">Main branch</label>
-        <input
-          id="proj-mainbranch"
-          bind:value={mainBranch}
-          class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] outline-none focus:border-accent"
-        />
-      </div>
-      <div class="flex-1">
-        <label class="block text-xs text-muted mb-1.5" for="proj-agent">Default agent</label>
-        <select
-          id="proj-agent"
-          bind:value={defaultAgent}
-          class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] outline-none focus:border-accent"
-        >
-          <option value="claude">claude</option>
-          <option value="codex">codex</option>
-        </select>
-      </div>
     </div>
 
     {#if error}

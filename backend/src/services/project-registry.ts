@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { BunDockerGateway } from "../adapters/docker";
 import type { BunGitGateway } from "../adapters/git";
@@ -19,6 +19,7 @@ interface RegistryFileEntry {
   id: string;
   path: string;
   addedAt: string;
+  name?: string;
 }
 
 interface RegistryFile {
@@ -41,9 +42,6 @@ export interface ProjectRegistryDeps {
 export interface AddProjectInput {
   path: string;
   displayName?: string;
-  mainBranch?: string;
-  defaultAgent?: string;
-  worktreeRoot?: string;
 }
 
 export interface ProjectRegistry {
@@ -59,14 +57,16 @@ const DEFAULT_REGISTRY_PATH = join(Bun.env.HOME ?? "/tmp", ".config", "webmux", 
 export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistry {
   const registryPath = deps.registryPath ?? DEFAULT_REGISTRY_PATH;
   const scopes = new Map<string, ProjectScope>();
-  const meta = new Map<string, { addedAt: string }>();
+  const meta = new Map<string, { addedAt: string; name?: string }>();
 
   function buildInfo(scope: ProjectScope): ProjectInfo {
     const m = meta.get(scope.projectId);
+    const registryName = m?.name;
+    const fallbackName = scope.config.name ?? basename(scope.projectDir);
     return {
       id: scope.projectId,
       path: scope.projectDir,
-      name: scope.config.name ?? scope.projectId,
+      name: registryName ?? fallbackName,
       addedAt: m?.addedAt ?? new Date().toISOString(),
       mainBranch: scope.config.workspace?.mainBranch ?? "main",
       defaultAgent: scope.config.workspace?.defaultAgent ?? "claude",
@@ -76,11 +76,16 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
   function persist(): void {
     const file: RegistryFile = {
       schemaVersion: REGISTRY_SCHEMA_VERSION,
-      projects: [...scopes.values()].map((s) => ({
-        id: s.projectId,
-        path: s.projectDir,
-        addedAt: meta.get(s.projectId)?.addedAt ?? new Date().toISOString(),
-      })),
+      projects: [...scopes.values()].map((s) => {
+        const m = meta.get(s.projectId);
+        const entry: RegistryFileEntry = {
+          id: s.projectId,
+          path: s.projectDir,
+          addedAt: m?.addedAt ?? new Date().toISOString(),
+        };
+        if (m?.name !== undefined) entry.name = m.name;
+        return entry;
+      }),
     };
     mkdirSync(dirname(registryPath), { recursive: true });
     writeFileSync(registryPath, stringifyYaml(file));
@@ -127,20 +132,6 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
     }
   }
 
-  function ensureWebmuxYaml(projectDir: string, init: AddProjectInput): void {
-    const yamlPath = join(projectDir, ".webmux.yaml");
-    if (existsSync(yamlPath)) return;
-    const body: Record<string, unknown> = {
-      name: init.displayName ?? projectDir.split("/").pop() ?? "project",
-      workspace: {
-        mainBranch: init.mainBranch ?? "main",
-        defaultAgent: init.defaultAgent ?? "claude",
-        worktreeRoot: init.worktreeRoot ?? "__worktrees",
-      },
-    };
-    writeFileSync(yamlPath, stringifyYaml(body));
-  }
-
   return {
     async load(): Promise<void> {
       if (!existsSync(registryPath)) return;
@@ -169,7 +160,7 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
           log.warn(`[project-registry] skipping malformed entry: ${JSON.stringify(raw)}`);
           continue;
         }
-        const entry = raw as { id?: unknown; path?: unknown; addedAt?: unknown };
+        const entry = raw as { id?: unknown; path?: unknown; addedAt?: unknown; name?: unknown };
         if (typeof entry.id !== "string" || typeof entry.path !== "string" || typeof entry.addedAt !== "string") {
           log.warn(`[project-registry] skipping malformed entry: missing string fields`);
           continue;
@@ -178,10 +169,11 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
           log.warn(`[project-registry] skipping missing path: ${entry.path}`);
           continue;
         }
+        const registryName = typeof entry.name === "string" ? entry.name : undefined;
         try {
           const scope = constructScope(entry.path);
           scopes.set(scope.projectId, scope);
-          meta.set(scope.projectId, { addedAt: entry.addedAt });
+          meta.set(scope.projectId, { addedAt: entry.addedAt, name: registryName });
         } catch (err) {
           log.warn(`[project-registry] failed to construct scope for ${entry.path}: ${err instanceof Error ? err.message : err}`);
         }
@@ -201,11 +193,11 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
         throw new Error(`Project already registered: ${absPath}`);
       }
 
-      ensureWebmuxYaml(absPath, input);
       ensureGitRepo(absPath);
       const scope = constructScope(absPath);
       scopes.set(scope.projectId, scope);
-      meta.set(scope.projectId, { addedAt: new Date().toISOString() });
+      const name = input.displayName?.trim() || undefined;
+      meta.set(scope.projectId, { addedAt: new Date().toISOString(), name });
       persist();
       return buildInfo(scope);
     },
