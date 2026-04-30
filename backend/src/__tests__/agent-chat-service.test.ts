@@ -45,7 +45,7 @@ describe("resolveAgentChatSupport", () => {
       ok: true,
       data: {
         provider: "claude",
-        submitDelayMs: 100,
+        submitDelayMs: 200,
       },
     });
 

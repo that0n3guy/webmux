@@ -919,7 +919,7 @@ function resolveExternalChatTarget(sessionName: string): {
     linearIssue: null,
     creation: null,
   };
-  const submitDelayMs = agentId === "codex" ? 200 : 100;
+  const submitDelayMs = 200;
   return {
     ok: true,
     facade,
