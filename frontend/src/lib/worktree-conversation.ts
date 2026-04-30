@@ -114,6 +114,13 @@ export function preservePendingUserMessages(
 
   if (pendingFromPrev.length === 0) return next;
 
+  // If the agent is now idle and we still have pending messages that didn't
+  // match any real user record, the agent finished its turn without ever
+  // picking them up (e.g., a background hook fired before the queued text was
+  // accepted). Drop them rather than letting phantom optimistic messages sit
+  // at the bottom of the chat forever.
+  if (!next.running) return next;
+
   return {
     ...next,
     messages: [...next.messages, ...pendingFromPrev],
@@ -178,28 +185,14 @@ export function applyPersistedPendingMessages(
 ): AgentsUiConversationState {
   if (persisted.length === 0) return conversation;
 
-  // Persisted pending was saved with a unique turnId per send. If the same
-  // turnId already appears in the loaded conversation (real user message
-  // recorded by the agent in the meantime), drop the persisted optimistic.
-  // For brand new pending (no matching turnId, no matching text in snapshot
-  // yet), append it.
-  const realUserTurnIds = new Set(
-    conversation.messages.filter((m) => m.kind === "user" && !m.id.startsWith("pending-user:")).map((m) => m.turnId),
-  );
+  // Persisted pending only matters while the agent is still working — if the
+  // agent is idle on first load, any leftover pending in storage is stale
+  // (either already in history or never accepted). Don't surface ghosts.
+  if (!conversation.running) return conversation;
 
-  const toAppend: AgentsUiConversationMessage[] = [];
-  for (const message of persisted) {
-    if (realUserTurnIds.has(message.turnId)) continue;
-    // Avoid appending a pending whose text already matches a brand-new user
-    // message (i.e. one in the snapshot that wasn't already represented by a
-    // pending in the persisted set — defensive against same-text resends).
-    toAppend.push(message);
-  }
-
-  if (toAppend.length === 0) return conversation;
   return {
     ...conversation,
-    messages: [...conversation.messages, ...toAppend],
+    messages: [...conversation.messages, ...persisted],
   };
 }
 

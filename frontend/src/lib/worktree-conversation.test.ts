@@ -68,17 +68,31 @@ describe("worktree conversation helpers", () => {
     expect(updated?.activeTurnId).toBe("turn-2");
   });
 
-  it("preservePendingUserMessages keeps queued optimistic messages across snapshots", () => {
+  it("preservePendingUserMessages keeps queued optimistic messages while agent is running", () => {
     const withPending = markConversationTurnStarted(makeConversation(), "turn-2", "queued msg");
     expect(withPending).not.toBeNull();
     if (!withPending) return;
 
-    // Server snapshot doesn't yet contain turn-2 (claude is still on turn-1)
-    const serverSnapshot = makeConversation();
+    // Server snapshot doesn't yet contain turn-2, and agent is still working.
+    const serverSnapshot: AgentsUiConversationState = { ...makeConversation(), running: true };
     const merged = preservePendingUserMessages(withPending, serverSnapshot);
 
     expect(merged.messages.some((m) => m.id === "pending-user:turn-2")).toBe(true);
     expect(merged.messages).toHaveLength(2);
+  });
+
+  it("preservePendingUserMessages drops orphan pending once agent is idle (e.g. queued text never accepted)", () => {
+    const withPending = markConversationTurnStarted(makeConversation(), "turn-2", "queued msg");
+    if (!withPending) return;
+
+    // Agent has finished and is idle, but the queued message never showed up
+    // in the snapshot — it was lost (e.g. claude received a hook event
+    // instead of the user's text).
+    const idleSnapshot: AgentsUiConversationState = { ...makeConversation(), running: false };
+    const merged = preservePendingUserMessages(withPending, idleSnapshot);
+
+    expect(merged.messages.some((m) => m.id.startsWith("pending-user:"))).toBe(false);
+    expect(merged.messages).toHaveLength(1);
   });
 
   it("preservePendingUserMessages drops pending once snapshot has the real user message", () => {
@@ -112,7 +126,7 @@ describe("worktree conversation helpers", () => {
       provider: "codexAppServer",
       conversationId: "thread-1",
       cwd: "/tmp/worktree",
-      running: false,
+      running: true,
       activeTurnId: null,
       messages: [
         { id: "u1", turnId: "t1", kind: "user", text: "again", status: "completed", createdAt: "2026-04-15T10:00:00.000Z" },
