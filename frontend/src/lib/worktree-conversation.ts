@@ -82,13 +82,22 @@ export function preservePendingUserMessages(
 ): AgentsUiConversationState {
   if (!prev || prev.conversationId !== next.conversationId) return next;
 
-  // The send endpoint assigns its own turnId (e.g. "tmux:<uuid>") which never matches
-  // the agent's own turnId in the snapshot. Dedupe by text instead. Each snapshot user
-  // message is consumed at most once so identical-text resends still work.
+  // The send endpoint assigns its own turnId (e.g. "tmux:<uuid>") which never
+  // matches the agent's own turnId in the snapshot, so we dedupe by text. But
+  // first subtract any real user messages already present in `prev` from the
+  // snapshot count — otherwise sending "again" three times in one session
+  // would let the optimistic match against an older "again" message that
+  // predates the queued send, falsely dropping the pending entry.
   const snapshotTextRemaining = new Map<string, number>();
   for (const message of next.messages) {
     if (message.kind !== "user") continue;
     snapshotTextRemaining.set(message.text, (snapshotTextRemaining.get(message.text) ?? 0) + 1);
+  }
+  for (const message of prev.messages) {
+    if (message.kind !== "user") continue;
+    if (message.id.startsWith("pending-user:")) continue;
+    const remaining = snapshotTextRemaining.get(message.text) ?? 0;
+    if (remaining > 0) snapshotTextRemaining.set(message.text, remaining - 1);
   }
 
   const pendingFromPrev: AgentsUiConversationMessage[] = [];
@@ -169,19 +178,21 @@ export function applyPersistedPendingMessages(
 ): AgentsUiConversationState {
   if (persisted.length === 0) return conversation;
 
-  const snapshotTextRemaining = new Map<string, number>();
-  for (const message of conversation.messages) {
-    if (message.kind !== "user") continue;
-    snapshotTextRemaining.set(message.text, (snapshotTextRemaining.get(message.text) ?? 0) + 1);
-  }
+  // Persisted pending was saved with a unique turnId per send. If the same
+  // turnId already appears in the loaded conversation (real user message
+  // recorded by the agent in the meantime), drop the persisted optimistic.
+  // For brand new pending (no matching turnId, no matching text in snapshot
+  // yet), append it.
+  const realUserTurnIds = new Set(
+    conversation.messages.filter((m) => m.kind === "user" && !m.id.startsWith("pending-user:")).map((m) => m.turnId),
+  );
 
   const toAppend: AgentsUiConversationMessage[] = [];
   for (const message of persisted) {
-    const remaining = snapshotTextRemaining.get(message.text) ?? 0;
-    if (remaining > 0) {
-      snapshotTextRemaining.set(message.text, remaining - 1);
-      continue;
-    }
+    if (realUserTurnIds.has(message.turnId)) continue;
+    // Avoid appending a pending whose text already matches a brand-new user
+    // message (i.e. one in the snapshot that wasn't already represented by a
+    // pending in the persisted set — defensive against same-text resends).
     toAppend.push(message);
   }
 

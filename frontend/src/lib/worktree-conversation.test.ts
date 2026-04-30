@@ -106,6 +106,67 @@ describe("worktree conversation helpers", () => {
     expect(merged.messages).toHaveLength(2);
   });
 
+  it("preservePendingUserMessages does NOT dedupe pending against an older same-text user message", () => {
+    // History has two prior "again" messages from earlier in the session.
+    const baseConv: AgentsUiConversationState = {
+      provider: "codexAppServer",
+      conversationId: "thread-1",
+      cwd: "/tmp/worktree",
+      running: false,
+      activeTurnId: null,
+      messages: [
+        { id: "u1", turnId: "t1", kind: "user", text: "again", status: "completed", createdAt: "2026-04-15T10:00:00.000Z" },
+        { id: "a1", turnId: "t1", kind: "assistant", text: "ok", status: "completed", createdAt: "2026-04-15T10:00:01.000Z" },
+        { id: "u2", turnId: "t2", kind: "user", text: "again", status: "completed", createdAt: "2026-04-15T10:00:02.000Z" },
+        { id: "a2", turnId: "t2", kind: "assistant", text: "ok", status: "completed", createdAt: "2026-04-15T10:00:03.000Z" },
+      ],
+    };
+    // User queues another "again" — pending appended.
+    const withPending = markConversationTurnStarted(baseConv, "tmux:new", "again");
+    if (!withPending) return;
+
+    // Snapshot polls back; agent hasn't yet picked up the queued message,
+    // so snapshot is identical to the base history — only TWO real "again"s.
+    const stillSnapshot = baseConv;
+    const merged = preservePendingUserMessages(withPending, stillSnapshot);
+
+    // Pending should still be there. The two old "again" messages are NOT
+    // valid match targets for the new pending.
+    expect(merged.messages.filter((m) => m.id.startsWith("pending-user:"))).toHaveLength(1);
+    expect(merged.messages.filter((m) => m.kind === "user")).toHaveLength(3);
+  });
+
+  it("preservePendingUserMessages dedupes once snapshot adds a NEW same-text user message", () => {
+    const baseConv: AgentsUiConversationState = {
+      provider: "codexAppServer",
+      conversationId: "thread-1",
+      cwd: "/tmp/worktree",
+      running: false,
+      activeTurnId: null,
+      messages: [
+        { id: "u1", turnId: "t1", kind: "user", text: "again", status: "completed", createdAt: "2026-04-15T10:00:00.000Z" },
+        { id: "a1", turnId: "t1", kind: "assistant", text: "ok", status: "completed", createdAt: "2026-04-15T10:00:01.000Z" },
+      ],
+    };
+    const withPending = markConversationTurnStarted(baseConv, "tmux:new", "again");
+    if (!withPending) return;
+
+    // Snapshot now contains the queued message as a real third user message.
+    const newerSnapshot: AgentsUiConversationState = {
+      ...baseConv,
+      messages: [
+        ...baseConv.messages,
+        { id: "u2", turnId: "t2", kind: "user", text: "again", status: "completed", createdAt: "2026-04-15T10:00:05.000Z" },
+        { id: "a2", turnId: "t2", kind: "assistant", text: "ok again", status: "completed", createdAt: "2026-04-15T10:00:06.000Z" },
+      ],
+    };
+    const merged = preservePendingUserMessages(withPending, newerSnapshot);
+
+    // Pending consumed by the brand-new "again", not the older one.
+    expect(merged.messages.filter((m) => m.id.startsWith("pending-user:"))).toHaveLength(0);
+    expect(merged.messages.filter((m) => m.kind === "user" && m.text === "again")).toHaveLength(2);
+  });
+
   it("preservePendingUserMessages dedupes by text when turnIds differ (tmux:* vs claude uuid)", () => {
     // Send endpoint assigns a tmux:<uuid> turnId; claude's jsonl uses its own uuid.
     const withPending = markConversationTurnStarted(makeConversation(), "tmux:abc", "Ship it");
