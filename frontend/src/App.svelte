@@ -369,11 +369,6 @@
     unreadCount = 0;
   }
 
-  function onToggleMobileOverride(): void {
-    mobileOverride = mobileOverride === "force-mobile" ? "auto" : "force-mobile";
-    localStorage.setItem("webmux.mobileOverride", mobileOverride);
-  }
-
   // Sidebar resize
   const MIN_SIDEBAR_WIDTH = 140;
   const MAX_SIDEBAR_WIDTH = 500;
@@ -418,11 +413,7 @@
   }
 
   // Mobile state
-  let mediaIsMobile = $state(false);
-  let mobileOverride = $state<"auto" | "force-mobile">(
-    (localStorage.getItem("webmux.mobileOverride") as "auto" | "force-mobile" | null) ?? "auto",
-  );
-  let isMobile = $derived(mobileOverride === "force-mobile" || mediaIsMobile);
+  let isMobile = $state(false);
   let sidebarOpen = $state(false);
   let activePane = $state(0);
   let terminalRef:
@@ -500,7 +491,12 @@
             : null
   );
   let canConnect = $derived(!!selectedBranch && selectedWorktree?.mux === "✓" && !selectedWorktree?.creating);
-  let mobileViewOverride = $state<"auto" | "terminal" | "chat">("auto");
+  let mobileViewOverride = $state<"auto" | "terminal" | "chat">(
+    ((): "auto" | "terminal" | "chat" => {
+      const saved = localStorage.getItem("webmux.viewOverride");
+      return saved === "terminal" || saved === "chat" ? saved : "auto";
+    })(),
+  );
   let showMobileChat = $derived(
     mobileViewOverride === "terminal"
       ? false
@@ -508,7 +504,7 @@
         ? supportsSessionChat(selection)
         : isMobile && supportsSessionChat(selection),
   );
-  let showViewToggle = $derived(isMobile && supportsSessionChat(selection));
+  let showViewToggle = $derived(supportsSessionChat(selection));
   let isSelectedOpening = $derived(selectedBranch ? openingBranches.has(selectedBranch) : false);
   let isSelectedArchiving = $derived(selectedBranch ? archivingBranches.has(selectedBranch) : false);
   let pollIntervalMs = $derived(
@@ -524,13 +520,6 @@
         ? "No active worktrees."
         : "No worktrees found.",
   );
-
-  $effect(() => {
-    selectedBranch;
-    selectedExternalSession;
-    selectedScratchSession;
-    mobileViewOverride = "auto";
-  });
 
   $effect(() => {
     // Don't auto-select a worktree while a non-worktree session is active
@@ -1226,10 +1215,10 @@
     document.addEventListener("visibilitychange", onVisibilityChange);
 
     const mq = window.matchMedia("(max-width: 768px)");
-    mediaIsMobile = mq.matches;
+    isMobile = mq.matches;
     if (isMobile) sidebarOpen = true;
     function onMqChange(e: MediaQueryListEvent): void {
-      mediaIsMobile = e.matches;
+      isMobile = e.matches;
     }
     mq.addEventListener("change", onMqChange);
 
@@ -1456,8 +1445,6 @@
       {sshHost}
       linkedRepos={config.linkedRepos ?? []}
       {isMobile}
-      {mediaIsMobile}
-      mobileOverrideActive={mobileOverride === "force-mobile"}
       {showMobileChat}
       {showViewToggle}
       {notificationHistory}
@@ -1465,8 +1452,8 @@
       ontogglesidebar={() => (sidebarOpen = !sidebarOpen)}
       ontoggleview={() => {
         mobileViewOverride = showMobileChat ? "terminal" : "chat";
+        localStorage.setItem("webmux.viewOverride", mobileViewOverride);
       }}
-      {onToggleMobileOverride}
       onclose={handleClose}
       onarchive={handleArchiveToggle}
       onmerge={() => {

@@ -16,15 +16,12 @@
     sshHost,
     linkedRepos = [],
     isMobile = false,
-    mediaIsMobile = false,
-    mobileOverrideActive = false,
     showMobileChat = false,
     showViewToggle = false,
     notificationHistory = [],
     unreadCount = 0,
     ontogglesidebar,
     ontoggleview,
-    onToggleMobileOverride,
     onclose,
     onarchive,
     onmerge,
@@ -42,15 +39,12 @@
     sshHost: string;
     linkedRepos?: LinkedRepoInfo[];
     isMobile?: boolean;
-    mediaIsMobile?: boolean;
-    mobileOverrideActive?: boolean;
     showMobileChat?: boolean;
     showViewToggle?: boolean;
     notificationHistory?: AppNotification[];
     unreadCount?: number;
     ontogglesidebar?: () => void;
     ontoggleview?: () => void;
-    onToggleMobileOverride?: () => void;
     onclose: () => void;
     onarchive: () => void;
     onmerge: () => void;
@@ -306,16 +300,6 @@
           </div>
         {/if}
       </div>
-    {/if}
-
-    {#if !mediaIsMobile && onToggleMobileOverride}
-      <button
-        type="button"
-        class="p-1.5 rounded-md cursor-pointer bg-transparent border border-transparent text-muted hover:text-primary hover:border-edge"
-        title={mobileOverrideActive ? "Switch to desktop layout" : "Force mobile layout"}
-        aria-label={mobileOverrideActive ? "Switch to desktop layout" : "Force mobile layout"}
-        onclick={onToggleMobileOverride}
-      >{mobileOverrideActive ? "🖥" : "📱"}</button>
     {/if}
 
     {#if showViewToggle}
