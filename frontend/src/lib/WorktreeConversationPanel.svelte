@@ -12,6 +12,7 @@
     composerText: string;
     isSending: boolean;
     isInterrupting?: boolean;
+    compact?: boolean;
     onAttach: () => void;
     onComposerInput: (value: string) => void;
     onInterrupt: () => void;
@@ -28,6 +29,7 @@
     composerText,
     isSending,
     isInterrupting = false,
+    compact = false,
     onAttach,
     onComposerInput,
     onInterrupt,
@@ -87,6 +89,7 @@
   }
 
   function handleComposerKeydown(event: KeyboardEvent): void {
+    if (compact) return;
     if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
     if (canSend) {
@@ -273,7 +276,7 @@
       <textarea
         id="conversation-composer"
         aria-label="Message"
-        class="block min-h-[7rem] w-full max-w-full rounded-md border border-edge bg-surface px-3 py-2 text-sm text-primary outline-none transition focus:border-accent"
+        class="block w-full max-w-full rounded-md border border-edge bg-surface px-3 py-2 text-sm text-primary outline-none transition focus:border-accent {compact ? 'min-h-[3rem]' : 'min-h-[7rem]'}"
         placeholder="ask anything"
         value={composerText}
         oninput={handleComposerInput}

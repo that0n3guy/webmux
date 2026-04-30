@@ -275,6 +275,7 @@
   {composerText}
   {isSending}
   {isInterrupting}
+  compact={true}
   onAttach={() => void loadConversation("attach")}
   onComposerInput={(value) => {
     composerText = value;
