@@ -399,6 +399,75 @@ describe("ReconciliationService", () => {
     });
   });
 
+  it("renames a stamped window when the branch shifts again (no re-stamp)", async () => {
+    const repoRoot = "/repo/project";
+    const managedPath = "/repo/project/__worktrees/oauth/pica-migration";
+    const managedGitDir = await mkdtemp(join(tmpdir(), "webmux-reconcile-restamp-"));
+    tempDirs.push(managedGitDir);
+
+    await writeWorktreeMeta(managedGitDir, {
+      schemaVersion: 1,
+      worktreeId: "wt_pica",
+      branch: "docs/pica-pickup-cleanup",
+      baseBranch: "main",
+      createdAt: "2026-04-30T00:00:00.000Z",
+      profile: "default",
+      agent: "claude",
+      runtime: "host",
+      startupEnvValues: {},
+      allocatedPorts: {},
+      yolo: false,
+    });
+
+    const runtime = new ProjectRuntime();
+    const sessionName = buildProjectSessionName(repoRoot);
+
+    // git now reports a NEW branch (a second rename happened inside the worktree)
+    const git = new FakeGitGateway(
+      [
+        { path: repoRoot, branch: "main", head: "aaa111", detached: false, bare: false },
+        { path: managedPath, branch: "tests/pica-tranche", head: "ccc333", detached: false, bare: false },
+      ],
+      new Map([[managedPath, managedGitDir]]),
+      new Map([[managedPath, { dirty: false, aheadCount: 0, currentCommit: "ccc333" }]]),
+    );
+
+    // window is already stamped with worktreeId from a prior reconciliation, but
+    // its name still reflects the previous branch (it's been through one rename
+    // already). The sidebar's per-branch link points at the CURRENT branch name,
+    // so the window must follow.
+    const tmux = new FakeTmuxGateway([
+      {
+        sessionName,
+        windowName: buildWorktreeWindowName("docs/pica-pickup-cleanup"),
+        paneCount: 1,
+        paneCurrentPath: managedPath,
+        webmuxWorktreeId: "wt_pica",
+      },
+    ]);
+
+    const service = new ReconciliationService({
+      config: TEST_CONFIG,
+      git,
+      tmux,
+      portProbe: new FakePortProbe(new Set()),
+      runtime,
+    });
+
+    await service.reconcile(repoRoot);
+
+    const state = runtime.getWorktree("wt_pica");
+    expect(state?.session.exists).toBe(true);
+    // already stamped — must not re-stamp
+    expect(tmux.setWindowOptionCalls).toEqual([]);
+    // but must rename the window to follow the current branch
+    expect(tmux.renameWindowCalls).toContainEqual({
+      session: sessionName,
+      from: buildWorktreeWindowName("docs/pica-pickup-cleanup"),
+      to: buildWorktreeWindowName("tests/pica-tranche"),
+    });
+  });
+
   it("matches stamped windows directly even when the name and branch disagree", async () => {
     const repoRoot = "/repo/project";
     const managedPath = "/repo/project/__worktrees/feat";

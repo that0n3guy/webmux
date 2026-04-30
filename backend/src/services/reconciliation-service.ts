@@ -201,27 +201,34 @@ export class ReconciliationService {
       const gitStatus = this.deps.git.readWorktreeStatus(entry.path);
       const match = findWindow(windows, sessionName, branch, worktreeId, entry.path);
       const window = match?.window ?? null;
-      if (match && match.matchedBy !== "stamp") {
-        // Recovered an unstamped window (legacy or cwd-fallback). Stamp it now
-        // and rename to the current branch so future reconciles use the stable
-        // identity path.
-        try {
-          this.deps.tmux.setWindowOption(
-            match.window.sessionName,
-            match.window.windowName,
-            WEBMUX_WORKTREE_ID_OPTION,
-            worktreeId,
-          );
-          // Update in-memory summary so subsequent code in this tick sees the stamp.
-          match.window.webmuxWorktreeId = worktreeId;
-
-          const expectedName = buildWorktreeWindowName(branch);
-          if (match.window.windowName !== expectedName && this.deps.tmux.renameWindow) {
+      if (match) {
+        const expectedName = buildWorktreeWindowName(branch);
+        // Stamp unstamped windows (legacy / cwd-recovered) so future ticks find
+        // them by stable identity instead of relying on the fragile path.
+        if (match.matchedBy !== "stamp") {
+          try {
+            this.deps.tmux.setWindowOption(
+              match.window.sessionName,
+              match.window.windowName,
+              WEBMUX_WORKTREE_ID_OPTION,
+              worktreeId,
+            );
+            match.window.webmuxWorktreeId = worktreeId;
+          } catch {
+            // best-effort
+          }
+        }
+        // Keep the window's display name aligned with the current branch even
+        // when we matched by stamp — the user's sidebar shows a per-branch
+        // entry and clicks resolve to `${session}:${expectedName}`, so a stale
+        // window name leaves the link broken after a `git switch`.
+        if (match.window.windowName !== expectedName) {
+          try {
             this.deps.tmux.renameWindow(match.window.sessionName, match.window.windowName, expectedName);
             match.window.windowName = expectedName;
+          } catch {
+            // best-effort
           }
-        } catch {
-          // Stamping is best-effort; failure here just means we'll try again next tick.
         }
       }
 
