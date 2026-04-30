@@ -1472,19 +1472,25 @@
     />
 
 
-    {#if showMobileChat && selection?.kind === "worktree"}
-      {#key selectedBranch}
-        <MobileChatSurface projectId={currentProjectId!} worktree={selectedWorktree!} {isMobile} />
-      {/key}
-    {:else if showMobileChat && selection?.kind === "scratch"}
-      {#key selection.id}
-        <MobileChatSurface
-          projectId={currentProjectId!}
-          target={{ kind: "scratch", projectId: currentProjectId!, scratchId: selection.id }}
-          {isMobile}
-        />
-      {/key}
-    {:else if selection && (selection.kind !== "worktree" || canConnect)}
+    {#if selection?.kind === "worktree" && supportsSessionChat(selection)}
+      <div class="contents" class:hidden={!showMobileChat}>
+        {#key selectedBranch}
+          <MobileChatSurface projectId={currentProjectId!} worktree={selectedWorktree!} {isMobile} />
+        {/key}
+      </div>
+    {/if}
+    {#if selection?.kind === "scratch" && supportsSessionChat(selection)}
+      <div class="contents" class:hidden={!showMobileChat}>
+        {#key selection.id}
+          <MobileChatSurface
+            projectId={currentProjectId!}
+            target={{ kind: "scratch", projectId: currentProjectId!, scratchId: selection.id }}
+            {isMobile}
+          />
+        {/key}
+      </div>
+    {/if}
+    {#if !showMobileChat && selection && (selection.kind !== "worktree" || canConnect)}
       {#key selection.kind === "worktree" ? selection.branch : selection.kind === "external" ? selection.sessionName : selection.id}
         <Terminal
           {selection}
