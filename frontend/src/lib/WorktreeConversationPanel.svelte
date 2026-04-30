@@ -74,7 +74,9 @@
     const max = parseFloat(getComputedStyle(composerEl).lineHeight) * 6
       + parseFloat(getComputedStyle(composerEl).paddingTop)
       + parseFloat(getComputedStyle(composerEl).paddingBottom);
-    composerEl.style.height = `${Math.min(composerEl.scrollHeight, max)}px`;
+    const next = Math.min(composerEl.scrollHeight, max);
+    composerEl.style.height = `${next}px`;
+    composerEl.style.overflowY = composerEl.scrollHeight > max ? "auto" : "hidden";
   }
 
   $effect(() => {
