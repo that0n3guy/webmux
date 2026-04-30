@@ -369,6 +369,11 @@
     unreadCount = 0;
   }
 
+  function onToggleMobileOverride(): void {
+    mobileOverride = mobileOverride === "force-mobile" ? "auto" : "force-mobile";
+    localStorage.setItem("webmux.mobileOverride", mobileOverride);
+  }
+
   // Sidebar resize
   const MIN_SIDEBAR_WIDTH = 140;
   const MAX_SIDEBAR_WIDTH = 500;
@@ -413,7 +418,11 @@
   }
 
   // Mobile state
-  let isMobile = $state(false);
+  let mediaIsMobile = $state(false);
+  let mobileOverride = $state<"auto" | "force-mobile">(
+    (localStorage.getItem("webmux.mobileOverride") as "auto" | "force-mobile" | null) ?? "auto",
+  );
+  let isMobile = $derived(mobileOverride === "force-mobile" || mediaIsMobile);
   let sidebarOpen = $state(false);
   let activePane = $state(0);
   let terminalRef:
@@ -1217,10 +1226,10 @@
     document.addEventListener("visibilitychange", onVisibilityChange);
 
     const mq = window.matchMedia("(max-width: 768px)");
-    isMobile = mq.matches;
+    mediaIsMobile = mq.matches;
     if (isMobile) sidebarOpen = true;
     function onMqChange(e: MediaQueryListEvent): void {
-      isMobile = e.matches;
+      mediaIsMobile = e.matches;
     }
     mq.addEventListener("change", onMqChange);
 
@@ -1447,6 +1456,8 @@
       {sshHost}
       linkedRepos={config.linkedRepos ?? []}
       {isMobile}
+      {mediaIsMobile}
+      mobileOverrideActive={mobileOverride === "force-mobile"}
       {showMobileChat}
       {showViewToggle}
       {notificationHistory}
@@ -1455,6 +1466,7 @@
       ontoggleview={() => {
         mobileViewOverride = showMobileChat ? "terminal" : "chat";
       }}
+      {onToggleMobileOverride}
       onclose={handleClose}
       onarchive={handleArchiveToggle}
       onmerge={() => {
