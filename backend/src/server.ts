@@ -730,6 +730,7 @@ function resolveScratchChatTarget(scope: ProjectScope, id: string): {
   ok: true;
   facade: WorktreeSnapshot;
   attachTarget: { sessionName: string; windowName: string; paneIndex: number };
+  scratchCreatedAt: string;
 } | {
   ok: false;
   response: Response;
@@ -782,6 +783,7 @@ function resolveScratchChatTarget(scope: ProjectScope, id: string): {
     ok: true,
     facade,
     attachTarget: { sessionName: meta.sessionName, windowName, paneIndex: 0 },
+    scratchCreatedAt: meta.createdAt,
   };
 }
 
@@ -793,7 +795,7 @@ async function apiAttachAgentsScratchConversation(scope: ProjectScope, id: strin
   const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.facade, "chat");
   if (!chatSupport.ok) return errorResponse(chatSupport.error, chatSupport.status);
   const result = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.attachWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage)
+    ? await claudeConversationService.attachWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage, resolved.scratchCreatedAt)
     : await worktreeConversationService.attachWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage);
   return result.ok ? jsonResponse(result.data) : errorResponse(result.error, result.status);
 }
@@ -806,7 +808,7 @@ async function apiGetAgentsScratchConversationHistory(scope: ProjectScope, id: s
   const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.facade, "chat");
   if (!chatSupport.ok) return errorResponse(chatSupport.error, chatSupport.status);
   const result = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage)
+    ? await claudeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage, resolved.scratchCreatedAt)
     : await worktreeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage);
   return result.ok ? jsonResponse(result.data) : errorResponse(result.error, result.status);
 }
@@ -821,7 +823,7 @@ async function apiSendAgentsScratchConversationMessage(scope: ProjectScope, id: 
   const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.facade, "chat");
   if (!chatSupport.ok) return errorResponse(chatSupport.error, chatSupport.status);
   const conversationResult = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage)
+    ? await claudeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage, resolved.scratchCreatedAt)
     : await worktreeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage);
   if (!conversationResult.ok) return errorResponse(conversationResult.error, conversationResult.status);
   const attachTarget: import("./adapters/terminal").TerminalAttachTarget = {
@@ -852,7 +854,7 @@ async function apiInterruptAgentsScratchConversation(scope: ProjectScope, id: st
   const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.facade, "interrupt");
   if (!chatSupport.ok) return errorResponse(chatSupport.error, chatSupport.status);
   const conversationResult = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage)
+    ? await claudeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage, resolved.scratchCreatedAt)
     : await worktreeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage);
   if (!conversationResult.ok) return errorResponse(conversationResult.error, conversationResult.status);
   const attachTarget: import("./adapters/terminal").TerminalAttachTarget = {
