@@ -1490,7 +1490,8 @@
         {/key}
       </div>
     {/if}
-    {#if !showMobileChat && selection && (selection.kind !== "worktree" || canConnect)}
+    {#if !showMobileChat}
+    {#if selection && (selection.kind !== "worktree" || canConnect)}
       {#key selection.kind === "worktree" ? selection.branch : selection.kind === "external" ? selection.sessionName : selection.id}
         <Terminal
           {selection}
@@ -1594,6 +1595,7 @@
       <div class="flex-1 flex items-center justify-center text-muted text-sm">
         <p>Select a worktree from the sidebar to connect</p>
       </div>
+    {/if}
     {/if}
 
     {#if showPaneBar}
