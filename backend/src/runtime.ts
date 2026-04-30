@@ -4,6 +4,7 @@ import { projectRoot } from "./adapters/config";
 import { BunDockerGateway } from "./adapters/docker";
 import { BunGitGateway } from "./adapters/git";
 import { BunLifecycleHookRunner } from "./adapters/hooks";
+import { createUserPreferencesGateway } from "./adapters/preferences";
 import { BunPortProbe } from "./adapters/port-probe";
 import { BunTmuxGateway } from "./adapters/tmux";
 import { AutoNameService } from "./services/auto-name-service";
@@ -60,6 +61,8 @@ export async function createWebmuxRuntime(options: WebmuxRuntimeOptions = {}): P
 
   const { git, tmux, docker, portProbe, hooks, autoName, runtimeNotifications } = createWebmuxAdapters();
 
+  const preferencesGateway = createUserPreferencesGateway();
+
   const projectRegistry = createProjectRegistry({
     port,
     git,
@@ -69,6 +72,7 @@ export async function createWebmuxRuntime(options: WebmuxRuntimeOptions = {}): P
     hooks,
     autoName,
     runtimeNotifications,
+    preferencesGateway,
   });
   await projectRegistry.load();
 

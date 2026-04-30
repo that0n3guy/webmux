@@ -3,6 +3,7 @@ import { loadControlToken } from "../adapters/control-token";
 import type { BunDockerGateway } from "../adapters/docker";
 import type { BunGitGateway } from "../adapters/git";
 import type { BunLifecycleHookRunner } from "../adapters/hooks";
+import type { UserPreferences } from "../adapters/preferences";
 import type { BunPortProbe } from "../adapters/port-probe";
 import type { BunTmuxGateway } from "../adapters/tmux";
 import { computeProjectId } from "../adapters/tmux";
@@ -29,6 +30,7 @@ export interface ProjectScopeDeps {
   hooks: BunLifecycleHookRunner;
   autoName: AutoNameService;
   runtimeNotifications: NotificationService;
+  preferences?: UserPreferences;
   onCreateProgress?: (progress: CreateWorktreeProgress) => void | Promise<void>;
 }
 
@@ -49,7 +51,7 @@ export interface ProjectScope {
 export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
   const projectDir = deps.projectDir;
   const projectId = computeProjectId(projectDir);
-  const config = loadConfig(projectDir, { resolvedRoot: true });
+  const config = loadConfig(projectDir, { resolvedRoot: true, preferences: deps.preferences });
 
   const archiveStateService = new ArchiveStateService(deps.git.resolveWorktreeGitDir(projectDir));
   const runtimeStatePersistence = createRuntimeStatePersistence({

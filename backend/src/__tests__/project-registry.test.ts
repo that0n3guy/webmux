@@ -37,6 +37,12 @@ function buildDeps() {
   const { BunLifecycleHookRunner } = require("../adapters/hooks");
   const { AutoNameService } = require("../services/auto-name-service");
   const { NotificationService } = require("../services/notification-service");
+  const { emptyUserPreferences } = require("../adapters/preferences");
+  const preferencesGateway = {
+    async load() { return emptyUserPreferences(); },
+    async save() {},
+    path() { return "/dev/null"; },
+  };
   return {
     registryPath,
     port: 9999,
@@ -47,6 +53,7 @@ function buildDeps() {
     hooks: new BunLifecycleHookRunner(),
     autoName: new AutoNameService(),
     runtimeNotifications: new NotificationService(),
+    preferencesGateway,
   };
 }
 

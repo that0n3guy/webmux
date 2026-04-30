@@ -7,6 +7,7 @@ import type { BunLifecycleHookRunner } from "../adapters/hooks";
 import type { BunPortProbe } from "../adapters/port-probe";
 import type { BunTmuxGateway } from "../adapters/tmux";
 import { computeProjectId, buildProjectSessionName } from "../adapters/tmux";
+import type { UserPreferencesGateway } from "../adapters/preferences";
 import type { AutoNameService } from "./auto-name-service";
 import type { NotificationService } from "./notification-service";
 import { createProjectScope, type ProjectScope } from "./project-scope";
@@ -37,6 +38,7 @@ export interface ProjectRegistryDeps {
   hooks: BunLifecycleHookRunner;
   autoName: AutoNameService;
   runtimeNotifications: NotificationService;
+  preferencesGateway: UserPreferencesGateway;
 }
 
 export interface AddProjectInput {
@@ -91,7 +93,8 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
     writeFileSync(registryPath, stringifyYaml(file));
   }
 
-  function constructScope(projectDir: string): ProjectScope {
+  async function constructScope(projectDir: string): Promise<ProjectScope> {
+    const preferences = await deps.preferencesGateway.load();
     return createProjectScope({
       projectDir,
       port: deps.port,
@@ -102,6 +105,7 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
       hooks: deps.hooks,
       autoName: deps.autoName,
       runtimeNotifications: deps.runtimeNotifications,
+      preferences,
     });
   }
 
@@ -171,7 +175,7 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
         }
         const registryName = typeof entry.name === "string" ? entry.name : undefined;
         try {
-          const scope = constructScope(entry.path);
+          const scope = await constructScope(entry.path);
           scopes.set(scope.projectId, scope);
           meta.set(scope.projectId, { addedAt: entry.addedAt, name: registryName });
         } catch (err) {
@@ -194,7 +198,7 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
       }
 
       ensureGitRepo(absPath);
-      const scope = constructScope(absPath);
+      const scope = await constructScope(absPath);
       scopes.set(scope.projectId, scope);
       const name = input.displayName?.trim() || undefined;
       meta.set(scope.projectId, { addedAt: new Date().toISOString(), name });
