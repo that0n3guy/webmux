@@ -100,12 +100,13 @@
     }
   }
 
-  function buildUpdateBody(): UpdateUserPreferencesRequest {
+  function buildUpdateBody(agentsOverride?: Record<string, { label: string; startCommand: string; resumeCommand?: string }>): UpdateUserPreferencesRequest {
     const body: UpdateUserPreferencesRequest = {};
     const trimmedDefault = defaultAgent.trim();
     if (trimmedDefault) body.defaultAgent = trimmedDefault;
-    if (prefs?.agents && Object.keys(prefs.agents).length > 0) {
-      body.agents = prefs.agents;
+    const agents = agentsOverride ?? prefs?.agents;
+    if (agents && Object.keys(agents).length > 0) {
+      body.agents = agents;
     }
     const trimmedModel = autoNameModel.trim();
     const trimmedPrompt = autoNameSystemPrompt.trim();
@@ -119,6 +120,7 @@
 
   async function savePrefs(): Promise<void> {
     prefsSaving = true;
+    prefsError = null;
     try {
       prefs = await updatePreferences(buildUpdateBody());
       syncAgentSummaries();
@@ -174,15 +176,6 @@
     void savePrefs();
   }
 
-  function handleProjectSave(): void {
-    const trimmed = sshHost.trim();
-    if (trimmed) {
-      localStorage.setItem(SSH_STORAGE_KEY, trimmed);
-    } else {
-      localStorage.removeItem(SSH_STORAGE_KEY);
-    }
-    onsave(trimmed);
-  }
 
   function selectTheme(key: ThemeKey): void {
     applyTheme(key);
@@ -243,46 +236,30 @@
       },
     };
 
-    const body: UpdateUserPreferencesRequest = {
-      ...(defaultAgent.trim() ? { defaultAgent: defaultAgent.trim() } : {}),
-      agents: updatedAgents,
-    };
-    const trimmedModel = autoNameModel.trim();
-    const trimmedPrompt = autoNameSystemPrompt.trim();
-    if (trimmedModel || trimmedPrompt) {
-      body.autoName = {};
-      if (trimmedModel) body.autoName.model = trimmedModel;
-      if (trimmedPrompt) body.autoName.systemPrompt = trimmedPrompt;
+    prefsError = null;
+    try {
+      prefs = await updatePreferences(buildUpdateBody(updatedAgents));
+      syncAgentSummaries();
+      editor = null;
+    } catch (err) {
+      prefsError = errorMessage(err);
+      throw err;
     }
-
-    prefs = await updatePreferences(body);
-    syncAgentSummaries();
-    editor = null;
   }
 
   async function handleDeleteAgent(): Promise<void> {
     if (!deleteCandidate || !prefs) return;
     deletingAgentId = deleteCandidate.id;
+    prefsError = null;
 
     try {
       const updatedAgents = { ...(prefs.agents ?? {}) };
       delete updatedAgents[deleteCandidate.id];
-
-      const body: UpdateUserPreferencesRequest = {
-        ...(defaultAgent.trim() ? { defaultAgent: defaultAgent.trim() } : {}),
-        ...(Object.keys(updatedAgents).length > 0 ? { agents: updatedAgents } : {}),
-      };
-      const trimmedModel = autoNameModel.trim();
-      const trimmedPrompt = autoNameSystemPrompt.trim();
-      if (trimmedModel || trimmedPrompt) {
-        body.autoName = {};
-        if (trimmedModel) body.autoName.model = trimmedModel;
-        if (trimmedPrompt) body.autoName.systemPrompt = trimmedPrompt;
-      }
-
-      prefs = await updatePreferences(body);
+      prefs = await updatePreferences(buildUpdateBody(updatedAgents));
       syncAgentSummaries();
       deleteCandidate = null;
+    } catch (err) {
+      prefsError = errorMessage(err);
     } finally {
       deletingAgentId = null;
     }
@@ -480,7 +457,7 @@
       </div>
     </form>
   {:else}
-    <form onsubmit={(event) => { event.preventDefault(); handleProjectSave(); }}>
+    <div>
       <div class="mb-5">
         <span class="block text-xs text-muted mb-2">Linear</span>
         <div class="flex items-center justify-between gap-3 px-3 py-2 rounded-md border border-edge bg-surface">
@@ -517,11 +494,14 @@
         </div>
       </div>
 
-      <div class="flex justify-end gap-2">
-        <Btn type="button" onclick={onclose}>Cancel</Btn>
-        <Btn type="submit" variant="cta">Save</Btn>
+      <p class="text-[11px] text-muted">
+        Linear and GitHub toggles save automatically. There's nothing else to save here.
+      </p>
+
+      <div class="flex justify-end gap-2 mt-5">
+        <Btn type="button" onclick={onclose}>Close</Btn>
       </div>
-    </form>
+    </div>
   {/if}
 </BaseDialog>
 
