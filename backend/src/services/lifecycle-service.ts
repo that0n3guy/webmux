@@ -753,6 +753,7 @@ export class LifecycleService {
               shell: buildManagedShellCommand(input.initialized.paths.runtimeEnvPath),
         },
       },
+      input.initialized.meta?.worktreeId,
     );
   }
 

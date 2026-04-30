@@ -6,7 +6,13 @@ export interface TmuxWindowSummary {
   sessionName: string;
   windowName: string;
   paneCount: number;
+  /** Current path of the active pane (resolved). Used to recover from stale window names. */
+  paneCurrentPath?: string | null;
+  /** Value of the `@webmux-worktree-id` window option. Stable identity for windows webmux owns. */
+  webmuxWorktreeId?: string | null;
 }
+
+export const WEBMUX_WORKTREE_ID_OPTION = "@webmux-worktree-id";
 
 export interface TmuxSessionSummary {
   name: string;
@@ -35,6 +41,7 @@ export interface TmuxGateway {
     command?: string;
   }): void;
   setWindowOption(sessionName: string, windowName: string, option: string, value: string): void;
+  renameWindow(sessionName: string, windowName: string, newName: string): void;
   setSessionOption(sessionName: string, optionName: string, value: string): void;
   getSessionOption(sessionName: string, optionName: string): string | null;
   runCommand(target: string, command: string): void;
@@ -106,11 +113,19 @@ export function parseWindowSummaries(output: string): TmuxWindowSummary[] {
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
-      const [sessionName = "", windowName = "", paneCountRaw = "0"] = line.split("\t");
+      const [
+        sessionName = "",
+        windowName = "",
+        paneCountRaw = "0",
+        paneCurrentPath = "",
+        webmuxWorktreeId = "",
+      ] = line.split("\t");
       return {
         sessionName,
         windowName,
         paneCount: parseInt(paneCountRaw, 10) || 0,
+        paneCurrentPath: paneCurrentPath.length > 0 ? paneCurrentPath : null,
+        webmuxWorktreeId: webmuxWorktreeId.length > 0 ? webmuxWorktreeId : null,
       };
     })
     .filter((entry) => entry.sessionName.length > 0 && entry.windowName.length > 0);
@@ -208,6 +223,14 @@ export class BunTmuxGateway implements TmuxGateway {
     );
   }
 
+  renameWindow(sessionName: string, windowName: string, newName: string): void {
+    if (windowName === newName) return;
+    assertTmuxOk(
+      ["rename-window", "-t", `${sessionName}:${windowName}`, newName],
+      `rename tmux window ${sessionName}:${windowName} -> ${newName}`,
+    );
+  }
+
   setSessionOption(sessionName: string, optionName: string, value: string): void {
     assertTmuxOk(
       ["set-option", "-t", sessionName, optionName, value],
@@ -233,7 +256,12 @@ export class BunTmuxGateway implements TmuxGateway {
 
   listWindows(): TmuxWindowSummary[] {
     const output = assertTmuxOk(
-      ["list-windows", "-a", "-F", "#{session_name}\t#{window_name}\t#{window_panes}"],
+      [
+        "list-windows",
+        "-a",
+        "-F",
+        `#{session_name}\t#{window_name}\t#{window_panes}\t#{pane_current_path}\t#{${WEBMUX_WORKTREE_ID_OPTION}}`,
+      ],
       "list tmux windows",
     );
     return parseWindowSummaries(output);

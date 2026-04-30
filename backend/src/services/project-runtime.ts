@@ -180,9 +180,10 @@ export class ProjectRuntime {
 
   applyEvent(event: RuntimeEvent, now?: () => Date): ManagedWorktreeRuntimeState {
     const state = this.requireWorktree(event.worktreeId);
-    if (event.branch !== state.branch) {
-      this.applyBranchChange(state, event.branch);
-    }
+    // event.branch is captured into the agent's pane env at launch time and
+    // never refreshed, so it can be stale after a `git switch -c` inside the
+    // worktree. We trust the worktreeId for identity and let reconciliation
+    // (which reads `git worktree list` live) own the branch field.
     const timestamp = isoNow(now);
 
     switch (event.type) {

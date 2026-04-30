@@ -100,6 +100,8 @@ class FakeGitGateway implements GitGateway {
 
 class FakeTmuxGateway implements TmuxGateway {
   constructor(private readonly windows: TmuxWindowSummary[]) {}
+  setWindowOptionCalls: Array<{ session: string; window: string; option: string; value: string }> = [];
+  renameWindowCalls: Array<{ session: string; from: string; to: string }> = [];
 
   ensureServer(): void {
     throw new Error("not implemented");
@@ -125,8 +127,12 @@ class FakeTmuxGateway implements TmuxGateway {
     throw new Error("not implemented");
   }
 
-  setWindowOption(): void {
-    throw new Error("not implemented");
+  setWindowOption(session: string, window: string, option: string, value: string): void {
+    this.setWindowOptionCalls.push({ session, window, option, value });
+  }
+
+  renameWindow(session: string, from: string, to: string): void {
+    this.renameWindowCalls.push({ session, from, to });
   }
 
   runCommand(): void {
@@ -316,6 +322,139 @@ describe("ReconciliationService", () => {
     ]);
     expect(state?.yolo).toBe(true);
     expect(runtime.getWorktree("wt_stale")).toBeNull();
+  });
+
+  it("recovers tmux window after branch rename via cwd fallback, then stamps + renames it", async () => {
+    const repoRoot = "/repo/project";
+    const managedPath = "/repo/project/__worktrees/oauth/pica-migration";
+    const managedGitDir = await mkdtemp(join(tmpdir(), "webmux-reconcile-rename-"));
+    tempDirs.push(managedGitDir);
+
+    await writeWorktreeMeta(managedGitDir, {
+      schemaVersion: 1,
+      worktreeId: "wt_pica",
+      branch: "oauth/pica-migration",
+      baseBranch: "main",
+      createdAt: "2026-04-30T00:00:00.000Z",
+      profile: "default",
+      agent: "claude",
+      runtime: "host",
+      startupEnvValues: {},
+      allocatedPorts: {},
+      yolo: false,
+    });
+
+    const runtime = new ProjectRuntime();
+    const sessionName = buildProjectSessionName(repoRoot);
+    const oldWindowName = buildWorktreeWindowName("oauth/pica-migration");
+
+    // git now reports the worktree on the renamed branch
+    const git = new FakeGitGateway(
+      [
+        { path: repoRoot, branch: "main", head: "aaa111", detached: false, bare: false },
+        { path: managedPath, branch: "docs/pica-pickup-cleanup", head: "bbb222", detached: false, bare: false },
+      ],
+      new Map([[managedPath, managedGitDir]]),
+      new Map([[managedPath, { dirty: false, aheadCount: 0, currentCommit: "bbb222" }]]),
+    );
+
+    // tmux still has the OLD window name, no stamp, but its pane is in the worktree path.
+    const tmux = new FakeTmuxGateway([
+      {
+        sessionName,
+        windowName: oldWindowName,
+        paneCount: 1,
+        paneCurrentPath: managedPath,
+        webmuxWorktreeId: null,
+      },
+    ]);
+
+    const service = new ReconciliationService({
+      config: TEST_CONFIG,
+      git,
+      tmux,
+      portProbe: new FakePortProbe(new Set()),
+      runtime,
+    });
+
+    await service.reconcile(repoRoot);
+
+    const state = runtime.getWorktree("wt_pica");
+    expect(state).not.toBeNull();
+    expect(state?.branch).toBe("docs/pica-pickup-cleanup");
+    // the agent should NOT look invisible — session.exists must be true
+    expect(state?.session.exists).toBe(true);
+
+    // window should now be stamped and renamed to match the current branch
+    expect(tmux.setWindowOptionCalls).toContainEqual({
+      session: sessionName,
+      window: oldWindowName,
+      option: "@webmux-worktree-id",
+      value: "wt_pica",
+    });
+    expect(tmux.renameWindowCalls).toContainEqual({
+      session: sessionName,
+      from: oldWindowName,
+      to: buildWorktreeWindowName("docs/pica-pickup-cleanup"),
+    });
+  });
+
+  it("matches stamped windows directly even when the name and branch disagree", async () => {
+    const repoRoot = "/repo/project";
+    const managedPath = "/repo/project/__worktrees/feat";
+    const managedGitDir = await mkdtemp(join(tmpdir(), "webmux-reconcile-stamped-"));
+    tempDirs.push(managedGitDir);
+
+    await writeWorktreeMeta(managedGitDir, {
+      schemaVersion: 1,
+      worktreeId: "wt_feat",
+      branch: "feat/old",
+      baseBranch: "main",
+      createdAt: "2026-04-30T00:00:00.000Z",
+      profile: "default",
+      agent: "claude",
+      runtime: "host",
+      startupEnvValues: {},
+      allocatedPorts: {},
+      yolo: false,
+    });
+
+    const runtime = new ProjectRuntime();
+    const sessionName = buildProjectSessionName(repoRoot);
+
+    const git = new FakeGitGateway(
+      [
+        { path: repoRoot, branch: "main", head: "aaa111", detached: false, bare: false },
+        { path: managedPath, branch: "feat/new", head: "bbb222", detached: false, bare: false },
+      ],
+      new Map([[managedPath, managedGitDir]]),
+      new Map([[managedPath, { dirty: false, aheadCount: 0, currentCommit: "bbb222" }]]),
+    );
+
+    // window is stamped with worktreeId — name/path don't matter for lookup
+    const tmux = new FakeTmuxGateway([
+      {
+        sessionName,
+        windowName: "wm-feat/old",
+        paneCount: 1,
+        paneCurrentPath: null,
+        webmuxWorktreeId: "wt_feat",
+      },
+    ]);
+
+    const service = new ReconciliationService({
+      config: TEST_CONFIG,
+      git,
+      tmux,
+      portProbe: new FakePortProbe(new Set()),
+      runtime,
+    });
+
+    await service.reconcile(repoRoot);
+    const state = runtime.getWorktree("wt_feat");
+    expect(state?.session.exists).toBe(true);
+    // already stamped — reconciliation should not re-stamp it (idempotency)
+    expect(tmux.setWindowOptionCalls).toEqual([]);
   });
 
   it("creates synthetic ids for unmanaged worktrees", async () => {

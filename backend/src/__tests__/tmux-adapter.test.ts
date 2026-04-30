@@ -166,7 +166,7 @@ describe("buildWorktreeWindowName", () => {
 });
 
 describe("parseWindowSummaries", () => {
-  it("parses tmux list-windows output", () => {
+  it("parses tmux list-windows output (legacy 3-field rows fall back to nulls)", () => {
     const output = [
       "wm-project-a1b2c3d4\twm-main\t2",
       "wm-project-a1b2c3d4\twm-feature/search\t3",
@@ -177,11 +177,31 @@ describe("parseWindowSummaries", () => {
         sessionName: "wm-project-a1b2c3d4",
         windowName: "wm-main",
         paneCount: 2,
+        paneCurrentPath: null,
+        webmuxWorktreeId: null,
       },
       {
         sessionName: "wm-project-a1b2c3d4",
         windowName: "wm-feature/search",
         paneCount: 3,
+        paneCurrentPath: null,
+        webmuxWorktreeId: null,
+      },
+    ]);
+  });
+
+  it("parses 5-field rows with pane_current_path and @webmux-worktree-id", () => {
+    const output = [
+      "wm-project-a1b2c3d4\twm-feature/search\t1\t/home/dev/__worktrees/feature/search\twt-abc123",
+    ].join("\n");
+
+    expect(parseWindowSummaries(output)).toEqual([
+      {
+        sessionName: "wm-project-a1b2c3d4",
+        windowName: "wm-feature/search",
+        paneCount: 1,
+        paneCurrentPath: "/home/dev/__worktrees/feature/search",
+        webmuxWorktreeId: "wt-abc123",
       },
     ]);
   });
