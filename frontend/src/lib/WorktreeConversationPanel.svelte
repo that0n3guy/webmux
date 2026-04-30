@@ -70,7 +70,7 @@
   function autoResizeComposer(): void {
     if (!composerEl || !compact) return;
     composerEl.style.height = "auto";
-    const max = parseFloat(getComputedStyle(composerEl).lineHeight) * 4
+    const max = parseFloat(getComputedStyle(composerEl).lineHeight) * 6
       + parseFloat(getComputedStyle(composerEl).paddingTop)
       + parseFloat(getComputedStyle(composerEl).paddingBottom);
     composerEl.style.height = `${Math.min(composerEl.scrollHeight, max)}px`;
