@@ -195,7 +195,11 @@
       ? currentState.unchangedTicks + 1
       : 0;
 
-    const hasPendingOptimistic = nextConversation.messages.some(
+    // Pending optimistic messages live only in `conversation` (local state),
+    // not in the server snapshot. Don't settle while any are still preserved
+    // — we need the next snapshot to either include the real user message
+    // (so dedup consumes the pending) or for the user to give up.
+    const hasPendingOptimistic = (conversation?.messages ?? []).some(
       (m) => m.kind === "user" && m.id.startsWith("pending-user:"),
     );
 
