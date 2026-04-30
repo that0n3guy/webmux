@@ -7,7 +7,7 @@ import type { BunLifecycleHookRunner } from "../adapters/hooks";
 import type { BunPortProbe } from "../adapters/port-probe";
 import type { BunTmuxGateway } from "../adapters/tmux";
 import { computeProjectId, buildProjectSessionName } from "../adapters/tmux";
-import type { UserPreferencesGateway } from "../adapters/preferences";
+import type { UserPreferences, UserPreferencesGateway } from "../adapters/preferences";
 import type { AutoNameService } from "./auto-name-service";
 import type { NotificationService } from "./notification-service";
 import { createProjectScope, type ProjectScope } from "./project-scope";
@@ -93,8 +93,7 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
     writeFileSync(registryPath, stringifyYaml(file));
   }
 
-  async function constructScope(projectDir: string): Promise<ProjectScope> {
-    const preferences = await deps.preferencesGateway.load();
+  function constructScope(projectDir: string, preferences: UserPreferences): ProjectScope {
     return createProjectScope({
       projectDir,
       port: deps.port,
@@ -159,6 +158,7 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
       const maybeProjects = (parsed as { projects?: unknown }).projects;
       if (!Array.isArray(maybeProjects)) return;
 
+      const preferences = await deps.preferencesGateway.load();
       for (const raw of maybeProjects) {
         if (!raw || typeof raw !== "object") {
           log.warn(`[project-registry] skipping malformed entry: ${JSON.stringify(raw)}`);
@@ -175,7 +175,7 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
         }
         const registryName = typeof entry.name === "string" ? entry.name : undefined;
         try {
-          const scope = await constructScope(entry.path);
+          const scope = constructScope(entry.path, preferences);
           scopes.set(scope.projectId, scope);
           meta.set(scope.projectId, { addedAt: entry.addedAt, name: registryName });
         } catch (err) {
@@ -198,7 +198,8 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
       }
 
       ensureGitRepo(absPath);
-      const scope = await constructScope(absPath);
+      const preferences = await deps.preferencesGateway.load();
+      const scope = constructScope(absPath, preferences);
       scopes.set(scope.projectId, scope);
       const name = input.displayName?.trim() || undefined;
       meta.set(scope.projectId, { addedAt: new Date().toISOString(), name });
