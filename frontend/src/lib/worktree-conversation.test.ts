@@ -81,18 +81,43 @@ describe("worktree conversation helpers", () => {
     expect(merged.messages).toHaveLength(2);
   });
 
-  it("preservePendingUserMessages drops orphan pending once agent is idle (e.g. queued text never accepted)", () => {
+  it("preservePendingUserMessages keeps pending visible even when agent goes idle (claude absorbs queue without recording)", () => {
     const withPending = markConversationTurnStarted(makeConversation(), "turn-2", "queued msg");
     if (!withPending) return;
 
-    // Agent has finished and is idle, but the queued message never showed up
-    // in the snapshot — it was lost (e.g. claude received a hook event
-    // instead of the user's text).
     const idleSnapshot: AgentsUiConversationState = { ...makeConversation(), running: false };
     const merged = preservePendingUserMessages(withPending, idleSnapshot);
 
-    expect(merged.messages.some((m) => m.id.startsWith("pending-user:"))).toBe(false);
-    expect(merged.messages).toHaveLength(1);
+    // Pending stays — claude commonly mentions the queued text in its reply
+    // without writing a separate user record for it, so we keep it visible.
+    expect(merged.messages.some((m) => m.id.startsWith("pending-user:"))).toBe(true);
+  });
+
+  it("preservePendingUserMessages inserts pending at the chronologically correct position", () => {
+    const earlier: AgentsUiConversationState = {
+      provider: "codexAppServer",
+      conversationId: "thread-1",
+      cwd: "/tmp/worktree",
+      running: false,
+      activeTurnId: null,
+      messages: [
+        { id: "u1", turnId: "t1", kind: "user", text: "first", status: "completed", createdAt: "2026-04-30T10:00:00.000Z" },
+        { id: "a1", turnId: "t1", kind: "assistant", text: "ack", status: "completed", createdAt: "2026-04-30T10:00:30.000Z" },
+      ],
+    };
+    // Pending was created at 10:00:10 — between the two messages.
+    const withPending: AgentsUiConversationState = {
+      ...earlier,
+      messages: [
+        ...earlier.messages,
+        { id: "pending-user:tmux:abc", turnId: "tmux:abc", kind: "user", text: "queued", status: "completed", createdAt: "2026-04-30T10:00:10.000Z" },
+      ],
+    };
+    // Snapshot still doesn't include the queued text.
+    const merged = preservePendingUserMessages(withPending, earlier);
+
+    const ordered = merged.messages.map((m) => m.id);
+    expect(ordered).toEqual(["u1", "pending-user:tmux:abc", "a1"]);
   });
 
   it("preservePendingUserMessages drops pending once snapshot has the real user message", () => {

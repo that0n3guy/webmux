@@ -114,17 +114,35 @@ export function preservePendingUserMessages(
 
   if (pendingFromPrev.length === 0) return next;
 
-  // If the agent is now idle and we still have pending messages that didn't
-  // match any real user record, the agent finished its turn without ever
-  // picking them up (e.g., a background hook fired before the queued text was
-  // accepted). Drop them rather than letting phantom optimistic messages sit
-  // at the bottom of the chat forever.
-  if (!next.running) return next;
+  // Splice each pending into the snapshot at the chronologically correct
+  // position based on createdAt. Claude often absorbs queued messages into
+  // the current turn's context without writing a separate user record, so we
+  // keep the optimistic visible in the right place rather than dropping it.
+  let messages = next.messages;
+  for (const pending of pendingFromPrev) {
+    messages = insertPendingByCreatedAt(messages, pending);
+  }
+  return { ...next, messages };
+}
 
-  return {
-    ...next,
-    messages: [...next.messages, ...pendingFromPrev],
-  };
+function insertPendingByCreatedAt(
+  messages: AgentsUiConversationMessage[],
+  pending: AgentsUiConversationMessage,
+): AgentsUiConversationMessage[] {
+  const pendingAt = "createdAt" in pending && typeof pending.createdAt === "string" ? pending.createdAt : null;
+  if (!pendingAt) return [...messages, pending];
+
+  let insertIdx = messages.length;
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    const ts = "createdAt" in m && typeof m.createdAt === "string" ? m.createdAt : null;
+    if (ts === null) continue;
+    if (ts > pendingAt) {
+      insertIdx = i;
+      break;
+    }
+  }
+  return [...messages.slice(0, insertIdx), pending, ...messages.slice(insertIdx)];
 }
 
 // ---------------------------------------------------------------------------
@@ -185,15 +203,24 @@ export function applyPersistedPendingMessages(
 ): AgentsUiConversationState {
   if (persisted.length === 0) return conversation;
 
-  // Persisted pending only matters while the agent is still working — if the
-  // agent is idle on first load, any leftover pending in storage is stale
-  // (either already in history or never accepted). Don't surface ghosts.
-  if (!conversation.running) return conversation;
+  // Filter out persisted entries whose text already appears as a real user
+  // message in the loaded conversation — those were processed before the
+  // remount. Insert the rest at the correct chronological position.
+  const realUserTexts = new Set(
+    conversation.messages
+      .filter((m) => m.kind === "user" && !m.id.startsWith("pending-user:") && "text" in m)
+      .map((m) => (m as { text: string }).text),
+  );
 
-  return {
-    ...conversation,
-    messages: [...conversation.messages, ...persisted],
-  };
+  let messages = conversation.messages;
+  for (const pending of persisted) {
+    if (!("text" in pending)) continue;
+    if (realUserTexts.has(pending.text)) continue;
+    messages = insertPendingByCreatedAt(messages, pending);
+  }
+
+  if (messages === conversation.messages) return conversation;
+  return { ...conversation, messages };
 }
 
 export function buildConversationProgressSignature(conversation: AgentsUiConversationState | null): string | null {
