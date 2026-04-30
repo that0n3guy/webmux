@@ -102,9 +102,18 @@ The agent CLI hooks only fire on `UserPromptSubmit`, `PostToolUse`, `Stop`, and 
 
 Adding a method to the `TmuxGateway` interface requires updating **all** `FakeTmuxGateway` test classes — they live in several test files (`session-activity-service.test.ts`, `claude-conversation-service.test.ts`, `worktree-conversation-service.test.ts`, `lifecycle-service.test.ts`, `reconciliation-service.test.ts`, `worktree-storage.test.ts`, etc.). Search `class FakeTmuxGateway` and add a minimal stub. The TS compile error is loud but easy to miss if you only run a single test file.
 
-### Auto-created `.webmux.yaml` should be gitignored by users
+### Project name lives in the registry, not in `.webmux.yaml`
 
-`ensureWebmuxYaml` writes `.webmux.yaml` when a project is added via "+ Project". This file is **personal config** (project name + display preferences), not committed config. Users who don't add it to `.gitignore` lose their config when reverting branches. The README documents this; future "+ Project" flows could append to `.gitignore` automatically (not done yet).
+"+ Project" stores the user-chosen name in `~/.config/webmux/projects.yaml` (the registry). Webmux no longer auto-writes `.webmux.yaml`. A project only needs a yaml if it wants to override workspace defaults (mainBranch, profiles, services, integrations). Display name resolves: registry name → yaml `name:` → dir basename.
+
+### Three-layer config merge: user-global → project yaml → local overlay
+
+`loadConfig` accepts an optional `preferences: UserPreferences` (loaded from `~/.config/webmux/preferences.yaml`). Merge order:
+- `agents`: `{ ...globalAgents, ...projectYamlAgents, ...localOverlayAgents }` — local wins, then project, then global.
+- `workspace.defaultAgent`: explicit project value > `prefs.defaultAgent` (if it's `"claude"` / `"codex"`) > hardcoded `"claude"`.
+- `auto_name`: field-level cascade — project's `provider`/`model`/`systemPrompt` win where present, global fills undefined fields.
+
+The `runtime` constructs one shared `UserPreferencesGateway` and hands it to the registry. Per `add()` / `load()` the registry reads prefs once, then constructs all scopes with the same snapshot. After `PUT /api/preferences` the server iterates every scope and calls `scope.refreshConfig(prefs)`. Existing per-project agents in `.webmux.local.yaml` continue to work without migration — they just merge in on top of any global agents.
 
 ### `{@const}` placement in Svelte 5
 

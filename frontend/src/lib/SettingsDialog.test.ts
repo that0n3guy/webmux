@@ -171,4 +171,137 @@ describe("SettingsDialog", () => {
       expect(onagentschange).toHaveBeenCalledWith([createAgentSummary()]);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Error states
+  // -------------------------------------------------------------------------
+
+  it("displays prefsError when fetchPreferences rejects", async () => {
+    vi.mocked(fetchPreferences).mockRejectedValue(new Error("Network failure loading prefs"));
+
+    renderDialog();
+
+    await waitFor(() => {
+      expect(screen.getByText("Network failure loading prefs")).toBeInTheDocument();
+    });
+  });
+
+  it("displays prefsError when updatePreferences rejects and dialog stays open", async () => {
+    vi.mocked(updatePreferences).mockRejectedValue(new Error("Save failed unexpectedly"));
+
+    renderDialog();
+    await screen.findByRole("tab", { name: "Global" });
+
+    await fireEvent.click(screen.getAllByRole("button", { name: "Save" }).at(-1)!);
+
+    await waitFor(() => {
+      expect(screen.getByText("Save failed unexpectedly")).toBeInTheDocument();
+    });
+    // Dialog stays open — the Global tab is still visible
+    expect(screen.getByRole("tab", { name: "Global" })).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // fetchConfig is called with per-project projectId after Global Save
+  // -------------------------------------------------------------------------
+
+  it("calls fetchConfig with the correct projectId query after a successful Global Save", async () => {
+    vi.mocked(updatePreferences).mockResolvedValue(createPreferences());
+    vi.mocked(api.fetchConfig).mockResolvedValue(createConfig());
+
+    render(SettingsDialog, {
+      projectId: "my-special-project",
+      currentTheme: "github-dark",
+      linearAutoCreate: false,
+      autoRemoveOnMerge: false,
+      onthemechange: vi.fn(),
+      onlinearautocreatechange: vi.fn(),
+      onautoremovechange: vi.fn(),
+      onagentschange: vi.fn(),
+      onsave: vi.fn(),
+      onclose: vi.fn(),
+    });
+
+    await screen.findByRole("tab", { name: "Global" });
+    await fireEvent.click(screen.getAllByRole("button", { name: "Save" }).at(-1)!);
+
+    await waitFor(() => {
+      expect(api.fetchConfig).toHaveBeenCalledWith({ query: { projectId: "my-special-project" } });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Add agent flow via Global tab
+  // -------------------------------------------------------------------------
+
+  it("calls updatePreferences with the new agent after completing the Add agent flow", async () => {
+    const savedPrefs = createPreferences({
+      agents: { "my-agent": { label: "My Agent", startCommand: "my-agent run" } },
+    });
+    vi.mocked(updatePreferences).mockResolvedValue(savedPrefs);
+    vi.mocked(api.fetchConfig).mockResolvedValue(createConfig());
+
+    renderDialog();
+    await screen.findByText("No custom agents setup");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Add agent" }));
+
+    // AgentEditorDialog is now open — fill in the fields
+    const labelInput = await screen.findByLabelText("Agent name");
+    const startInput = screen.getByLabelText("Start command");
+
+    await fireEvent.input(labelInput, { target: { value: "My Agent" } });
+    await fireEvent.input(startInput, { target: { value: "my-agent run" } });
+
+    // Click the Save button inside the editor dialog
+    const saveButtons = screen.getAllByRole("button", { name: "Save" });
+    await fireEvent.click(saveButtons[saveButtons.length - 1]);
+
+    await waitFor(() => {
+      expect(updatePreferences).toHaveBeenCalled();
+    });
+
+    const callArg = vi.mocked(updatePreferences).mock.calls[0][0];
+    expect(callArg.agents).toBeDefined();
+    // The agent id is derived from the label ("My Agent" → "my-agent")
+    expect(callArg.agents?.["my-agent"]).toEqual({
+      label: "My Agent",
+      startCommand: "my-agent run",
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Delete agent flow via Global tab
+  // -------------------------------------------------------------------------
+
+  it("calls updatePreferences without the deleted agent after the Delete flow", async () => {
+    vi.mocked(fetchPreferences).mockResolvedValue(createPreferences({
+      agents: {
+        "gemini-cli": { label: "Gemini CLI", startCommand: 'gemini --prompt "${PROMPT}"' },
+      },
+    }));
+    const afterDeletePrefs = createPreferences({ agents: {} });
+    vi.mocked(updatePreferences).mockResolvedValue(afterDeletePrefs);
+    vi.mocked(api.fetchConfig).mockResolvedValue(createConfig());
+
+    renderDialog();
+    // Wait for the agent row to appear (findAllByText because it also appears in the option)
+    await screen.findAllByText("Gemini CLI");
+
+    // Click Delete for the agent
+    await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    // ConfirmDialog appears — click the confirm button (labelled "Remove" by default)
+    const removeBtn = await screen.findByRole("button", { name: "Remove" });
+    await fireEvent.click(removeBtn);
+
+    await waitFor(() => {
+      expect(updatePreferences).toHaveBeenCalled();
+    });
+
+    const callArg = vi.mocked(updatePreferences).mock.calls[0][0];
+    // agents should be empty or undefined — the deleted agent must not be present
+    const agentIds = Object.keys(callArg.agents ?? {});
+    expect(agentIds).not.toContain("gemini-cli");
+  });
 });
