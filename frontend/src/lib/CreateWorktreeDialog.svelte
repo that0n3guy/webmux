@@ -69,14 +69,14 @@
     selectedProjectId = defaultProjectId;
   });
 
-  const STORAGE_KEY = "wt-default-profile";
   const AGENT_STORAGE_KEY = "wt-default-agents";
   const MULTI_AGENT_STORAGE_KEY = "wt-default-multi-agents";
   const ENV_STORAGE_KEY = "wt-default-envs";
   const YOLO_STORAGE_KEY = "wm-yolo";
-  const savedProfile = localStorage.getItem(STORAGE_KEY);
   const savedEnvs = localStorage.getItem(ENV_STORAGE_KEY);
   const savedYolo = localStorage.getItem(YOLO_STORAGE_KEY);
+  // Drop any profile that an older webmux saved under wt-default-profile.
+  localStorage.removeItem("wt-default-profile");
 
   function sameAgentIds(left: AgentId[], right: AgentId[]): boolean {
     return left.length === right.length && left.every((id, index) => id === right[index]);
@@ -137,12 +137,11 @@
   let selectedBaseBranch = $state("");
   let multiAgentMode = $state(savedMultiAgentMode);
   let selectedAgentIds = $state<AgentId[]>(savedAgentIds);
-  let profile = $state(savedProfile ?? "");
+  let profile = $state("");
   let createLinearTicket = $state(false);
   let linearTitle = $state("");
   let yolo = $state(savedYolo === null ? true : savedYolo === "true");
-  const hasSavedDefaults = savedProfile != null
-    || localStorage.getItem(AGENT_STORAGE_KEY) != null
+  const hasSavedDefaults = localStorage.getItem(AGENT_STORAGE_KEY) != null
     || localStorage.getItem(MULTI_AGENT_STORAGE_KEY) != null
     || savedEnvs != null;
   let saveDefault = $state(hasSavedDefaults);
@@ -251,12 +250,10 @@
       error = null;
       localStorage.setItem(YOLO_STORAGE_KEY, String(yolo));
       if (saveDefault) {
-        localStorage.setItem(STORAGE_KEY, profile);
         localStorage.setItem(AGENT_STORAGE_KEY, JSON.stringify(selectedAgentIds));
         localStorage.setItem(MULTI_AGENT_STORAGE_KEY, String(multiAgentMode));
         localStorage.setItem(ENV_STORAGE_KEY, JSON.stringify(envValues));
       } else {
-        localStorage.removeItem(STORAGE_KEY);
         localStorage.removeItem(AGENT_STORAGE_KEY);
         localStorage.removeItem(MULTI_AGENT_STORAGE_KEY);
         localStorage.removeItem(ENV_STORAGE_KEY);
