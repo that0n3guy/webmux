@@ -13,6 +13,7 @@
     isSending: boolean;
     isInterrupting?: boolean;
     compact?: boolean;
+    submitOnEnter?: boolean;
     onAttach: () => void;
     onComposerInput: (value: string) => void;
     onInterrupt: () => void;
@@ -30,6 +31,7 @@
     isSending,
     isInterrupting = false,
     compact = false,
+    submitOnEnter = true,
     onAttach,
     onComposerInput,
     onInterrupt,
@@ -104,7 +106,7 @@
   }
 
   function handleComposerKeydown(event: KeyboardEvent): void {
-    if (compact) return;
+    if (!submitOnEnter) return;
     if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
     if (canSend) {

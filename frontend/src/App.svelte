@@ -1474,13 +1474,14 @@
 
     {#if showMobileChat && selection?.kind === "worktree"}
       {#key selectedBranch}
-        <MobileChatSurface projectId={currentProjectId!} worktree={selectedWorktree!} />
+        <MobileChatSurface projectId={currentProjectId!} worktree={selectedWorktree!} {isMobile} />
       {/key}
     {:else if showMobileChat && selection?.kind === "scratch"}
       {#key selection.id}
         <MobileChatSurface
           projectId={currentProjectId!}
           target={{ kind: "scratch", projectId: currentProjectId!, scratchId: selection.id }}
+          {isMobile}
         />
       {/key}
     {:else if selection && (selection.kind !== "worktree" || canConnect)}

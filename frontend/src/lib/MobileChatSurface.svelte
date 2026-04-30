@@ -19,9 +19,10 @@
     projectId: string;
     worktree?: WorktreeInfo;
     target?: SessionTarget;
+    isMobile?: boolean;
   }
 
-  const { projectId, worktree, target }: Props = $props();
+  const { projectId, worktree, target, isMobile = false }: Props = $props();
 
   const resolvedTarget = $derived<SessionTarget>(
     target ?? (worktree ? { kind: "worktree", projectId, branch: worktree.branch } : { kind: "worktree", projectId, branch: "" }),
@@ -276,6 +277,7 @@
   {isSending}
   {isInterrupting}
   compact={true}
+  submitOnEnter={!isMobile}
   onAttach={() => void loadConversation("attach")}
   onComposerInput={(value) => {
     composerText = value;
