@@ -126,7 +126,7 @@ describe("SettingsDialog", () => {
       },
     }));
     renderDialog();
-    await screen.findByText("Gemini CLI");
+    await screen.findAllByText("Gemini CLI");
     expect(screen.getByText('gemini --prompt "${PROMPT}"')).toBeInTheDocument();
   });
 
