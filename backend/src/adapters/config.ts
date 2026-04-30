@@ -207,7 +207,7 @@ function cloneAgents(agents: Record<AgentId, CustomAgentConfig>): Record<AgentId
   );
 }
 
-function parseCustomAgent(raw: unknown): CustomAgentConfig | null {
+export function parseCustomAgent(raw: unknown): CustomAgentConfig | null {
   if (!isRecord(raw)) return null;
   if (typeof raw.label !== "string" || !raw.label.trim()) return null;
   if (typeof raw.startCommand !== "string" || !raw.startCommand.trim()) return null;
@@ -221,7 +221,7 @@ function parseCustomAgent(raw: unknown): CustomAgentConfig | null {
   };
 }
 
-function parseCustomAgents(raw: unknown): Record<AgentId, CustomAgentConfig> {
+export function parseCustomAgents(raw: unknown): Record<AgentId, CustomAgentConfig> {
   if (!isRecord(raw)) return {};
 
   return Object.entries(raw).reduce<Record<AgentId, CustomAgentConfig>>((acc, [id, value]) => {
