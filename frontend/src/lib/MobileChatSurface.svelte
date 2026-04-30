@@ -4,6 +4,7 @@
     applyConversationMessageDelta,
     buildConversationProgressSignature,
     markConversationTurnStarted,
+    preservePendingUserMessages,
   } from "./worktree-conversation";
   import { makeConversationClient } from "./session-conversation-client";
   import type {
@@ -66,7 +67,7 @@
   }
 
   function applyConversationResponse(response: AgentsUiWorktreeConversationResponse): void {
-    conversation = response.conversation;
+    conversation = preservePendingUserMessages(conversation, response.conversation);
     conversationError = null;
     syncConversationStream();
   }

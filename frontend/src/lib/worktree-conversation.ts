@@ -76,6 +76,26 @@ export function markConversationTurnStarted(
   };
 }
 
+export function preservePendingUserMessages(
+  prev: AgentsUiConversationState | null,
+  next: AgentsUiConversationState,
+): AgentsUiConversationState {
+  if (!prev || prev.conversationId !== next.conversationId) return next;
+
+  const pendingFromPrev = prev.messages.filter((message) =>
+    message.kind === "user"
+      && message.id.startsWith("pending-user:")
+      && !next.messages.some((m) => m.kind === "user" && m.turnId === message.turnId),
+  );
+
+  if (pendingFromPrev.length === 0) return next;
+
+  return {
+    ...next,
+    messages: [...next.messages, ...pendingFromPrev],
+  };
+}
+
 export function buildConversationProgressSignature(conversation: AgentsUiConversationState | null): string | null {
   if (!conversation) return null;
 
