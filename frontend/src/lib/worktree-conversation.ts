@@ -82,11 +82,26 @@ export function preservePendingUserMessages(
 ): AgentsUiConversationState {
   if (!prev || prev.conversationId !== next.conversationId) return next;
 
-  const pendingFromPrev = prev.messages.filter((message) =>
-    message.kind === "user"
-      && message.id.startsWith("pending-user:")
-      && !next.messages.some((m) => m.kind === "user" && m.turnId === message.turnId),
-  );
+  // The send endpoint assigns its own turnId (e.g. "tmux:<uuid>") which never matches
+  // the agent's own turnId in the snapshot. Dedupe by text instead. Each snapshot user
+  // message is consumed at most once so identical-text resends still work.
+  const snapshotTextRemaining = new Map<string, number>();
+  for (const message of next.messages) {
+    if (message.kind !== "user") continue;
+    snapshotTextRemaining.set(message.text, (snapshotTextRemaining.get(message.text) ?? 0) + 1);
+  }
+
+  const pendingFromPrev: AgentsUiConversationMessage[] = [];
+  for (const message of prev.messages) {
+    if (message.kind !== "user") continue;
+    if (!message.id.startsWith("pending-user:")) continue;
+    const remaining = snapshotTextRemaining.get(message.text) ?? 0;
+    if (remaining > 0) {
+      snapshotTextRemaining.set(message.text, remaining - 1);
+      continue;
+    }
+    pendingFromPrev.push(message);
+  }
 
   if (pendingFromPrev.length === 0) return next;
 

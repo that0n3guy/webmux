@@ -106,6 +106,31 @@ describe("worktree conversation helpers", () => {
     expect(merged.messages).toHaveLength(2);
   });
 
+  it("preservePendingUserMessages dedupes by text when turnIds differ (tmux:* vs claude uuid)", () => {
+    // Send endpoint assigns a tmux:<uuid> turnId; claude's jsonl uses its own uuid.
+    const withPending = markConversationTurnStarted(makeConversation(), "tmux:abc", "Ship it");
+    if (!withPending) return;
+
+    const serverSnapshot: AgentsUiConversationState = {
+      ...makeConversation(),
+      messages: [
+        ...makeConversation().messages,
+        {
+          id: "user-real",
+          turnId: "claude-uuid-xyz", // different from optimistic turnId
+          kind: "user",
+          text: "Ship it",
+          status: "completed",
+          createdAt: "2026-04-15T10:01:00.000Z",
+        },
+      ],
+    };
+
+    const merged = preservePendingUserMessages(withPending, serverSnapshot);
+    expect(merged.messages.filter((m) => m.id.startsWith("pending-user:"))).toHaveLength(0);
+    expect(merged.messages.filter((m) => m.kind === "user" && m.text === "Ship it")).toHaveLength(1);
+  });
+
   it("captures progress when the latest message grows", () => {
     const started = applyConversationMessageDelta(makeConversation(), {
       type: "messageDelta",
