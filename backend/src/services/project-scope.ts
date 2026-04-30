@@ -45,6 +45,7 @@ export interface ProjectScope {
   lifecycleService: LifecycleService;
   scratchSessionService: ScratchSessionService;
   removingBranches: Set<string>;
+  refreshConfig(preferences: UserPreferences): void;
   dispose(): void;
 }
 
@@ -118,6 +119,18 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
     lifecycleService,
     scratchSessionService,
     removingBranches,
+    refreshConfig(preferences: UserPreferences): void {
+      const next = loadConfig(projectDir, { resolvedRoot: true, preferences });
+      config.name = next.name;
+      config.workspace = next.workspace;
+      config.profiles = next.profiles;
+      config.agents = next.agents;
+      config.services = next.services;
+      config.startupEnvs = next.startupEnvs;
+      config.integrations = next.integrations;
+      config.lifecycleHooks = next.lifecycleHooks;
+      config.autoName = next.autoName;
+    },
     dispose() {
       // Per spec MP-2: dispose is a placeholder until per-service shutdowns are added.
       // Today's services don't expose stop methods. Scope becoming unreachable suffices.

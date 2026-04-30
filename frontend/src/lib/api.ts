@@ -1,5 +1,5 @@
 import { AgentsUiConversationEventSchema, apiPaths, createApi } from "@webmux/api-contract";
-import type { CreateProjectRequest, CreateScratchSessionRequest, OpenWorktreeRequest, UpdateWorktreeRequest } from "@webmux/api-contract";
+import type { CreateProjectRequest, CreateScratchSessionRequest, OpenWorktreeRequest, UpdateUserPreferencesRequest, UpdateWorktreeRequest, UserPreferences } from "@webmux/api-contract";
 import type {
   AgentDetails,
   AgentResponse,
@@ -345,4 +345,14 @@ export async function openWorktree(projectId: string, name: string, body: OpenWo
 
 export async function updateWorktree(projectId: string, name: string, body: UpdateWorktreeRequest): Promise<void> {
   await api.updateWorktree({ params: { projectId, name }, body });
+}
+
+export async function fetchPreferences(): Promise<UserPreferences> {
+  const r = await api.fetchPreferences();
+  return r.preferences;
+}
+
+export async function updatePreferences(body: UpdateUserPreferencesRequest): Promise<UserPreferences> {
+  const r = await api.updatePreferences({ body });
+  return r.preferences;
 }

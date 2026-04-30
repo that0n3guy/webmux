@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SettingsDialog from "./SettingsDialog.svelte";
-import type { AgentDetails, AgentSummary, AppConfig } from "./types";
+import type { AgentSummary, AppConfig, UserPreferences } from "./types";
 
 vi.mock("./api", () => ({
   api: {
@@ -9,32 +9,18 @@ vi.mock("./api", () => ({
     setAutoRemoveOnMerge: vi.fn(),
     setLinearAutoCreate: vi.fn(),
   },
-  fetchAgents: vi.fn(),
-  createAgent: vi.fn(),
-  updateAgent: vi.fn(),
-  deleteAgent: vi.fn(),
-  validateAgent: vi.fn(),
+  fetchPreferences: vi.fn(),
+  updatePreferences: vi.fn(),
 }));
 
-import { api, createAgent, deleteAgent, fetchAgents, validateAgent } from "./api";
+import { api, fetchPreferences, updatePreferences } from "./api";
 
 const originalDialogShowModal = HTMLDialogElement.prototype.showModal;
 const originalDialogClose = HTMLDialogElement.prototype.close;
 
-function createAgentDetails(overrides: Partial<AgentDetails> = {}): AgentDetails {
+function createPreferences(overrides: Partial<UserPreferences> = {}): UserPreferences {
   return {
-    id: "gemini",
-    label: "Gemini CLI",
-    kind: "custom",
-    capabilities: {
-      terminal: true,
-      inAppChat: false,
-      conversationHistory: false,
-      interrupt: false,
-      resume: true,
-    },
-    startCommand: 'gemini --prompt "${PROMPT}"',
-    resumeCommand: 'gemini resume --branch "${BRANCH}"',
+    schemaVersion: 1,
     ...overrides,
   };
 }
@@ -90,7 +76,7 @@ function renderDialog() {
   });
 }
 
-describe("SettingsDialog agent management", () => {
+describe("SettingsDialog", () => {
   beforeEach(() => {
     HTMLDialogElement.prototype.showModal = function showModal() {
       this.setAttribute("open", "");
@@ -98,6 +84,8 @@ describe("SettingsDialog agent management", () => {
     HTMLDialogElement.prototype.close = function close() {
       this.removeAttribute("open");
     };
+    vi.mocked(fetchPreferences).mockResolvedValue(createPreferences());
+    vi.mocked(api.fetchConfig).mockResolvedValue(createConfig());
   });
 
   afterEach(() => {
@@ -107,54 +95,55 @@ describe("SettingsDialog agent management", () => {
     vi.clearAllMocks();
   });
 
-  it("shows only custom agents in the list", async () => {
-    vi.mocked(fetchAgents).mockResolvedValue([
-      createAgentDetails({ id: "claude", label: "Claude", kind: "builtin", startCommand: null, resumeCommand: null, capabilities: {
-        terminal: true,
-        inAppChat: true,
-        conversationHistory: true,
-        interrupt: true,
-        resume: true,
-      } }),
-      createAgentDetails(),
-    ]);
-
+  it("renders Global tab by default", async () => {
     renderDialog();
+    const globalTab = await screen.findByRole("tab", { name: "Global" });
+    expect(globalTab).toHaveAttribute("aria-selected", "true");
+    const projectTab = screen.getByRole("tab", { name: "Project" });
+    expect(projectTab).toHaveAttribute("aria-selected", "false");
+  });
 
+  it("shows default agent dropdown on Global tab after loading prefs", async () => {
+    vi.mocked(fetchPreferences).mockResolvedValue(createPreferences({ defaultAgent: "codex" }));
+    renderDialog();
+    const select = await screen.findByLabelText("Default agent") as HTMLSelectElement;
+    expect(select).toBeInTheDocument();
+    expect(select.value).toBe("codex");
+  });
+
+  it("shows empty state for custom agents when none configured", async () => {
+    renderDialog();
+    await screen.findByText("No custom agents setup");
+  });
+
+  it("shows custom agents from preferences", async () => {
+    vi.mocked(fetchPreferences).mockResolvedValue(createPreferences({
+      agents: {
+        "gemini-cli": {
+          label: "Gemini CLI",
+          startCommand: 'gemini --prompt "${PROMPT}"',
+        },
+      },
+    }));
+    renderDialog();
     await screen.findByText("Gemini CLI");
-    expect(screen.queryByText("Claude")).not.toBeInTheDocument();
     expect(screen.getByText('gemini --prompt "${PROMPT}"')).toBeInTheDocument();
   });
 
-  it("shows an empty state when no custom agents are configured", async () => {
-    vi.mocked(fetchAgents).mockResolvedValue([
-      createAgentDetails({ id: "claude", label: "Claude", kind: "builtin", startCommand: null, resumeCommand: null, capabilities: {
-        terminal: true,
-        inAppChat: true,
-        conversationHistory: true,
-        interrupt: true,
-        resume: true,
-      } }),
-    ]);
-
+  it("switches to Project tab on click", async () => {
     renderDialog();
-
-    expect(await screen.findByText("No custom agents setup")).toBeInTheDocument();
-    expect(screen.queryByText("Claude")).not.toBeInTheDocument();
+    await screen.findByRole("tab", { name: "Global" });
+    await fireEvent.click(screen.getByRole("tab", { name: "Project" }));
+    expect(screen.getByRole("tab", { name: "Project" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("Auto-create worktrees")).toBeInTheDocument();
+    expect(screen.getByText("Auto-remove on merge")).toBeInTheDocument();
   });
 
-  it("validates, creates, and deletes custom agents", async () => {
+  it("calls updatePreferences and refreshes agents on Save in Global tab", async () => {
     const onagentschange = vi.fn();
-    vi.mocked(fetchAgents)
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([createAgentDetails()])
-      .mockResolvedValueOnce([]);
-    vi.mocked(createAgent).mockResolvedValue({ agent: createAgentDetails() });
-    vi.mocked(validateAgent).mockResolvedValue({ normalizedId: "gemini-cli", warnings: [] });
-    vi.mocked(deleteAgent).mockResolvedValue();
-    vi.mocked(api.fetchConfig)
-      .mockResolvedValueOnce(createConfig({ agents: [createAgentSummary()] }))
-      .mockResolvedValueOnce(createConfig({ agents: [] }));
+    const updatedPrefs = createPreferences({ defaultAgent: "claude" });
+    vi.mocked(updatePreferences).mockResolvedValue(updatedPrefs);
+    vi.mocked(api.fetchConfig).mockResolvedValue(createConfig({ agents: [createAgentSummary()] }));
 
     render(SettingsDialog, {
       projectId: "test-project-1",
@@ -169,40 +158,17 @@ describe("SettingsDialog agent management", () => {
       onclose: vi.fn(),
     });
 
-    await screen.findByText("Add agent");
-    await fireEvent.click(screen.getByRole("button", { name: "Add agent" }));
-    await fireEvent.input(screen.getByLabelText("Agent name"), { target: { value: "Gemini CLI" } });
-    await fireEvent.input(screen.getByLabelText("Start command"), { target: { value: 'gemini --prompt "${PROMPT}"' } });
-    await fireEvent.click(screen.getByRole("button", { name: "Test" }));
-
-    await waitFor(() => {
-      expect(validateAgent).toHaveBeenCalledWith("test-project-1", {
-        label: "Gemini CLI",
-        startCommand: 'gemini --prompt "${PROMPT}"',
-      });
-    });
-    expect(await screen.findByText("Configuration looks good.")).toBeInTheDocument();
-
+    await screen.findByRole("tab", { name: "Global" });
     await fireEvent.click(screen.getAllByRole("button", { name: "Save" }).at(-1)!);
 
     await waitFor(() => {
-      expect(createAgent).toHaveBeenCalledWith("test-project-1", {
-        label: "Gemini CLI",
-        startCommand: 'gemini --prompt "${PROMPT}"',
-      });
+      expect(updatePreferences).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(api.fetchConfig).toHaveBeenCalledWith({ query: { projectId: "test-project-1" } });
     });
     await waitFor(() => {
       expect(onagentschange).toHaveBeenCalledWith([createAgentSummary()]);
-    });
-
-    await fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Remove" }));
-
-    await waitFor(() => {
-      expect(deleteAgent).toHaveBeenCalledWith("test-project-1", "gemini");
-    });
-    await waitFor(() => {
-      expect(onagentschange).toHaveBeenCalledWith([]);
     });
   });
 });

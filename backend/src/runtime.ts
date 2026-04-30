@@ -4,7 +4,7 @@ import { projectRoot } from "./adapters/config";
 import { BunDockerGateway } from "./adapters/docker";
 import { BunGitGateway } from "./adapters/git";
 import { BunLifecycleHookRunner } from "./adapters/hooks";
-import { createUserPreferencesGateway } from "./adapters/preferences";
+import { createUserPreferencesGateway, type UserPreferencesGateway } from "./adapters/preferences";
 import { BunPortProbe } from "./adapters/port-probe";
 import { BunTmuxGateway } from "./adapters/tmux";
 import { AutoNameService } from "./services/auto-name-service";
@@ -27,6 +27,7 @@ export interface MultiProjectRuntime {
   autoName: AutoNameService;
   runtimeNotifications: RuntimeNotificationService;
   projectRegistry: ProjectRegistry;
+  preferencesGateway: UserPreferencesGateway;
 }
 
 // Backward-compat alias used by older imports (e.g., `import type { WebmuxRuntime }`).
@@ -95,5 +96,6 @@ export async function createWebmuxRuntime(options: WebmuxRuntimeOptions = {}): P
     autoName,
     runtimeNotifications,
     projectRegistry,
+    preferencesGateway,
   };
 }

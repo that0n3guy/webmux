@@ -41,12 +41,16 @@ import {
   RemoveProjectRequestSchema,
   OpenWorktreeRequestSchema,
   UpdateWorktreeRequestSchema,
+  UpdateUserPreferencesRequestSchema,
+  UserPreferencesResponseSchema,
 } from "./schemas";
 import { z } from "zod";
 
 const c = initContract();
 
 export const apiPaths = {
+  fetchPreferences: "/api/preferences",
+  updatePreferences: "/api/preferences",
   fetchConfig: "/api/config",
   fetchExternalSessions: "/api/external-sessions",
   fetchProjects: "/api/projects",
@@ -107,6 +111,24 @@ const commonErrorResponses = {
 } as const;
 
 export const apiContract = c.router({
+  fetchPreferences: {
+    method: "GET",
+    path: apiPaths.fetchPreferences,
+    responses: {
+      200: UserPreferencesResponseSchema,
+      500: ErrorResponseSchema,
+    },
+  },
+  updatePreferences: {
+    method: "PUT",
+    path: apiPaths.updatePreferences,
+    body: UpdateUserPreferencesRequestSchema,
+    responses: {
+      200: UserPreferencesResponseSchema,
+      400: ErrorResponseSchema,
+      500: ErrorResponseSchema,
+    },
+  },
   fetchConfig: {
     method: "GET",
     path: apiPaths.fetchConfig,

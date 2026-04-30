@@ -591,6 +591,32 @@ export const UpdateWorktreeRequestSchema = z.object({
   agent: AgentIdSchema.optional(),
 });
 
+// ---------------------------------------------------------------------------
+// User-global preferences
+// ---------------------------------------------------------------------------
+
+export const UserPreferencesAutoNameSchema = z.object({
+  model: z.string().optional(),
+  systemPrompt: z.string().optional(),
+});
+
+export const UserPreferencesSchema = z.object({
+  schemaVersion: z.number(),
+  defaultAgent: AgentIdSchema.optional(),
+  agents: z.record(AgentIdSchema, z.object({
+    label: z.string(),
+    startCommand: z.string(),
+    resumeCommand: z.string().optional(),
+  })).optional(),
+  autoName: UserPreferencesAutoNameSchema.optional(),
+});
+
+export const UpdateUserPreferencesRequestSchema = UserPreferencesSchema.omit({ schemaVersion: true });
+
+export const UserPreferencesResponseSchema = z.object({
+  preferences: UserPreferencesSchema,
+});
+
 export type BuiltInAgentId = z.infer<typeof BuiltInAgentIdSchema>;
 export type AgentId = z.infer<typeof AgentIdSchema>;
 export type AgentKind = z.infer<typeof AgentKindSchema>;
@@ -671,3 +697,7 @@ export type RemoveProjectRequest = z.infer<typeof RemoveProjectRequestSchema>;
 export type OpenWorktreeRequest = z.infer<typeof OpenWorktreeRequestSchema>;
 export type UpdateWorktreeRequest = z.infer<typeof UpdateWorktreeRequestSchema>;
 export type ExternalSessionNameParams = z.infer<typeof ExternalSessionNameParamsSchema>;
+export type UserPreferencesAutoName = z.infer<typeof UserPreferencesAutoNameSchema>;
+export type UserPreferences = z.infer<typeof UserPreferencesSchema>;
+export type UpdateUserPreferencesRequest = z.infer<typeof UpdateUserPreferencesRequestSchema>;
+export type UserPreferencesResponse = z.infer<typeof UserPreferencesResponseSchema>;

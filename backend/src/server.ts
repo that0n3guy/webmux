@@ -13,6 +13,7 @@ import {
   OpenWorktreeRequestSchema,
   PullMainRequestSchema,
   RemoveProjectRequestSchema,
+  UpdateUserPreferencesRequestSchema,
   RunIdParamsSchema,
   SendWorktreePromptRequestSchema,
   SetWorktreeArchivedRequestSchema,
@@ -88,6 +89,7 @@ import type { ProjectSnapshot, WorktreeSnapshot } from "./domain/model";
 import { isValidBranchName, isValidWorktreeName } from "./domain/policies";
 import { createWebmuxRuntime } from "./runtime";
 import type { ProjectScope } from "./services/project-scope";
+import type { UserPreferences } from "./adapters/preferences";
 
 const PORT = parseInt(Bun.env.PORT || "5111", 10);
 const STATIC_DIR = Bun.env.WEBMUX_STATIC_DIR || "";
@@ -1470,6 +1472,34 @@ async function apiDeleteAgent(scope: ProjectScope, agentId: string): Promise<Res
   return jsonResponse({ ok: true });
 }
 
+async function apiGetPreferences(): Promise<Response> {
+  const prefs = await runtime.preferencesGateway.load();
+  return jsonResponse({ preferences: prefs });
+}
+
+async function apiUpdatePreferences(req: Request): Promise<Response> {
+  const parsed = await parseJsonBody(req, UpdateUserPreferencesRequestSchema);
+  if (!parsed.ok) return parsed.response;
+
+  const next: UserPreferences = {
+    schemaVersion: 1,
+    ...(parsed.data.defaultAgent !== undefined ? { defaultAgent: parsed.data.defaultAgent } : {}),
+    ...(parsed.data.agents !== undefined ? { agents: parsed.data.agents } : {}),
+    ...(parsed.data.autoName !== undefined ? { autoName: parsed.data.autoName } : {}),
+  };
+
+  await runtime.preferencesGateway.save(next);
+
+  for (const info of runtime.projectRegistry.list()) {
+    const scope = runtime.projectRegistry.get(info.id);
+    if (scope) {
+      scope.refreshConfig(next);
+    }
+  }
+
+  return jsonResponse({ preferences: next });
+}
+
 async function apiSetLinearAutoCreate(scope: ProjectScope, req: Request): Promise<Response> {
   const parsed = await parseJsonBody(req, ToggleEnabledRequestSchema);
   if (!parsed.ok) return parsed.response;
@@ -1777,6 +1807,11 @@ Bun.serve({
       })
         ? undefined
         : new Response("WebSocket upgrade failed", { status: 400 });
+    },
+
+    [apiPaths.fetchPreferences]: {
+      GET: () => catching("GET /api/preferences", () => apiGetPreferences()),
+      PUT: (req) => catching("PUT /api/preferences", () => apiUpdatePreferences(req)),
     },
 
     [apiPaths.fetchConfig]: {

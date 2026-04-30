@@ -64,6 +64,7 @@ export type {
   WorktreeListResponse,
 } from "@webmux/api-contract";
 export type { AgentsSendMessageRequest as AgentsUiSendMessageRequest } from "@webmux/api-contract";
+export type { UpdateUserPreferencesRequest, UserPreferences, UserPreferencesAutoName } from "@webmux/api-contract";
 
 export type { ExternalTmuxSession, ProjectInfo, ScratchSessionSnapshot, ScratchSessionKind };
 
