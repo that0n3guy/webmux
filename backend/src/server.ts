@@ -1492,8 +1492,11 @@ async function apiUpdatePreferences(req: Request): Promise<Response> {
 
   for (const info of runtime.projectRegistry.list()) {
     const scope = runtime.projectRegistry.get(info.id);
-    if (scope) {
+    if (!scope) continue;
+    try {
       scope.refreshConfig(next);
+    } catch (err) {
+      log.warn(`[preferences] refreshConfig failed for ${info.id}: ${err instanceof Error ? err.message : err}`);
     }
   }
 

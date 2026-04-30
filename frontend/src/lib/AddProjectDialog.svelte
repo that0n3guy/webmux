@@ -49,7 +49,7 @@
         placeholder="/home/mercer/projects/foo"
         class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] placeholder:text-muted/50 outline-none focus:border-accent"
       />
-      <p class="mt-1 text-[11px] text-muted">For non-default workspace settings (main branch, default agent), add a <code>.webmux.yaml</code> to the project.</p>
+      <p class="mt-1 text-[11px] text-muted">For non-default workspace settings (main branch, profiles, integrations), add a <code>.webmux.yaml</code> to the project. Default agent and custom agents live under Settings → Global.</p>
     </div>
 
     <div>
