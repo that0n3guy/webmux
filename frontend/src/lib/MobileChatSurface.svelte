@@ -2,9 +2,12 @@
   import { onMount } from "svelte";
   import {
     applyConversationMessageDelta,
+    applyPersistedPendingMessages,
     buildConversationProgressSignature,
+    loadPendingUserMessages,
     markConversationTurnStarted,
     preservePendingUserMessages,
+    savePendingUserMessages,
   } from "./worktree-conversation";
   import { makeConversationClient } from "./session-conversation-client";
   import type {
@@ -27,6 +30,14 @@
 
   const resolvedTarget = $derived<SessionTarget>(
     target ?? (worktree ? { kind: "worktree", projectId, branch: worktree.branch } : { kind: "worktree", projectId, branch: "" }),
+  );
+
+  const surfaceKey = $derived(
+    resolvedTarget.kind === "worktree"
+      ? `${resolvedTarget.projectId}:wt:${resolvedTarget.branch}`
+      : resolvedTarget.kind === "scratch"
+        ? `${resolvedTarget.projectId}:scratch:${resolvedTarget.scratchId}`
+        : `external:${resolvedTarget.sessionName}`,
   );
 
   const client = $derived(makeConversationClient(resolvedTarget));
@@ -67,7 +78,16 @@
   }
 
   function applyConversationResponse(response: AgentsUiWorktreeConversationResponse): void {
-    conversation = preservePendingUserMessages(conversation, response.conversation);
+    let next = preservePendingUserMessages(conversation, response.conversation);
+    // On first load (conversation was null), seed any persisted pending messages
+    // from sessionStorage so worktree switches and page reloads don't drop queued
+    // messages while the agent is still processing.
+    if (conversation === null) {
+      const persisted = loadPendingUserMessages(surfaceKey);
+      next = applyPersistedPendingMessages(next, persisted);
+    }
+    conversation = next;
+    savePendingUserMessages(surfaceKey, next.messages);
     conversationError = null;
     syncConversationStream();
   }
@@ -206,6 +226,7 @@
         };
       }
       conversation = markConversationTurnStarted(conversation, response.turnId, text);
+      if (conversation) savePendingUserMessages(surfaceKey, conversation.messages);
       syncConversationStream();
       startRefreshPolling(baselineConversation);
     } catch (error) {

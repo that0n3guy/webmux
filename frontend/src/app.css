@@ -93,11 +93,13 @@ dialog textarea:focus {
 
 /* Mobile layout */
 @media (max-width: 768px) {
-  /* Prevent overscroll/bounce on iOS */
+  /* Prevent overscroll/bounce without position:fixed — position:fixed
+     anchors body to the viewport size when the keyboard appears and
+     leaves it stuck at that height after the keyboard dismisses. */
   html,
   body {
     overflow: hidden;
-    position: fixed;
+    overscroll-behavior: none;
     width: 100%;
     height: 100dvh;
   }

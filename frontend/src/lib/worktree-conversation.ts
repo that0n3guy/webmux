@@ -111,6 +111,87 @@ export function preservePendingUserMessages(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Pending optimistic messages — sessionStorage persistence
+//
+// Optimistic user messages live only in component state, so component remount
+// (worktree switch, view toggle, page reload) drops them. We persist the
+// pending entries in sessionStorage keyed by a stable surface key so they
+// survive remount until the agent's snapshot includes the real message.
+// ---------------------------------------------------------------------------
+
+function buildPendingStorageKey(surfaceKey: string): string {
+  return `webmux:pendingChat:${surfaceKey}`;
+}
+
+export function loadPendingUserMessages(surfaceKey: string): AgentsUiConversationMessage[] {
+  if (typeof sessionStorage === "undefined") return [];
+  try {
+    const raw = sessionStorage.getItem(buildPendingStorageKey(surfaceKey));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry): entry is AgentsUiConversationMessage =>
+      !!entry
+        && typeof entry === "object"
+        && "id" in entry
+        && typeof (entry as { id: unknown }).id === "string"
+        && (entry as { id: string }).id.startsWith("pending-user:"),
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function savePendingUserMessages(
+  surfaceKey: string,
+  messages: AgentsUiConversationMessage[],
+): void {
+  if (typeof sessionStorage === "undefined") return;
+  const pending = messages.filter((m) =>
+    m.kind === "user" && m.id.startsWith("pending-user:"),
+  );
+  const storageKey = buildPendingStorageKey(surfaceKey);
+  if (pending.length === 0) {
+    sessionStorage.removeItem(storageKey);
+    return;
+  }
+  try {
+    sessionStorage.setItem(storageKey, JSON.stringify(pending));
+  } catch {
+    /* quota exceeded or unavailable — silent */
+  }
+}
+
+export function applyPersistedPendingMessages(
+  conversation: AgentsUiConversationState,
+  persisted: AgentsUiConversationMessage[],
+): AgentsUiConversationState {
+  if (persisted.length === 0) return conversation;
+
+  const snapshotTextRemaining = new Map<string, number>();
+  for (const message of conversation.messages) {
+    if (message.kind !== "user") continue;
+    snapshotTextRemaining.set(message.text, (snapshotTextRemaining.get(message.text) ?? 0) + 1);
+  }
+
+  const toAppend: AgentsUiConversationMessage[] = [];
+  for (const message of persisted) {
+    const remaining = snapshotTextRemaining.get(message.text) ?? 0;
+    if (remaining > 0) {
+      snapshotTextRemaining.set(message.text, remaining - 1);
+      continue;
+    }
+    toAppend.push(message);
+  }
+
+  if (toAppend.length === 0) return conversation;
+  return {
+    ...conversation,
+    messages: [...conversation.messages, ...toAppend],
+  };
+}
+
 export function buildConversationProgressSignature(conversation: AgentsUiConversationState | null): string | null {
   if (!conversation) return null;
 
