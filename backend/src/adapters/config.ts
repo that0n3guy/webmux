@@ -221,7 +221,7 @@ export function parseCustomAgent(raw: unknown): CustomAgentConfig | null {
   };
 }
 
-export function parseCustomAgents(raw: unknown): Record<AgentId, CustomAgentConfig> {
+function parseCustomAgents(raw: unknown): Record<AgentId, CustomAgentConfig> {
   if (!isRecord(raw)) return {};
 
   return Object.entries(raw).reduce<Record<AgentId, CustomAgentConfig>>((acc, [id, value]) => {

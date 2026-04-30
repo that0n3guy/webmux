@@ -1,8 +1,9 @@
-import { mkdirSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { AgentId, CustomAgentConfig } from "../domain/config";
 import { parseCustomAgent } from "./config";
+import { isRecord } from "../lib/type-guards";
 import { log } from "../lib/log";
 
 const PREFERENCES_SCHEMA_VERSION = 1;
@@ -33,10 +34,6 @@ const DEFAULT_PREFERENCES_PATH = join(Bun.env.HOME ?? "/tmp", ".config", "webmux
 
 export function emptyUserPreferences(): UserPreferences {
   return { schemaVersion: PREFERENCES_SCHEMA_VERSION };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parsePreferencesAutoName(raw: unknown): UserPreferencesAutoName | undefined {
@@ -151,7 +148,7 @@ export function createUserPreferencesGateway(
     },
 
     async save(prefs: UserPreferences): Promise<void> {
-      mkdirSync(dirname(filePath), { recursive: true });
+      await mkdir(dirname(filePath), { recursive: true });
       const payload = buildSavePayload(prefs);
       await Bun.write(filePath, stringifyYaml(payload));
     },
