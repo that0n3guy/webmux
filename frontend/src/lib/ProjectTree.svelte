@@ -86,7 +86,7 @@
   });
 </script>
 
-<div class="flex flex-col">
+<div class="flex flex-col flex-1 min-h-0 overflow-y-auto">
   <section class="border-b border-edge">
     <header class="flex items-center px-3 py-2 cursor-pointer hover:bg-hover select-none" onclick={() => toggle("__unmanaged__")}>
       <span class="mr-2 text-xs">{expanded.has("__unmanaged__") ? "▾" : "▸"}</span>
