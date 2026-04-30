@@ -195,7 +195,11 @@
       ? currentState.unchangedTicks + 1
       : 0;
 
-    if (sawProgress && unchangedTicks >= REFRESH_POLL_SETTLE_TICKS && !nextConversation.running) {
+    const hasPendingOptimistic = nextConversation.messages.some(
+      (m) => m.kind === "user" && m.id.startsWith("pending-user:"),
+    );
+
+    if (sawProgress && unchangedTicks >= REFRESH_POLL_SETTLE_TICKS && !nextConversation.running && !hasPendingOptimistic) {
       refreshPollingState = null;
       return;
     }
