@@ -239,16 +239,22 @@ export class ClaudeConversationService {
     saved: WorktreeConversationMeta | null,
     cwd: string,
   ): Promise<ClaudeCliSession | null> {
+    const sessions = await this.deps.claude.listSessions(cwd);
+    const newest = sessions[0] ?? null;
     const savedSessionId = isClaudeConversationMeta(saved) ? saved.sessionId : null;
-    if (savedSessionId) {
-      const savedSession = await this.deps.claude.readSession(savedSessionId, cwd);
-      if (savedSession) return savedSession;
-      log.warn(`[agents] saved Claude session missing, rediscovering cwd=${cwd} sessionId=${savedSessionId}`);
+
+    if (newest && savedSessionId && savedSessionId !== newest.sessionId) {
+      log.info(`[agents] Claude session rotated cwd=${cwd} saved=${savedSessionId} latest=${newest.sessionId}`);
     }
 
-    const discovered = (await this.deps.claude.listSessions(cwd))[0] ?? null;
-    if (!discovered) return null;
-    return await this.deps.claude.readSession(discovered.sessionId, cwd);
+    if (newest) {
+      return await this.deps.claude.readSession(newest.sessionId, cwd);
+    }
+
+    if (savedSessionId) {
+      log.warn(`[agents] saved Claude session missing and no replacement found cwd=${cwd} sessionId=${savedSessionId}`);
+    }
+    return null;
   }
 
   private async persistConversationMeta(
