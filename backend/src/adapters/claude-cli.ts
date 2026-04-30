@@ -88,6 +88,10 @@ interface ClaudeStoredRecord {
   timestamp?: unknown;
   type?: unknown;
   uuid?: unknown;
+  // queue-operation records ("enqueue"/"remove") carry the queued text in
+  // top-level `content` rather than `message.content`.
+  operation?: unknown;
+  content?: unknown;
 }
 
 interface ClaudeStoredMessage {
@@ -138,6 +142,17 @@ function isTopLevelClaudeUserPrompt(raw: ClaudeStoredRecord): raw is ClaudeStore
     && typeof raw.message.content === "string"
     && typeof raw.uuid === "string"
     && raw.message.content.trim().length > 0;
+}
+
+function isQueuedUserPrompt(raw: ClaudeStoredRecord): raw is ClaudeStoredRecord & {
+  type: "queue-operation";
+  operation: "enqueue";
+  content: string;
+} {
+  if (raw.type !== "queue-operation") return false;
+  return raw.operation === "enqueue"
+    && typeof raw.content === "string"
+    && raw.content.trim().length > 0;
 }
 
 function isClaudeAssistantRecord(raw: ClaudeStoredRecord): raw is ClaudeStoredRecord & {
@@ -416,6 +431,26 @@ export function buildClaudeSessionFromText(
         userEvent,
         events: [userEvent],
       };
+      continue;
+    }
+
+    if (currentTurn && isQueuedUserPrompt(record)) {
+      // Queued messages are recorded as queue-operation/enqueue rather than
+      // a top-level user prompt — claude absorbs them into the current turn
+      // without writing a `type: "user"` record. Surface them as user
+      // messages so the chat UI shows what the user actually typed.
+      const text = readString(record.content)?.trim();
+      if (text) {
+        const id = `queued:${readString(record.timestamp) ?? text}`;
+        currentTurn.events.push({
+          kind: "user",
+          id,
+          turnId: currentTurn.userEvent.turnId,
+          text,
+          status: "completed",
+          createdAt: readString(record.timestamp),
+        });
+      }
       continue;
     }
 

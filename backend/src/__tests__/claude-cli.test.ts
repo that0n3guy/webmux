@@ -81,6 +81,55 @@ describe("claude-cli adapter", () => {
     });
   });
 
+  it("emits queued user messages from queue-operation enqueue records", () => {
+    const session = buildClaudeSessionFromText({
+      path: "/tmp/q.jsonl",
+      sessionId: "s1",
+      text: [
+        JSON.stringify({
+          type: "user", uuid: "u1", timestamp: "2026-04-14T10:00:00.000Z",
+          cwd: "/tmp/x", message: { role: "user", content: "do a 13 sec sleep" },
+        }),
+        JSON.stringify({
+          type: "assistant", uuid: "a1", timestamp: "2026-04-14T10:00:02.000Z",
+          message: {
+            role: "assistant", stop_reason: "tool_use",
+            content: [{ type: "tool_use", id: "tu1", name: "Bash", input: { command: "sleep 13" } }],
+          },
+        }),
+        JSON.stringify({
+          type: "queue-operation",
+          timestamp: "2026-04-14T10:00:08.000Z",
+          operation: "enqueue",
+          content: "Here is a post while you sleep",
+        }),
+        JSON.stringify({
+          type: "user", uuid: "u-tr", timestamp: "2026-04-14T10:00:15.000Z",
+          message: {
+            role: "user",
+            content: [{ tool_use_id: "tu1", type: "tool_result", content: "(done)", is_error: false }],
+          },
+        }),
+        JSON.stringify({
+          type: "assistant", uuid: "a2", timestamp: "2026-04-14T10:00:16.000Z",
+          message: {
+            role: "assistant", stop_reason: "end_turn",
+            content: [{ type: "text", text: "Done. Got the queued message." }],
+          },
+        }),
+      ].join("\n"),
+    });
+
+    const userMessages = session.messages.filter((m) => m.kind === "user");
+    expect(userMessages.map((m) => "text" in m ? m.text : "")).toEqual([
+      "do a 13 sec sleep",
+      "Here is a post while you sleep",
+    ]);
+    const queued = userMessages.find((m) => m.text === "Here is a post while you sleep");
+    expect(queued?.id.startsWith("queued:")).toBe(true);
+    expect(queued?.createdAt).toBe("2026-04-14T10:00:08.000Z");
+  });
+
   it("emits tool and thinking events from content blocks", () => {
     const session = buildClaudeSessionFromText({
       path: "/tmp/session.jsonl",
