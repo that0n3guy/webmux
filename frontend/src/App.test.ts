@@ -548,7 +548,8 @@ describe("App create selection", () => {
     render(App);
 
     await screen.findByTitle("feature/active");
-    await fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Actions ▾" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
 
     await waitFor(() => {
       expect(api.setWorktreeArchived).toHaveBeenCalledWith({
