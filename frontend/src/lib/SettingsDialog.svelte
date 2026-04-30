@@ -59,6 +59,7 @@
 
   // Global tab — preferences
   let prefs = $state<UserPreferences | null>(null);
+  let knownProfiles = $state<string[]>([]);
   let prefsLoading = $state(true);
   let prefsError = $state<string | null>(null);
   let prefsSaving = $state(false);
@@ -90,7 +91,9 @@
     prefsLoading = true;
     prefsError = null;
     try {
-      prefs = await fetchPreferences();
+      const payload = await fetchPreferences();
+      prefs = payload.preferences;
+      knownProfiles = payload.knownProfiles;
       defaultAgent = prefs.defaultAgent ?? "";
       defaultProfile = prefs.defaultProfile ?? "";
       autoNameModel = prefs.autoName?.model ?? "";
@@ -126,7 +129,9 @@
     prefsSaving = true;
     prefsError = null;
     try {
-      prefs = await updatePreferences(buildUpdateBody());
+      const payload = await updatePreferences(buildUpdateBody());
+      prefs = payload.preferences;
+      knownProfiles = payload.knownProfiles;
       syncAgentSummaries();
     } catch (err) {
       prefsError = errorMessage(err);
@@ -242,7 +247,9 @@
 
     prefsError = null;
     try {
-      prefs = await updatePreferences(buildUpdateBody(updatedAgents));
+      const payload = await updatePreferences(buildUpdateBody(updatedAgents));
+      prefs = payload.preferences;
+      knownProfiles = payload.knownProfiles;
       syncAgentSummaries();
       editor = null;
     } catch (err) {
@@ -259,7 +266,9 @@
     try {
       const updatedAgents = { ...(prefs.agents ?? {}) };
       delete updatedAgents[deleteCandidate.id];
-      prefs = await updatePreferences(buildUpdateBody(updatedAgents));
+      const payload = await updatePreferences(buildUpdateBody(updatedAgents));
+      prefs = payload.preferences;
+      knownProfiles = payload.knownProfiles;
       syncAgentSummaries();
       deleteCandidate = null;
     } catch (err) {
@@ -351,14 +360,24 @@
         <!-- Default profile -->
         <div class="mb-5">
           <label class="block text-xs text-muted mb-1.5" for="default-profile">Default profile</label>
-          <input
-            id="default-profile"
-            type="text"
-            class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] placeholder:text-muted/50 outline-none focus:border-accent"
-            placeholder="e.g. full"
-            bind:value={defaultProfile}
-            disabled={prefsSaving}
-          />
+          {#if knownProfiles.length === 0 && !defaultProfile}
+            <p class="text-[12px] text-muted">No profiles defined in any registered project yet.</p>
+          {:else}
+            <select
+              id="default-profile"
+              class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] outline-none focus:border-accent"
+              bind:value={defaultProfile}
+              disabled={prefsSaving}
+            >
+              <option value="">— project's first profile —</option>
+              {#each knownProfiles as name (name)}
+                <option value={name}>{name}</option>
+              {/each}
+              {#if defaultProfile && !knownProfiles.includes(defaultProfile)}
+                <option value={defaultProfile}>{defaultProfile} (not in any project)</option>
+              {/if}
+            </select>
+          {/if}
           <p class="text-[11px] text-muted mt-1.5">
             Profile name used when creating worktrees. Falls back to the project's first profile if the named profile isn't defined there.
           </p>

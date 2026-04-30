@@ -1476,9 +1476,19 @@ async function apiDeleteAgent(scope: ProjectScope, agentId: string): Promise<Res
   return jsonResponse({ ok: true });
 }
 
+function listKnownProfileNames(): string[] {
+  const names = new Set<string>();
+  for (const info of runtime.projectRegistry.list()) {
+    const scope = runtime.projectRegistry.get(info.id);
+    if (!scope) continue;
+    for (const name of Object.keys(scope.config.profiles)) names.add(name);
+  }
+  return [...names].sort();
+}
+
 async function apiGetPreferences(): Promise<Response> {
   const prefs = await runtime.preferencesGateway.load();
-  return jsonResponse({ preferences: prefs });
+  return jsonResponse({ preferences: prefs, knownProfiles: listKnownProfileNames() });
 }
 
 async function apiUpdatePreferences(req: Request): Promise<Response> {
@@ -1505,7 +1515,7 @@ async function apiUpdatePreferences(req: Request): Promise<Response> {
     }
   }
 
-  return jsonResponse({ preferences: next });
+  return jsonResponse({ preferences: next, knownProfiles: listKnownProfileNames() });
 }
 
 async function apiSetLinearAutoCreate(scope: ProjectScope, req: Request): Promise<Response> {

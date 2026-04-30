@@ -616,6 +616,7 @@ export const UpdateUserPreferencesRequestSchema = UserPreferencesSchema.omit({ s
 
 export const UserPreferencesResponseSchema = z.object({
   preferences: UserPreferencesSchema,
+  knownProfiles: z.array(z.string()),
 });
 
 export type BuiltInAgentId = z.infer<typeof BuiltInAgentIdSchema>;

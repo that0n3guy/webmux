@@ -347,12 +347,17 @@ export async function updateWorktree(projectId: string, name: string, body: Upda
   await api.updateWorktree({ params: { projectId, name }, body });
 }
 
-export async function fetchPreferences(): Promise<UserPreferences> {
-  const r = await api.fetchPreferences();
-  return r.preferences;
+export interface PreferencesPayload {
+  preferences: UserPreferences;
+  knownProfiles: string[];
 }
 
-export async function updatePreferences(body: UpdateUserPreferencesRequest): Promise<UserPreferences> {
+export async function fetchPreferences(): Promise<PreferencesPayload> {
+  const r = await api.fetchPreferences();
+  return { preferences: r.preferences, knownProfiles: r.knownProfiles };
+}
+
+export async function updatePreferences(body: UpdateUserPreferencesRequest): Promise<PreferencesPayload> {
   const r = await api.updatePreferences({ body });
-  return r.preferences;
+  return { preferences: r.preferences, knownProfiles: r.knownProfiles };
 }

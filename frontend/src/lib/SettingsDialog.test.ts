@@ -25,6 +25,10 @@ function createPreferences(overrides: Partial<UserPreferences> = {}): UserPrefer
   };
 }
 
+function payload(prefs: UserPreferences = createPreferences(), knownProfiles: string[] = []) {
+  return { preferences: prefs, knownProfiles };
+}
+
 function createAgentSummary(overrides: Partial<AgentSummary> = {}): AgentSummary {
   return {
     id: "gemini",
@@ -84,7 +88,7 @@ describe("SettingsDialog", () => {
     HTMLDialogElement.prototype.close = function close() {
       this.removeAttribute("open");
     };
-    vi.mocked(fetchPreferences).mockResolvedValue(createPreferences());
+    vi.mocked(fetchPreferences).mockResolvedValue(payload());
     vi.mocked(api.fetchConfig).mockResolvedValue(createConfig());
   });
 
@@ -104,7 +108,7 @@ describe("SettingsDialog", () => {
   });
 
   it("shows default agent dropdown on Global tab after loading prefs", async () => {
-    vi.mocked(fetchPreferences).mockResolvedValue(createPreferences({ defaultAgent: "codex" }));
+    vi.mocked(fetchPreferences).mockResolvedValue(payload(createPreferences({ defaultAgent: "codex" })));
     renderDialog();
     const select = await screen.findByLabelText("Default agent") as HTMLSelectElement;
     expect(select).toBeInTheDocument();
@@ -117,14 +121,14 @@ describe("SettingsDialog", () => {
   });
 
   it("shows custom agents from preferences", async () => {
-    vi.mocked(fetchPreferences).mockResolvedValue(createPreferences({
+    vi.mocked(fetchPreferences).mockResolvedValue(payload(createPreferences({
       agents: {
         "gemini-cli": {
           label: "Gemini CLI",
           startCommand: 'gemini --prompt "${PROMPT}"',
         },
       },
-    }));
+    })));
     renderDialog();
     await screen.findAllByText("Gemini CLI");
     expect(screen.getByText('gemini --prompt "${PROMPT}"')).toBeInTheDocument();
@@ -142,7 +146,7 @@ describe("SettingsDialog", () => {
   it("calls updatePreferences and refreshes agents on Save in Global tab", async () => {
     const onagentschange = vi.fn();
     const updatedPrefs = createPreferences({ defaultAgent: "claude" });
-    vi.mocked(updatePreferences).mockResolvedValue(updatedPrefs);
+    vi.mocked(updatePreferences).mockResolvedValue(payload(updatedPrefs));
     vi.mocked(api.fetchConfig).mockResolvedValue(createConfig({ agents: [createAgentSummary()] }));
 
     render(SettingsDialog, {
@@ -206,7 +210,7 @@ describe("SettingsDialog", () => {
   // -------------------------------------------------------------------------
 
   it("calls fetchConfig with the correct projectId query after a successful Global Save", async () => {
-    vi.mocked(updatePreferences).mockResolvedValue(createPreferences());
+    vi.mocked(updatePreferences).mockResolvedValue(payload());
     vi.mocked(api.fetchConfig).mockResolvedValue(createConfig());
 
     render(SettingsDialog, {
@@ -238,7 +242,7 @@ describe("SettingsDialog", () => {
     const savedPrefs = createPreferences({
       agents: { "my-agent": { label: "My Agent", startCommand: "my-agent run" } },
     });
-    vi.mocked(updatePreferences).mockResolvedValue(savedPrefs);
+    vi.mocked(updatePreferences).mockResolvedValue(payload(savedPrefs));
     vi.mocked(api.fetchConfig).mockResolvedValue(createConfig());
 
     renderDialog();
@@ -275,13 +279,13 @@ describe("SettingsDialog", () => {
   // -------------------------------------------------------------------------
 
   it("calls updatePreferences without the deleted agent after the Delete flow", async () => {
-    vi.mocked(fetchPreferences).mockResolvedValue(createPreferences({
+    vi.mocked(fetchPreferences).mockResolvedValue(payload(createPreferences({
       agents: {
         "gemini-cli": { label: "Gemini CLI", startCommand: 'gemini --prompt "${PROMPT}"' },
       },
-    }));
+    })));
     const afterDeletePrefs = createPreferences({ agents: {} });
-    vi.mocked(updatePreferences).mockResolvedValue(afterDeletePrefs);
+    vi.mocked(updatePreferences).mockResolvedValue(payload(afterDeletePrefs));
     vi.mocked(api.fetchConfig).mockResolvedValue(createConfig());
 
     renderDialog();
