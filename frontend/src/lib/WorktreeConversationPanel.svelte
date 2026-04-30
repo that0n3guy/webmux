@@ -59,8 +59,7 @@
       && conversation !== null
       && !conversationLoading
       && composerText.trim().length > 0
-      && !isSending
-      && !(conversation?.running ?? false),
+      && !isSending,
   );
 
   let transcriptViewport = $state<HTMLDivElement | null>(null);
@@ -305,12 +304,13 @@
 
       <div class="mt-3 flex items-center justify-between gap-3">
         <div class="text-[11px] text-muted">
-          {conversation?.running ? "Wait for the current turn to finish" : "Enter to send, Shift+Enter for newline"}
+          {conversation?.running ? "Agent is working — you can queue a follow-up or interrupt" : (submitOnEnter ? "Enter to send, Shift+Enter for newline" : "Tap Send to submit")}
         </div>
 
-        {#if showInterrupt && !conversationError}
-          {@render interruptButton()}
-        {:else}
+        <div class="flex items-center gap-2">
+          {#if showInterrupt && !conversationError}
+            {@render interruptButton()}
+          {/if}
           <button
             type="button"
             class="rounded-md border border-accent bg-accent px-4 py-2 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:border-edge disabled:bg-edge disabled:text-muted"
@@ -319,7 +319,7 @@
           >
             {isSending ? "Sending..." : "Send"}
           </button>
-        {/if}
+        </div>
       </div>
     </div>
   </section>

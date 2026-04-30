@@ -89,7 +89,7 @@ describe("WorktreeConversationPanel", () => {
 
     const interruptButton = screen.getByRole("button", { name: "Interrupt" });
     expect(interruptButton).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Send" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send" })).toBeInTheDocument();
 
     await fireEvent.click(interruptButton);
     expect(onInterrupt).toHaveBeenCalledTimes(1);
