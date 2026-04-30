@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { AgentId, CustomAgentConfig } from "../domain/config";
-import { parseCustomAgent, parseCustomAgents } from "./config";
+import { parseCustomAgent } from "./config";
 import { log } from "../lib/log";
 
 const PREFERENCES_SCHEMA_VERSION = 1;
