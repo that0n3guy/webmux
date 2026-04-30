@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type {
   AgentId,
@@ -503,11 +503,21 @@ export function loadConfig(dir: string, options: LoadConfigOptions = {}): Projec
   const root = options.resolvedRoot ? dir : projectRoot(dir);
 
   let projectConfig: ProjectConfig;
+  let hadConfigFile = false;
   try {
     const text = readConfigFile(root).trim();
-    projectConfig = text ? parseProjectConfig(parseConfigDocument(text)) : defaultConfig();
+    if (text) {
+      projectConfig = parseProjectConfig(parseConfigDocument(text));
+      hadConfigFile = true;
+    } else {
+      projectConfig = defaultConfig();
+    }
   } catch {
     projectConfig = defaultConfig();
+  }
+  if (!hadConfigFile) {
+    const dirName = basename(root);
+    if (dirName) projectConfig = { ...projectConfig, name: dirName };
   }
 
   const localOverlay = loadLocalProjectConfigOverlay(root);

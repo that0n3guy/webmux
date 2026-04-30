@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { expandTemplate, getDefaultProfileName, loadConfig, persistLocalCustomAgent, removeLocalCustomAgent } from "../adapters/config";
 
 describe("expandTemplate", () => {
@@ -303,7 +303,7 @@ describe("loadConfig", () => {
 
     const config = loadConfig(dir);
 
-    expect(config.name).toBe("Webmux");
+    expect(config.name).toBe(basename(dir));
     expect(Object.keys(config.profiles).sort()).toEqual(["default", "local"]);
     expect(config.profiles.local.runtime).toBe("docker");
     expect(config.profiles.local.image).toBe("local-image");
