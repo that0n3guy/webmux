@@ -65,6 +65,7 @@
 
   // Derived fields bound to form inputs (copied from prefs on load)
   let defaultAgent = $state<string>("");
+  let defaultProfile = $state<string>("");
   let autoNameModel = $state<string>("");
   let autoNameSystemPrompt = $state<string>("");
 
@@ -91,6 +92,7 @@
     try {
       prefs = await fetchPreferences();
       defaultAgent = prefs.defaultAgent ?? "";
+      defaultProfile = prefs.defaultProfile ?? "";
       autoNameModel = prefs.autoName?.model ?? "";
       autoNameSystemPrompt = prefs.autoName?.systemPrompt ?? "";
     } catch (err) {
@@ -104,6 +106,8 @@
     const body: UpdateUserPreferencesRequest = {};
     const trimmedDefault = defaultAgent.trim();
     if (trimmedDefault) body.defaultAgent = trimmedDefault;
+    const trimmedProfile = defaultProfile.trim();
+    if (trimmedProfile) body.defaultProfile = trimmedProfile;
     const agents = agentsOverride ?? prefs?.agents;
     if (agents && Object.keys(agents).length > 0) {
       body.agents = agents;
@@ -342,6 +346,22 @@
               <option value={id}>{agent.label}</option>
             {/each}
           </select>
+        </div>
+
+        <!-- Default profile -->
+        <div class="mb-5">
+          <label class="block text-xs text-muted mb-1.5" for="default-profile">Default profile</label>
+          <input
+            id="default-profile"
+            type="text"
+            class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] placeholder:text-muted/50 outline-none focus:border-accent"
+            placeholder="e.g. full"
+            bind:value={defaultProfile}
+            disabled={prefsSaving}
+          />
+          <p class="text-[11px] text-muted mt-1.5">
+            Profile name used when creating worktrees. Falls back to the project's first profile if the named profile isn't defined there.
+          </p>
         </div>
 
         <!-- Auto-name -->

@@ -190,7 +190,11 @@ function getFrontendConfig(scope: ProjectScope): {
   mainBranch: string;
 } {
   const config = scope.config;
-  const defaultProfileName = getDefaultProfileName(config);
+  const projectDefaultProfile = getDefaultProfileName(config);
+  const globalDefaultProfile = scope.preferences.defaultProfile;
+  const defaultProfileName = globalDefaultProfile && config.profiles[globalDefaultProfile]
+    ? globalDefaultProfile
+    : projectDefaultProfile;
   const orderedProfileEntries = Object.entries(config.profiles).sort(([left], [right]) => {
     if (left === defaultProfileName) return -1;
     if (right === defaultProfileName) return 1;
@@ -1484,6 +1488,7 @@ async function apiUpdatePreferences(req: Request): Promise<Response> {
   const next: UserPreferences = {
     schemaVersion: 1,
     ...(parsed.data.defaultAgent !== undefined ? { defaultAgent: parsed.data.defaultAgent } : {}),
+    ...(parsed.data.defaultProfile !== undefined ? { defaultProfile: parsed.data.defaultProfile } : {}),
     ...(parsed.data.agents !== undefined ? { agents: parsed.data.agents } : {}),
     ...(parsed.data.autoName !== undefined ? { autoName: parsed.data.autoName } : {}),
   };

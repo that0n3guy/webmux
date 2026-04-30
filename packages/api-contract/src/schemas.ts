@@ -603,6 +603,7 @@ export const UserPreferencesAutoNameSchema = z.object({
 export const UserPreferencesSchema = z.object({
   schemaVersion: z.number(),
   defaultAgent: AgentIdSchema.optional(),
+  defaultProfile: z.string().optional(),
   agents: z.record(AgentIdSchema, z.object({
     label: z.string(),
     startCommand: z.string(),

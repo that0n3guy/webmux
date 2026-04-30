@@ -16,6 +16,7 @@ export interface UserPreferencesAutoName {
 export interface UserPreferences {
   schemaVersion: number;
   defaultAgent?: AgentId;
+  defaultProfile?: string;
   agents?: Record<AgentId, CustomAgentConfig>;
   autoName?: UserPreferencesAutoName;
 }
@@ -80,12 +81,17 @@ function parsePreferences(raw: unknown): UserPreferences {
     ? raw.defaultAgent.trim()
     : undefined;
 
+  const defaultProfile = typeof raw.defaultProfile === "string" && raw.defaultProfile.trim()
+    ? raw.defaultProfile.trim()
+    : undefined;
+
   const agents = parsePreferencesAgents(raw.agents);
   const autoName = parsePreferencesAutoName(raw.autoName);
 
   return {
     schemaVersion,
     ...(defaultAgent !== undefined ? { defaultAgent } : {}),
+    ...(defaultProfile !== undefined ? { defaultProfile } : {}),
     ...(agents !== undefined ? { agents } : {}),
     ...(autoName !== undefined ? { autoName } : {}),
   };
@@ -96,6 +102,10 @@ function buildSavePayload(prefs: UserPreferences): Record<string, unknown> {
 
   if (prefs.defaultAgent !== undefined) {
     payload.defaultAgent = prefs.defaultAgent;
+  }
+
+  if (prefs.defaultProfile !== undefined) {
+    payload.defaultProfile = prefs.defaultProfile;
   }
 
   if (prefs.agents !== undefined && Object.keys(prefs.agents).length > 0) {

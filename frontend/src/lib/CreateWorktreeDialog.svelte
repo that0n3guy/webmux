@@ -464,25 +464,17 @@
       {/if}
     </div>
     {#if profiles.length > 1}
-      <div class="flex flex-col gap-2 mb-6">
-        {#each profiles as p}
-          <label
-            class="flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer text-[13px] transition-colors
-              {profile === p.name
-              ? 'border-accent bg-accent/10'
-              : 'border-edge hover:bg-hover'}"
-          >
-            <input
-              type="radio"
-              name="profile"
-              value={p.name}
-              checked={profile === p.name}
-              onchange={() => (profile = p.name)}
-              class="accent-[var(--accent)]"
-            />
-            {p.name}
-          </label>
-        {/each}
+      <div class="mb-6">
+        <label class="block text-xs text-muted mb-1.5" for="profile-select">Profile</label>
+        <select
+          id="profile-select"
+          class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] outline-none focus:border-accent"
+          bind:value={profile}
+        >
+          {#each profiles as p}
+            <option value={p.name}>{p.name}</option>
+          {/each}
+        </select>
       </div>
     {/if}
     <label

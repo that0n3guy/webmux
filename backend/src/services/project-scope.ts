@@ -38,6 +38,7 @@ export interface ProjectScope {
   projectId: string;
   projectDir: string;
   config: ProjectConfig;
+  preferences: UserPreferences;
   archiveStateService: ArchiveStateService;
   projectRuntime: ProjectRuntime;
   worktreeCreationTracker: WorktreeCreationTracker;
@@ -52,7 +53,9 @@ export interface ProjectScope {
 export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
   const projectDir = deps.projectDir;
   const projectId = computeProjectId(projectDir);
-  const config = loadConfig(projectDir, { resolvedRoot: true, preferences: deps.preferences });
+  const initialPreferences = deps.preferences ?? { schemaVersion: 1 };
+  const config = loadConfig(projectDir, { resolvedRoot: true, preferences: initialPreferences });
+  const preferencesHolder: { current: UserPreferences } = { current: initialPreferences };
 
   const archiveStateService = new ArchiveStateService(deps.git.resolveWorktreeGitDir(projectDir));
   const runtimeStatePersistence = createRuntimeStatePersistence({
@@ -112,6 +115,9 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
     projectId,
     projectDir,
     config,
+    get preferences(): UserPreferences {
+      return preferencesHolder.current;
+    },
     archiveStateService,
     projectRuntime,
     worktreeCreationTracker,
@@ -120,6 +126,7 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
     scratchSessionService,
     removingBranches,
     refreshConfig(preferences: UserPreferences): void {
+      preferencesHolder.current = preferences;
       const next = loadConfig(projectDir, { resolvedRoot: true, preferences });
       config.name = next.name;
       config.workspace = next.workspace;
