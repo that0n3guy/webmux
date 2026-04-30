@@ -61,6 +61,26 @@ dialog textarea:focus {
   animation: spin 0.6s linear infinite;
 }
 
+/* thin scrollbar utility — applied to sidebar */
+.thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-edge) transparent;
+}
+.thin-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--color-edge);
+  border-radius: 9999px;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--color-muted);
+}
+
 /* xterm overrides */
 .xterm {
   height: 100%;
