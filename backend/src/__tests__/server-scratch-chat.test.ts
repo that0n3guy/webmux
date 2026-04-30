@@ -73,7 +73,7 @@ describe("scratch chat — agent-kind session with claude", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.data.provider).toBe("claude");
-    expect(result.data.submitDelayMs).toBe(0);
+    expect(result.data.submitDelayMs).toBe(100);
   });
 
   it("resolveAgentChatSupport returns codex provider for codex agent", () => {
