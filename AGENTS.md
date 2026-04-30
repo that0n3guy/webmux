@@ -90,6 +90,26 @@ External (unmanaged) tmux sessions surfaced under "External tmux" are always she
 
 `WorktreeMeta.yolo` is the source of truth. `openWorktree` reads it; the create/edit dialogs write it. Surfaced as a chip on the sidebar row + topbar via `WorktreeSnapshot.yolo`. Don't introduce a parallel transient yolo flag — store on meta or pass per-call (like `--yolo` on `webmux open`).
 
+### Claude session files rotate — always pick newest
+
+A Claude `.jsonl` session in `~/.claude/projects/<encoded-cwd>/` is **not stable for a given cwd**. After `/quit` + resume (or some other CLI events), Claude writes to a new `<sessionId>.jsonl` even though the cwd is the same. `claude-conversation-service.ts` always picks `listSessions(cwd)[0]` (newest by `lastSeenAt`) and updates `meta.conversation.sessionId` if it rotated. Don't trust a saved sessionId without checking it's still the most recent — or you'll diverge from xterm reality.
+
+### Ctrl-C interrupt doesn't fire Claude lifecycle hooks
+
+The agent CLI hooks only fire on `UserPromptSubmit`, `PostToolUse`, `Stop`, and `Notification`. A `Ctrl-C` interrupt cancels Claude's operation but doesn't trigger any of these — so `state.agent.lifecycle` stays at whatever it was (usually `"running"`) forever. The interrupt API handler in `server.ts` must manually emit `applyEvent({ type: "agent_status_changed", lifecycle: "stopped", ... })` after sending Ctrl-C so the snapshot reflects reality.
+
+### TmuxGateway stub obligation
+
+Adding a method to the `TmuxGateway` interface requires updating **all** `FakeTmuxGateway` test classes — they live in several test files (`session-activity-service.test.ts`, `claude-conversation-service.test.ts`, `worktree-conversation-service.test.ts`, `lifecycle-service.test.ts`, `reconciliation-service.test.ts`, `worktree-storage.test.ts`, etc.). Search `class FakeTmuxGateway` and add a minimal stub. The TS compile error is loud but easy to miss if you only run a single test file.
+
+### Auto-created `.webmux.yaml` should be gitignored by users
+
+`ensureWebmuxYaml` writes `.webmux.yaml` when a project is added via "+ Project". This file is **personal config** (project name + display preferences), not committed config. Users who don't add it to `.gitignore` lose their config when reverting branches. The README documents this; future "+ Project" flows could append to `.gitignore` automatically (not done yet).
+
+### `{@const}` placement in Svelte 5
+
+`{@const}` cannot sit directly inside a `<li>`, `<tr>`, or other plain element — only inside `{#if}`, `{#each}`, `{#snippet}`, `{:else}`, etc. If you need a derived value scoped to a list item, either inline the function call at the use site or wrap with `{#if true}` (last resort).
+
 ## Debugging
 
 When you are uncertain about the root cause of an issue, **add extensive debug logging before guessing at a fix**. This is mandatory, not optional.
