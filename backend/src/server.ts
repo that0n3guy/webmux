@@ -701,6 +701,16 @@ async function apiInterruptAgentsWorktree(scope: ProjectScope, branch: string): 
     return errorResponse(interruptResult.error, 503);
   }
 
+  const runtimeState = scope.projectRuntime.getWorktreeByBranch(branch);
+  if (runtimeState) {
+    scope.projectRuntime.applyEvent({
+      type: "agent_status_changed",
+      worktreeId: runtimeState.worktreeId,
+      branch,
+      lifecycle: "stopped",
+    });
+  }
+
   return jsonResponse({
     conversationId: conversationResult.data.conversation.conversationId,
     turnId: conversationResult.data.conversation.activeTurnId ?? `tmux:${crypto.randomUUID()}`,
