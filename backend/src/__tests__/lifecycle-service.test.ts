@@ -1410,6 +1410,35 @@ describe("LifecycleService", () => {
     expect(new BunGitGateway().listWorktrees(repoRoot).some((entry) => entry.branch === "feature-remove-docker")).toBe(false);
   });
 
+  it("removes a worktree whose HEAD is detached, resolving the branch via meta", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const hooks = new FakeHookRunner();
+    const lifecycle = makeLifecycleService(repoRoot, tmux, runtime, new FakeDockerGateway(), hooks);
+
+    await lifecycle.createWorktree({ branch: "issues/183-bulk-create-docs" });
+
+    const worktreePath = join(repoRoot, "__worktrees", "issues", "183-bulk-create-docs");
+
+    // Detach HEAD inside the worktree so `git worktree list` reports it as
+    // detached (no branch line). The local branch still exists.
+    const headSha = run(["git", "rev-parse", "HEAD"], worktreePath);
+    run(["git", "checkout", "--detach", headSha], worktreePath);
+
+    expect(
+      new BunGitGateway().listWorktrees(repoRoot).find((entry) => entry.path === worktreePath)?.branch,
+    ).toBeNull();
+    expect(run(["git", "branch", "--list", "issues/183-bulk-create-docs"], repoRoot))
+      .toContain("issues/183-bulk-create-docs");
+
+    await lifecycle.removeWorktree("issues/183-bulk-create-docs");
+
+    expect(hooks.calls.filter((call) => call.name === "preRemove")).toHaveLength(1);
+    expect(new BunGitGateway().listWorktrees(repoRoot).some((entry) => entry.path === worktreePath)).toBe(false);
+    expect(run(["git", "branch", "--list", "issues/183-bulk-create-docs"], repoRoot)).toBe("");
+  });
+
   it("falls back to the first configured profile when no default profile exists", async () => {
     const repoRoot = await initRepo();
     const runtime = new ProjectRuntime();
