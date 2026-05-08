@@ -131,7 +131,7 @@ name: My Project
 
 workspace:
   mainBranch: main
-  worktreeRoot: __worktrees
+  worktreeRoot: .worktrees
   defaultAgent: claude
   autoPull:
     enabled: true

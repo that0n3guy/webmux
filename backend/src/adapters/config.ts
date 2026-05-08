@@ -46,7 +46,7 @@ const DEFAULT_CONFIG: ProjectConfig = {
   name: "Webmux",
   workspace: {
     mainBranch: "main",
-    worktreeRoot: "../worktrees",
+    worktreeRoot: ".worktrees",
     defaultAgent: "claude",
     autoPull: { enabled: false, intervalSeconds: 300 },
   },
