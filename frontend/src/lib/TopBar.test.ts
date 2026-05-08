@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/svelte";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/svelte";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import TopBar from "./TopBar.svelte";
 import type { WorktreeInfo } from "./types";
 
@@ -27,6 +27,7 @@ function createWorktree(
     linearIssue: null,
     creating: false,
     creationPhase: null,
+    yolo: false,
     ...overrides,
   };
 }
@@ -55,6 +56,10 @@ function renderTopBar(
 }
 
 describe("TopBar", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   it("truncates worktree names longer than 30 characters in the header", () => {
     const branch = "feature/abcdefghijklmnopqrstuvwxyz-1234567890";
 
@@ -95,6 +100,18 @@ describe("TopBar", () => {
       "href",
       linearIssue.url,
     );
+  });
+
+  it("shows a yolo chip in the topbar when yolo is true", () => {
+    renderTopBar("feature/yolo-branch", { yolo: true });
+
+    expect(screen.getByText("yolo")).toBeInTheDocument();
+  });
+
+  it("does not show a yolo chip when yolo is false", () => {
+    renderTopBar("feature/safe-branch", { yolo: false });
+
+    expect(screen.queryByText("yolo")).not.toBeInTheDocument();
   });
 
   it("keeps desktop PR badges inside a wrapping header container", () => {

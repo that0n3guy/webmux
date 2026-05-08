@@ -1,11 +1,16 @@
 import type { RuntimeEvent } from "../domain/events";
 
+export interface ProjectNotifier {
+  notify(input: { branch: string; type: RuntimeNotification["type"]; message: string; url?: string; projectId?: string | null }): RuntimeNotification;
+}
+
 export interface RuntimeNotification {
   id: number;
   branch: string;
   type: "agent_stopped" | "pr_opened" | "runtime_error" | "worktree_auto_removed";
   message: string;
   url?: string;
+  projectId?: string | null;
   timestamp: number;
 }
 
@@ -41,13 +46,14 @@ export class NotificationService {
     return true;
   }
 
-  notify(input: { branch: string; type: RuntimeNotification["type"]; message: string; url?: string }): RuntimeNotification {
+  notify(input: { branch: string; type: RuntimeNotification["type"]; message: string; url?: string; projectId?: string | null }): RuntimeNotification {
     const notification: RuntimeNotification = {
       id: this.nextId,
       branch: input.branch,
       type: input.type,
       message: input.message,
       ...(input.url ? { url: input.url } : {}),
+      ...(input.projectId != null ? { projectId: input.projectId } : {}),
       timestamp: Date.now(),
     };
     this.nextId += 1;
@@ -59,10 +65,10 @@ export class NotificationService {
     return notification;
   }
 
-  recordEvent(event: RuntimeEvent): RuntimeNotification | null {
+  recordEvent(event: RuntimeEvent, projectId?: string | null): RuntimeNotification | null {
     const input = eventToNotificationInput(event);
     if (!input) return null;
-    return this.notify(input);
+    return this.notify({ ...input, projectId });
   }
 
   stream(): Response {

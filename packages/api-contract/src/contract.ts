@@ -4,7 +4,6 @@ import {
   AgentsUiInterruptResponseSchema,
   AgentsUiSendMessageResponseSchema,
   AgentsUiWorktreeConversationResponseSchema,
-  AgentIdParamsSchema,
   AgentListResponseSchema,
   AgentResponseSchema,
   AppConfigSchema,
@@ -19,7 +18,6 @@ import {
   ProjectSnapshotSchema,
   PullMainRequestSchema,
   PullMainResponseSchema,
-  RunIdParamsSchema,
   UpsertCustomAgentRequestSchema,
   ValidateCustomAgentResponseSchema,
   SendWorktreePromptRequestSchema,
@@ -28,65 +26,156 @@ import {
   ToggleEnabledRequestSchema,
   WorktreeDiffResponseSchema,
   WorktreeListResponseSchema,
-  WorktreeNameParamsSchema,
-  NotificationIdParamsSchema,
   LinearIssuesResponseSchema,
+  ExternalTmuxSessionListResponseSchema,
+  ScratchSessionListResponseSchema,
+  CreateScratchSessionRequestSchema,
+  CreateScratchSessionResponseSchema,
+  ProjectIdParamsSchema,
+  ProjectScopedWorktreeNameParamsSchema,
+  ProjectScopedScratchIdParamsSchema,
+  ExternalSessionNameParamsSchema,
+  ProjectListResponseSchema,
+  CreateProjectRequestSchema,
+  CreateProjectResponseSchema,
+  RemoveProjectRequestSchema,
+  OpenWorktreeRequestSchema,
+  UpdateWorktreeRequestSchema,
+  UpdateUserPreferencesRequestSchema,
+  UserPreferencesResponseSchema,
 } from "./schemas";
+import { z } from "zod";
 
 const c = initContract();
 
 export const apiPaths = {
+  fetchPreferences: "/api/preferences",
+  updatePreferences: "/api/preferences",
   fetchConfig: "/api/config",
-  fetchAvailableBranches: "/api/branches",
-  fetchBaseBranches: "/api/base-branches",
-  fetchProject: "/api/project",
-  fetchAgents: "/api/agents",
-  createAgent: "/api/agents",
-  updateAgent: "/api/agents/:id",
-  deleteAgent: "/api/agents/:id",
-  validateAgent: "/api/agents/validate",
-  attachAgentsWorktreeConversation: "/api/agents/worktrees/:name/attach",
-  fetchAgentsWorktreeConversationHistory: "/api/agents/worktrees/:name/history",
-  sendAgentsWorktreeConversationMessage: "/api/agents/worktrees/:name/messages",
-  interruptAgentsWorktreeConversation: "/api/agents/worktrees/:name/interrupt",
-  streamAgentsWorktreeConversation: "/ws/agents/worktrees/:name",
-  fetchWorktrees: "/api/worktrees",
-  createWorktree: "/api/worktrees",
-  removeWorktree: "/api/worktrees/:name",
-  openWorktree: "/api/worktrees/:name/open",
-  closeWorktree: "/api/worktrees/:name/close",
-  setWorktreeArchived: "/api/worktrees/:name/archive",
-  sendWorktreePrompt: "/api/worktrees/:name/send",
-  mergeWorktree: "/api/worktrees/:name/merge",
-  fetchWorktreeDiff: "/api/worktrees/:name/diff",
-  fetchLinearIssues: "/api/linear/issues",
-  setLinearAutoCreate: "/api/linear/auto-create",
-  setAutoRemoveOnMerge: "/api/github/auto-remove-on-merge",
-  pullMain: "/api/pull-main",
-  fetchCiLogs: "/api/ci-logs/:runId",
-  dismissNotification: "/api/notifications/:id/dismiss",
+  fetchExternalSessions: "/api/external-sessions",
+  fetchProjects: "/api/projects",
+  createProject: "/api/projects",
+  removeProject: "/api/projects/:projectId",
+  fetchAvailableBranches: "/api/projects/:projectId/branches",
+  fetchBaseBranches: "/api/projects/:projectId/base-branches",
+  fetchProject: "/api/projects/:projectId/project",
+  fetchAgents: "/api/projects/:projectId/agents",
+  createAgent: "/api/projects/:projectId/agents",
+  updateAgent: "/api/projects/:projectId/agents/:id",
+  deleteAgent: "/api/projects/:projectId/agents/:id",
+  validateAgent: "/api/projects/:projectId/agents/validate",
+  attachAgentsWorktreeConversation: "/api/projects/:projectId/agents/worktrees/:name/attach",
+  fetchAgentsWorktreeConversationHistory: "/api/projects/:projectId/agents/worktrees/:name/history",
+  sendAgentsWorktreeConversationMessage: "/api/projects/:projectId/agents/worktrees/:name/messages",
+  interruptAgentsWorktreeConversation: "/api/projects/:projectId/agents/worktrees/:name/interrupt",
+  streamAgentsWorktreeConversation: "/ws/projects/:projectId/agents/worktrees/:name",
+  fetchWorktrees: "/api/projects/:projectId/worktrees",
+  createWorktree: "/api/projects/:projectId/worktrees",
+  removeWorktree: "/api/projects/:projectId/worktrees/:name",
+  updateWorktree: "/api/projects/:projectId/worktrees/:name",
+  openWorktree: "/api/projects/:projectId/worktrees/:name/open",
+  closeWorktree: "/api/projects/:projectId/worktrees/:name/close",
+  setWorktreeArchived: "/api/projects/:projectId/worktrees/:name/archive",
+  sendWorktreePrompt: "/api/projects/:projectId/worktrees/:name/send",
+  mergeWorktree: "/api/projects/:projectId/worktrees/:name/merge",
+  fetchWorktreeDiff: "/api/projects/:projectId/worktrees/:name/diff",
+  fetchLinearIssues: "/api/projects/:projectId/linear/issues",
+  setLinearAutoCreate: "/api/projects/:projectId/linear/auto-create",
+  setAutoRemoveOnMerge: "/api/projects/:projectId/github/auto-remove-on-merge",
+  pullMain: "/api/projects/:projectId/pull-main",
+  fetchCiLogs: "/api/projects/:projectId/ci-logs/:runId",
+  dismissNotification: "/api/projects/:projectId/notifications/:id/dismiss",
+  fetchScratchSessions: "/api/projects/:projectId/scratch-sessions",
+  createScratchSession: "/api/projects/:projectId/scratch-sessions",
+  removeScratchSession: "/api/projects/:projectId/scratch-sessions/:id",
+  attachAgentsScratchConversation: "/api/projects/:projectId/scratch-sessions/:id/agent/attach",
+  fetchAgentsScratchConversationHistory: "/api/projects/:projectId/scratch-sessions/:id/agent/history",
+  sendAgentsScratchConversationMessage: "/api/projects/:projectId/scratch-sessions/:id/agent/messages",
+  interruptAgentsScratchConversation: "/api/projects/:projectId/scratch-sessions/:id/agent/interrupt",
+  streamAgentsScratchConversation: "/ws/projects/:projectId/scratch-sessions/:id/agent",
+  attachAgentsExternalConversation: "/api/external-sessions/:name/agent/attach",
+  fetchAgentsExternalConversationHistory: "/api/external-sessions/:name/agent/history",
+  sendAgentsExternalConversationMessage: "/api/external-sessions/:name/agent/messages",
+  interruptAgentsExternalConversation: "/api/external-sessions/:name/agent/interrupt",
+  streamAgentsExternalConversation: "/ws/external-sessions/:name/agent",
 } as const;
 
 const commonErrorResponses = {
   400: ErrorResponseSchema,
   404: ErrorResponseSchema,
   409: ErrorResponseSchema,
+  422: ErrorResponseSchema,
   500: ErrorResponseSchema,
   502: ErrorResponseSchema,
   503: ErrorResponseSchema,
 } as const;
 
 export const apiContract = c.router({
+  fetchPreferences: {
+    method: "GET",
+    path: apiPaths.fetchPreferences,
+    responses: {
+      200: UserPreferencesResponseSchema,
+      500: ErrorResponseSchema,
+    },
+  },
+  updatePreferences: {
+    method: "PUT",
+    path: apiPaths.updatePreferences,
+    body: UpdateUserPreferencesRequestSchema,
+    responses: {
+      200: UserPreferencesResponseSchema,
+      400: ErrorResponseSchema,
+      500: ErrorResponseSchema,
+    },
+  },
   fetchConfig: {
     method: "GET",
     path: apiPaths.fetchConfig,
+    query: z.object({ projectId: z.string().optional() }).optional(),
     responses: {
       200: AppConfigSchema,
+    },
+  },
+  fetchExternalSessions: {
+    method: "GET",
+    path: apiPaths.fetchExternalSessions,
+    responses: {
+      200: ExternalTmuxSessionListResponseSchema,
+      500: ErrorResponseSchema,
+    },
+  },
+  fetchProjects: {
+    method: "GET",
+    path: apiPaths.fetchProjects,
+    responses: {
+      200: ProjectListResponseSchema,
+      500: ErrorResponseSchema,
+    },
+  },
+  createProject: {
+    method: "POST",
+    path: apiPaths.createProject,
+    body: CreateProjectRequestSchema,
+    responses: {
+      201: CreateProjectResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  removeProject: {
+    method: "DELETE",
+    path: apiPaths.removeProject,
+    pathParams: ProjectIdParamsSchema,
+    body: RemoveProjectRequestSchema,
+    responses: {
+      200: OkResponseSchema,
+      ...commonErrorResponses,
     },
   },
   fetchAvailableBranches: {
     method: "GET",
     path: apiPaths.fetchAvailableBranches,
+    pathParams: ProjectIdParamsSchema,
     query: AvailableBranchesQuerySchema,
     responses: {
       200: BranchListResponseSchema,
@@ -97,6 +186,7 @@ export const apiContract = c.router({
   fetchBaseBranches: {
     method: "GET",
     path: apiPaths.fetchBaseBranches,
+    pathParams: ProjectIdParamsSchema,
     responses: {
       200: BranchListResponseSchema,
       500: ErrorResponseSchema,
@@ -105,6 +195,7 @@ export const apiContract = c.router({
   fetchProject: {
     method: "GET",
     path: apiPaths.fetchProject,
+    pathParams: ProjectIdParamsSchema,
     responses: {
       200: ProjectSnapshotSchema,
       500: ErrorResponseSchema,
@@ -114,6 +205,7 @@ export const apiContract = c.router({
   fetchAgents: {
     method: "GET",
     path: apiPaths.fetchAgents,
+    pathParams: ProjectIdParamsSchema,
     responses: {
       200: AgentListResponseSchema,
       500: ErrorResponseSchema,
@@ -122,6 +214,7 @@ export const apiContract = c.router({
   createAgent: {
     method: "POST",
     path: apiPaths.createAgent,
+    pathParams: ProjectIdParamsSchema,
     body: UpsertCustomAgentRequestSchema,
     responses: {
       200: AgentResponseSchema,
@@ -133,7 +226,7 @@ export const apiContract = c.router({
   updateAgent: {
     method: "PUT",
     path: apiPaths.updateAgent,
-    pathParams: AgentIdParamsSchema,
+    pathParams: z.object({ projectId: z.string().min(1), id: z.string().min(1) }),
     body: UpsertCustomAgentRequestSchema,
     responses: {
       200: AgentResponseSchema,
@@ -146,7 +239,7 @@ export const apiContract = c.router({
   deleteAgent: {
     method: "DELETE",
     path: apiPaths.deleteAgent,
-    pathParams: AgentIdParamsSchema,
+    pathParams: z.object({ projectId: z.string().min(1), id: z.string().min(1) }),
     body: c.noBody(),
     responses: {
       200: OkResponseSchema,
@@ -158,6 +251,7 @@ export const apiContract = c.router({
   validateAgent: {
     method: "POST",
     path: apiPaths.validateAgent,
+    pathParams: ProjectIdParamsSchema,
     body: UpsertCustomAgentRequestSchema,
     responses: {
       200: ValidateCustomAgentResponseSchema,
@@ -168,7 +262,7 @@ export const apiContract = c.router({
   attachAgentsWorktreeConversation: {
     method: "POST",
     path: apiPaths.attachAgentsWorktreeConversation,
-    pathParams: WorktreeNameParamsSchema,
+    pathParams: ProjectScopedWorktreeNameParamsSchema,
     body: c.noBody(),
     responses: {
       200: AgentsUiWorktreeConversationResponseSchema,
@@ -178,7 +272,7 @@ export const apiContract = c.router({
   fetchAgentsWorktreeConversationHistory: {
     method: "GET",
     path: apiPaths.fetchAgentsWorktreeConversationHistory,
-    pathParams: WorktreeNameParamsSchema,
+    pathParams: ProjectScopedWorktreeNameParamsSchema,
     responses: {
       200: AgentsUiWorktreeConversationResponseSchema,
       ...commonErrorResponses,
@@ -187,7 +281,7 @@ export const apiContract = c.router({
   sendAgentsWorktreeConversationMessage: {
     method: "POST",
     path: apiPaths.sendAgentsWorktreeConversationMessage,
-    pathParams: WorktreeNameParamsSchema,
+    pathParams: ProjectScopedWorktreeNameParamsSchema,
     body: AgentsSendMessageRequestSchema,
     responses: {
       200: AgentsUiSendMessageResponseSchema,
@@ -197,7 +291,7 @@ export const apiContract = c.router({
   interruptAgentsWorktreeConversation: {
     method: "POST",
     path: apiPaths.interruptAgentsWorktreeConversation,
-    pathParams: WorktreeNameParamsSchema,
+    pathParams: ProjectScopedWorktreeNameParamsSchema,
     body: c.noBody(),
     responses: {
       200: AgentsUiInterruptResponseSchema,
@@ -207,6 +301,7 @@ export const apiContract = c.router({
   fetchWorktrees: {
     method: "GET",
     path: apiPaths.fetchWorktrees,
+    pathParams: ProjectIdParamsSchema,
     responses: {
       200: WorktreeListResponseSchema,
       500: ErrorResponseSchema,
@@ -216,6 +311,7 @@ export const apiContract = c.router({
   createWorktree: {
     method: "POST",
     path: apiPaths.createWorktree,
+    pathParams: ProjectIdParamsSchema,
     body: CreateWorktreeRequestSchema,
     responses: {
       201: CreateWorktreeResponseSchema,
@@ -225,7 +321,17 @@ export const apiContract = c.router({
   removeWorktree: {
     method: "DELETE",
     path: apiPaths.removeWorktree,
-    pathParams: WorktreeNameParamsSchema,
+    pathParams: ProjectScopedWorktreeNameParamsSchema,
+    responses: {
+      200: OkResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  updateWorktree: {
+    method: "PATCH",
+    path: apiPaths.updateWorktree,
+    pathParams: ProjectScopedWorktreeNameParamsSchema,
+    body: UpdateWorktreeRequestSchema,
     responses: {
       200: OkResponseSchema,
       ...commonErrorResponses,
@@ -234,8 +340,8 @@ export const apiContract = c.router({
   openWorktree: {
     method: "POST",
     path: apiPaths.openWorktree,
-    pathParams: WorktreeNameParamsSchema,
-    body: c.noBody(),
+    pathParams: ProjectScopedWorktreeNameParamsSchema,
+    body: OpenWorktreeRequestSchema,
     responses: {
       200: OkResponseSchema,
       ...commonErrorResponses,
@@ -244,7 +350,7 @@ export const apiContract = c.router({
   closeWorktree: {
     method: "POST",
     path: apiPaths.closeWorktree,
-    pathParams: WorktreeNameParamsSchema,
+    pathParams: ProjectScopedWorktreeNameParamsSchema,
     body: c.noBody(),
     responses: {
       200: OkResponseSchema,
@@ -254,7 +360,7 @@ export const apiContract = c.router({
   setWorktreeArchived: {
     method: "PUT",
     path: apiPaths.setWorktreeArchived,
-    pathParams: WorktreeNameParamsSchema,
+    pathParams: ProjectScopedWorktreeNameParamsSchema,
     body: SetWorktreeArchivedRequestSchema,
     responses: {
       200: SetWorktreeArchivedResponseSchema,
@@ -264,7 +370,7 @@ export const apiContract = c.router({
   sendWorktreePrompt: {
     method: "POST",
     path: apiPaths.sendWorktreePrompt,
-    pathParams: WorktreeNameParamsSchema,
+    pathParams: ProjectScopedWorktreeNameParamsSchema,
     body: SendWorktreePromptRequestSchema,
     responses: {
       200: OkResponseSchema,
@@ -274,7 +380,7 @@ export const apiContract = c.router({
   mergeWorktree: {
     method: "POST",
     path: apiPaths.mergeWorktree,
-    pathParams: WorktreeNameParamsSchema,
+    pathParams: ProjectScopedWorktreeNameParamsSchema,
     body: c.noBody(),
     responses: {
       200: OkResponseSchema,
@@ -284,7 +390,7 @@ export const apiContract = c.router({
   fetchWorktreeDiff: {
     method: "GET",
     path: apiPaths.fetchWorktreeDiff,
-    pathParams: WorktreeNameParamsSchema,
+    pathParams: ProjectScopedWorktreeNameParamsSchema,
     responses: {
       200: WorktreeDiffResponseSchema,
       ...commonErrorResponses,
@@ -293,6 +399,7 @@ export const apiContract = c.router({
   fetchLinearIssues: {
     method: "GET",
     path: apiPaths.fetchLinearIssues,
+    pathParams: ProjectIdParamsSchema,
     responses: {
       200: LinearIssuesResponseSchema,
       500: ErrorResponseSchema,
@@ -302,6 +409,7 @@ export const apiContract = c.router({
   setLinearAutoCreate: {
     method: "PUT",
     path: apiPaths.setLinearAutoCreate,
+    pathParams: ProjectIdParamsSchema,
     body: ToggleEnabledRequestSchema,
     responses: {
       200: EnabledResponseSchema,
@@ -311,6 +419,7 @@ export const apiContract = c.router({
   setAutoRemoveOnMerge: {
     method: "PUT",
     path: apiPaths.setAutoRemoveOnMerge,
+    pathParams: ProjectIdParamsSchema,
     body: ToggleEnabledRequestSchema,
     responses: {
       200: EnabledResponseSchema,
@@ -320,6 +429,7 @@ export const apiContract = c.router({
   pullMain: {
     method: "POST",
     path: apiPaths.pullMain,
+    pathParams: ProjectIdParamsSchema,
     body: PullMainRequestSchema,
     responses: {
       200: PullMainResponseSchema,
@@ -329,7 +439,7 @@ export const apiContract = c.router({
   fetchCiLogs: {
     method: "GET",
     path: apiPaths.fetchCiLogs,
-    pathParams: RunIdParamsSchema,
+    pathParams: z.object({ projectId: z.string().min(1), runId: z.union([z.number().int().nonnegative(), z.string().regex(/^\d+$/).transform((value) => Number(value))]) }),
     responses: {
       200: CiLogsResponseSchema,
       ...commonErrorResponses,
@@ -338,12 +448,119 @@ export const apiContract = c.router({
   dismissNotification: {
     method: "POST",
     path: apiPaths.dismissNotification,
-    pathParams: NotificationIdParamsSchema,
+    pathParams: z.object({ projectId: z.string().min(1), id: z.union([z.number().int().nonnegative(), z.string().regex(/^\d+$/).transform((value) => Number(value))]) }),
     body: c.noBody(),
     responses: {
       200: OkResponseSchema,
       400: ErrorResponseSchema,
       404: ErrorResponseSchema,
+    },
+  },
+  fetchScratchSessions: {
+    method: "GET",
+    path: apiPaths.fetchScratchSessions,
+    pathParams: ProjectIdParamsSchema,
+    responses: {
+      200: ScratchSessionListResponseSchema,
+      500: ErrorResponseSchema,
+    },
+  },
+  createScratchSession: {
+    method: "POST",
+    path: apiPaths.createScratchSession,
+    pathParams: ProjectIdParamsSchema,
+    body: CreateScratchSessionRequestSchema,
+    responses: {
+      201: CreateScratchSessionResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  removeScratchSession: {
+    method: "DELETE",
+    path: apiPaths.removeScratchSession,
+    pathParams: ProjectScopedScratchIdParamsSchema,
+    body: c.noBody(),
+    responses: {
+      200: OkResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  attachAgentsScratchConversation: {
+    method: "POST",
+    path: apiPaths.attachAgentsScratchConversation,
+    pathParams: ProjectScopedScratchIdParamsSchema,
+    body: c.noBody(),
+    responses: {
+      200: AgentsUiWorktreeConversationResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  fetchAgentsScratchConversationHistory: {
+    method: "GET",
+    path: apiPaths.fetchAgentsScratchConversationHistory,
+    pathParams: ProjectScopedScratchIdParamsSchema,
+    responses: {
+      200: AgentsUiWorktreeConversationResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  sendAgentsScratchConversationMessage: {
+    method: "POST",
+    path: apiPaths.sendAgentsScratchConversationMessage,
+    pathParams: ProjectScopedScratchIdParamsSchema,
+    body: AgentsSendMessageRequestSchema,
+    responses: {
+      200: AgentsUiSendMessageResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  interruptAgentsScratchConversation: {
+    method: "POST",
+    path: apiPaths.interruptAgentsScratchConversation,
+    pathParams: ProjectScopedScratchIdParamsSchema,
+    body: c.noBody(),
+    responses: {
+      200: AgentsUiInterruptResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  attachAgentsExternalConversation: {
+    method: "POST",
+    path: apiPaths.attachAgentsExternalConversation,
+    pathParams: ExternalSessionNameParamsSchema,
+    body: c.noBody(),
+    responses: {
+      200: AgentsUiWorktreeConversationResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  fetchAgentsExternalConversationHistory: {
+    method: "GET",
+    path: apiPaths.fetchAgentsExternalConversationHistory,
+    pathParams: ExternalSessionNameParamsSchema,
+    responses: {
+      200: AgentsUiWorktreeConversationResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  sendAgentsExternalConversationMessage: {
+    method: "POST",
+    path: apiPaths.sendAgentsExternalConversationMessage,
+    pathParams: ExternalSessionNameParamsSchema,
+    body: AgentsSendMessageRequestSchema,
+    responses: {
+      200: AgentsUiSendMessageResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  interruptAgentsExternalConversation: {
+    method: "POST",
+    path: apiPaths.interruptAgentsExternalConversation,
+    pathParams: ExternalSessionNameParamsSchema,
+    body: c.noBody(),
+    responses: {
+      200: AgentsUiInterruptResponseSchema,
+      ...commonErrorResponses,
     },
   },
 }, {

@@ -15,7 +15,7 @@ import {
 import { expandTemplate, getDefaultProfileName, isDockerProfile, type DockerProfileConfig } from "../adapters/config";
 import { type DockerGateway } from "../adapters/docker";
 import { buildProjectSessionName, buildWorktreeWindowName, type TmuxGateway } from "../adapters/tmux";
-import type { AgentId, ProfileConfig, ProjectConfig, RuntimeKind } from "../domain/config";
+import type { AgentId, PaneTemplate, ProfileConfig, ProjectConfig, RuntimeKind } from "../domain/config";
 import type { WorktreeCreationPhase, WorktreeMeta } from "../domain/model";
 import { allocateServicePorts, isValidBranchName, isValidEnvKey } from "../domain/policies";
 import type { AutoNameGenerator } from "./auto-name-service";
@@ -113,6 +113,7 @@ export interface CreateWorktreeProgress {
   profile: string;
   agent: AgentId;
   phase: WorktreeCreationPhase;
+  yolo?: boolean;
 }
 
 export interface LifecycleServiceDependencies {
@@ -139,6 +140,7 @@ export interface CreateLifecycleWorktreeInput {
   profile?: string;
   agent?: AgentId;
   envOverrides?: Record<string, string>;
+  yolo?: boolean;
 }
 
 export interface CreateLifecycleWorktreesInput extends Omit<CreateLifecycleWorktreeInput, "agent"> {
@@ -232,17 +234,29 @@ export class LifecycleService {
     });
   }
 
-  async openWorktree(branch: string): Promise<{
+  async openWorktree(branch: string, opts?: { agentOverride?: AgentId; shellOnly?: boolean }): Promise<{
     branch: string;
     worktreeId: string;
   }> {
     try {
+      if (opts?.agentOverride && opts?.shellOnly === true) {
+        throw new LifecycleError("Cannot combine agentOverride with shellOnly", 400);
+      }
       const resolved = await this.resolveExistingWorktree(branch);
       const initialized = resolved.meta
         ? await this.refreshManagedArtifacts(resolved)
         : await this.initializeUnmanagedWorktree(resolved);
       const { profileName, profile } = this.resolveProfile(initialized.meta.profile);
-      const agent = this.resolveAgentDefinition(initialized.meta.agent);
+      let agent: AgentDefinition;
+      if (opts?.agentOverride) {
+        const overrideAgent = getAgentDefinition(this.deps.config, opts.agentOverride);
+        if (!overrideAgent) {
+          throw new LifecycleError(`Unknown agent: ${opts.agentOverride}`, 404);
+        }
+        agent = overrideAgent;
+      } else {
+        agent = this.resolveAgentDefinition(initialized.meta.agent);
+      }
       const launchMode: AgentLaunchMode = resolved.meta && agent.capabilities.resume ? "resume" : "fresh";
       await ensureAgentRuntimeArtifacts({
         gitDir: initialized.paths.gitDir,
@@ -257,6 +271,8 @@ export class LifecycleService {
         initialized,
         worktreePath: resolved.entry.path,
         launchMode,
+        ...(initialized.meta.yolo === undefined ? {} : { yolo: initialized.meta.yolo }),
+        ...(opts?.shellOnly !== undefined ? { shellOnly: opts.shellOnly } : {}),
       });
 
       await this.deps.reconciliation.reconcile(this.deps.projectRoot, { force: true });
@@ -621,6 +637,8 @@ export class LifecycleService {
     worktreePath: string;
     prompt?: string;
     launchMode: AgentLaunchMode;
+    yolo?: boolean;
+    shellOnly?: boolean;
   }): Promise<void> {
     if (input.profile.runtime === "docker") {
       const dockerProfile = this.requireDockerProfile(input.profile);
@@ -641,6 +659,8 @@ export class LifecycleService {
         worktreePath: input.worktreePath,
         prompt: input.prompt,
         launchMode: input.launchMode,
+        yolo: input.yolo,
+        shellOnly: input.shellOnly,
         containerName,
       }));
       return;
@@ -655,6 +675,8 @@ export class LifecycleService {
       worktreePath: input.worktreePath,
       prompt: input.prompt,
       launchMode: input.launchMode,
+      yolo: input.yolo,
+      shellOnly: input.shellOnly,
     }));
   }
 
@@ -667,17 +689,31 @@ export class LifecycleService {
     worktreePath: string;
     prompt?: string;
     launchMode: AgentLaunchMode;
+    yolo?: boolean;
+    shellOnly?: boolean;
     containerName?: string;
   }) {
     const systemPrompt = input.launchMode === "fresh" && input.profile.systemPrompt
       ? expandTemplate(input.profile.systemPrompt, input.initialized.runtimeEnv)
       : undefined;
     const containerName = input.containerName;
+    const yolo = input.yolo ?? input.profile.yolo === true;
+
+    let panes = input.profile.panes;
+    if (input.shellOnly === true) {
+      const filtered = panes.filter((pane) => pane.kind !== "agent");
+      if (filtered.length === 0) {
+        const shellFallback = { id: "shell", kind: "shell", cwd: "worktree", focus: true } satisfies PaneTemplate;
+        panes = [shellFallback];
+      } else {
+        panes = filtered;
+      }
+    }
 
     return planSessionLayout(
       this.deps.projectRoot,
       input.branch,
-      input.profile.panes,
+      panes,
       {
         repoRoot: this.deps.projectRoot,
         worktreePath: input.worktreePath,
@@ -690,7 +726,7 @@ export class LifecycleService {
                 worktreePath: input.worktreePath,
                 branch: input.branch,
                 profileName: input.profileName,
-                yolo: input.profile.yolo === true,
+                yolo,
                 systemPrompt,
                 prompt: input.launchMode === "fresh" ? input.prompt : undefined,
                 launchMode: input.launchMode,
@@ -709,7 +745,7 @@ export class LifecycleService {
                 worktreePath: input.worktreePath,
                 branch: input.branch,
                 profileName: input.profileName,
-                yolo: input.profile.yolo === true,
+                yolo,
                 systemPrompt,
                 prompt: input.launchMode === "fresh" ? input.prompt : undefined,
                 launchMode: input.launchMode,
@@ -717,6 +753,7 @@ export class LifecycleService {
               shell: buildManagedShellCommand(input.initialized.paths.runtimeEnvPath),
         },
       },
+      input.initialized.meta?.worktreeId,
     );
   }
 
@@ -890,6 +927,7 @@ export class LifecycleService {
       path: worktreePath,
       profile: profileName,
       agent: input.agent,
+      ...(input.yolo !== undefined ? { yolo: input.yolo } : {}),
     } satisfies Omit<CreateWorktreeProgress, "phase">;
     const deleteBranchOnRollback = input.mode === "new" || branchAvailability.deleteBranchOnRollback;
     let initialized: InitializeManagedWorktreeResult | null = null;
@@ -919,6 +957,7 @@ export class LifecycleService {
           controlUrl: this.controlUrl(profile.runtime),
           controlToken: await this.deps.getControlToken(),
           deleteBranchOnRollback,
+          ...(input.yolo === undefined ? {} : { yolo: input.yolo }),
         },
         {
           git: this.deps.git,
@@ -962,6 +1001,7 @@ export class LifecycleService {
         worktreePath,
         prompt: input.prompt,
         launchMode: "fresh",
+        ...(input.yolo === undefined ? {} : { yolo: input.yolo }),
       });
 
       await this.reportCreateProgress({

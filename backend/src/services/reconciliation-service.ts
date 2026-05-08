@@ -2,10 +2,10 @@ import { basename, resolve } from "node:path";
 import { expandTemplate } from "../adapters/config";
 import type { GitGateway, GitWorktreeEntry } from "../adapters/git";
 import type { PortProbe } from "../adapters/port-probe";
-import { buildProjectSessionName, buildWorktreeWindowName, type TmuxGateway, type TmuxWindowSummary } from "../adapters/tmux";
-import { buildRuntimeEnvMap, readWorktreeMeta, readWorktreePrs } from "../adapters/fs";
+import { buildProjectSessionName, buildWorktreeWindowName, WEBMUX_WORKTREE_ID_OPTION, type TmuxGateway, type TmuxWindowSummary } from "../adapters/tmux";
+import { buildRuntimeEnvMap, readWorktreeMeta, readWorktreePrs, readWorktreeRuntimeState } from "../adapters/fs";
 import type { AgentId, ProjectConfig } from "../domain/config";
-import type { PrEntry, ServiceRuntimeState } from "../domain/model";
+import type { AgentRuntimeState, PrEntry, ServiceRuntimeState } from "../domain/model";
 import { mapWithConcurrency } from "../lib/async";
 import { ProjectRuntime } from "./project-runtime";
 
@@ -61,11 +61,34 @@ function findWindow(
   windows: TmuxWindowSummary[],
   sessionName: string,
   branch: string,
-): TmuxWindowSummary | null {
-  const windowName = buildWorktreeWindowName(branch);
-  return windows.find((window) =>
-    window.sessionName === sessionName && window.windowName === windowName
-  ) ?? null;
+  worktreeId: string,
+  worktreePath: string,
+): { window: TmuxWindowSummary; matchedBy: "stamp" | "name" | "path" } | null {
+  // 1) stamped lookup — durable identity (set on creation or recovered before).
+  const stamped = windows.find((w) =>
+    w.sessionName === sessionName && w.webmuxWorktreeId === worktreeId
+  );
+  if (stamped) return { window: stamped, matchedBy: "stamp" };
+
+  // 2) legacy name-based lookup. Stable while the branch hasn't been renamed.
+  const expectedName = buildWorktreeWindowName(branch);
+  const named = windows.find((w) =>
+    w.sessionName === sessionName && w.windowName === expectedName
+  );
+  if (named) return { window: named, matchedBy: "name" };
+
+  // 3) cwd-based recovery — handles `git switch -b` / `git branch -m` inside a
+  // worktree where the window name is now stale but the pane is still alive in
+  // the worktree directory.
+  const targetPath = resolve(worktreePath);
+  const byPath = windows.find((w) =>
+    w.sessionName === sessionName
+    && typeof w.paneCurrentPath === "string"
+    && resolve(w.paneCurrentPath) === targetPath
+  );
+  if (byPath) return { window: byPath, matchedBy: "path" };
+
+  return null;
 }
 
 function resolveBranch(entry: GitWorktreeEntry, metaBranch: string | null): string {
@@ -93,11 +116,13 @@ export interface ReconcileOptions {
 
 interface ReconciledWorktreeState {
   worktreeId: string;
+  gitDir: string;
   branch: string;
   baseBranch: string | null;
   path: string;
   profile: string | null;
   agentName: AgentId | null;
+  yolo: boolean;
   runtime: "host" | "docker";
   git: {
     dirty: boolean;
@@ -111,6 +136,7 @@ interface ReconciledWorktreeState {
   };
   services: ServiceRuntimeState[];
   prs: PrEntry[];
+  persistedAgent: AgentRuntimeState | null;
 }
 
 export class ReconciliationService {
@@ -166,19 +192,65 @@ export class ReconciliationService {
     );
     const reconciledStates = await mapWithConcurrency(candidateEntries, this.concurrency, async (entry) => {
       const gitDir = this.deps.git.resolveWorktreeGitDir(entry.path);
-      const meta = await readWorktreeMeta(gitDir);
+      const [meta, persistedRuntime] = await Promise.all([
+        readWorktreeMeta(gitDir),
+        readWorktreeRuntimeState(gitDir),
+      ]);
       const branch = resolveBranch(entry, meta?.branch ?? null);
       const worktreeId = meta?.worktreeId ?? makeUnmanagedWorktreeId(entry.path);
       const gitStatus = this.deps.git.readWorktreeStatus(entry.path);
-      const window = findWindow(windows, sessionName, branch);
+      const match = findWindow(windows, sessionName, branch, worktreeId, entry.path);
+      const window = match?.window ?? null;
+      if (match) {
+        const expectedName = buildWorktreeWindowName(branch);
+        // Stamp unstamped windows (legacy / cwd-recovered) so future ticks find
+        // them by stable identity instead of relying on the fragile path.
+        if (match.matchedBy !== "stamp") {
+          try {
+            this.deps.tmux.setWindowOption(
+              match.window.sessionName,
+              match.window.windowName,
+              WEBMUX_WORKTREE_ID_OPTION,
+              worktreeId,
+            );
+            match.window.webmuxWorktreeId = worktreeId;
+          } catch {
+            // best-effort
+          }
+        }
+        // Keep the window's display name aligned with the current branch even
+        // when we matched by stamp — the user's sidebar shows a per-branch
+        // entry and clicks resolve to `${session}:${expectedName}`, so a stale
+        // window name leaves the link broken after a `git switch`.
+        if (match.window.windowName !== expectedName) {
+          try {
+            this.deps.tmux.renameWindow(match.window.sessionName, match.window.windowName, expectedName);
+            match.window.windowName = expectedName;
+          } catch {
+            // best-effort
+          }
+        }
+      }
+
+      const persistedAgent: AgentRuntimeState | null = persistedRuntime
+        ? {
+            runtime: meta?.runtime ?? "host",
+            lifecycle: persistedRuntime.lifecycle,
+            lastStartedAt: persistedRuntime.lastStartedAt,
+            lastEventAt: persistedRuntime.lastEventAt,
+            lastError: persistedRuntime.lastError,
+          }
+        : null;
 
       return {
         worktreeId,
+        gitDir,
         branch,
         baseBranch: meta?.baseBranch ?? null,
         path: entry.path,
         profile: meta?.profile ?? null,
         agentName: meta?.agent ?? null,
+        yolo: meta?.yolo === true,
         runtime: meta?.runtime ?? "host",
         git: {
           dirty: gitStatus.dirty,
@@ -202,6 +274,7 @@ export class ReconciliationService {
             })
           : [],
         prs: await readWorktreePrs(gitDir),
+        persistedAgent,
       } satisfies ReconciledWorktreeState;
     });
 
@@ -215,7 +288,10 @@ export class ReconciliationService {
         path: state.path,
         profile: state.profile,
         agentName: state.agentName,
+        yolo: state.yolo,
         runtime: state.runtime,
+        gitDir: state.gitDir,
+        persistedAgent: state.persistedAgent,
       });
 
       this.deps.runtime.setGitState(state.worktreeId, {

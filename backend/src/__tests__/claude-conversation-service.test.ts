@@ -13,10 +13,11 @@ class FakeGitGateway {
   }
 }
 
-class FakeClaudeCliGateway implements Pick<ClaudeCliGateway, "listSessions" | "readSession"> {
+class FakeClaudeCliGateway implements Pick<ClaudeCliGateway, "listSessions" | "readSession" | "getSessionMtime"> {
   readonly calls: string[] = [];
   readonly sessions = new Map<string, ClaudeCliSession>();
   listedSessions: ClaudeCliSessionSummary[] = [];
+  sessionMtimes = new Map<string, Date>();
 
   async listSessions(cwd: string): Promise<ClaudeCliSessionSummary[]> {
     this.calls.push(`listSessions:${cwd}`);
@@ -26,6 +27,10 @@ class FakeClaudeCliGateway implements Pick<ClaudeCliGateway, "listSessions" | "r
   async readSession(sessionId: string, cwd: string): Promise<ClaudeCliSession | null> {
     this.calls.push(`readSession:${sessionId}:${cwd}`);
     return structuredClone(this.sessions.get(sessionId) ?? null);
+  }
+
+  async getSessionMtime(sessionId: string, _cwd: string): Promise<Date | null> {
+    return this.sessionMtimes.get(sessionId) ?? null;
   }
 }
 
@@ -95,15 +100,17 @@ describe("ClaudeConversationService", () => {
         {
           id: "user-1",
           turnId: "user-1",
-          role: "user",
+          kind: "user",
           text: "Inspect the diff",
+          status: "completed" as const,
           createdAt: "2026-04-14T10:01:00.000Z",
         },
         {
           id: "assistant-1",
           turnId: "user-1",
-          role: "assistant",
+          kind: "assistant",
           text: "The diff is clean.",
+          status: "completed" as const,
           createdAt: "2026-04-14T10:02:00.000Z",
         },
       ],
@@ -143,5 +150,63 @@ describe("ClaudeConversationService", () => {
       cwd: worktree.path,
       lastSeenAt: "2026-04-14T12:00:00.000Z",
     });
+  });
+});
+
+describe("ClaudeConversationService — lifecycle-driven running", () => {
+  function makeServiceAndSession(worktree: WorktreeSnapshot, metaStore: Map<string, WorktreeMeta>) {
+    const session = makeSession({ sessionId: "session-lifecycle", cwd: worktree.path, messages: [] });
+    const claude = new FakeClaudeCliGateway();
+    claude.listedSessions = [{
+      sessionId: session.sessionId,
+      cwd: worktree.path,
+      path: session.path,
+      lastSeenAt: "2026-04-14T10:05:00.000Z",
+    }];
+    claude.sessions.set(session.sessionId, structuredClone(session));
+    const service = new ClaudeConversationService({
+      claude,
+      git: new FakeGitGateway(),
+      now: () => new Date("2026-04-14T12:00:00.000Z"),
+      readMeta: async (path) => structuredClone(metaStore.get(path) ?? null),
+      writeMeta: async (path, meta) => { metaStore.set(path, structuredClone(meta)); },
+    });
+    return service;
+  }
+
+  it("reports running=true when worktree.status is 'running'", async () => {
+    const metaStore = new Map<string, WorktreeMeta>();
+    const worktree = { ...makeWorktree(), status: "running" };
+    metaStore.set(`${worktree.path}/.git`, makeMeta());
+
+    const service = makeServiceAndSession(worktree, metaStore);
+    const result = await service.attachWorktreeConversation(worktree);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.conversation.running).toBe(true);
+  });
+
+  it("reports running=true when worktree.status is 'starting'", async () => {
+    const metaStore = new Map<string, WorktreeMeta>();
+    const worktree = { ...makeWorktree(), status: "starting" };
+    metaStore.set(`${worktree.path}/.git`, makeMeta());
+
+    const service = makeServiceAndSession(worktree, metaStore);
+    const result = await service.attachWorktreeConversation(worktree);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.conversation.running).toBe(true);
+  });
+
+  it("reports running=false when worktree.status is 'idle'", async () => {
+    const metaStore = new Map<string, WorktreeMeta>();
+    const worktree = { ...makeWorktree(), status: "idle" };
+    metaStore.set(`${worktree.path}/.git`, makeMeta());
+
+    const service = makeServiceAndSession(worktree, metaStore);
+    const result = await service.attachWorktreeConversation(worktree);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.conversation.running).toBe(false);
   });
 });

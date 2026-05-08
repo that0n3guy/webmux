@@ -5,9 +5,11 @@ import {
   parseAddCommandArgs,
   parseBranchCommandArgs,
   parseListCommandArgs,
+  parseOpenCommandArgs,
   parseSendCommandArgs,
   runWorktreeCommand,
   type ParsedAddCommand,
+  type ParsedOpenCommand,
   type ParsedSendCommand,
 } from "./worktree-commands";
 
@@ -26,8 +28,8 @@ function stubLifecycleService(calls: Array<{ method: string; value: unknown }>) 
         : [branch];
       return { primaryBranch: branches[0] ?? branch, branches };
     },
-    async openWorktree(branch: string): Promise<{ branch: string; worktreeId: string }> {
-      calls.push({ method: "openWorktree", value: branch });
+    async openWorktree(branch: string, opts?: { agentOverride?: string; shellOnly?: boolean }): Promise<{ branch: string; worktreeId: string }> {
+      calls.push({ method: "openWorktree", value: opts !== undefined ? { branch, ...opts } : branch });
       return { branch, worktreeId: "wt-2" };
     },
     async closeWorktree(branch: string): Promise<void> {
@@ -228,6 +230,52 @@ describe("parseSendCommandArgs", () => {
   });
 });
 
+describe("parseOpenCommandArgs", () => {
+  it("parses the required branch argument", () => {
+    expect(parseOpenCommandArgs(["feature/x"])).toEqual({
+      branch: "feature/x",
+    } satisfies ParsedOpenCommand);
+  });
+
+  it("parses --agent with a separate value", () => {
+    expect(parseOpenCommandArgs(["feature/x", "--agent", "codex"])).toEqual({
+      branch: "feature/x",
+      agentOverride: "codex",
+    } satisfies ParsedOpenCommand);
+  });
+
+  it("parses --agent with equals syntax", () => {
+    expect(parseOpenCommandArgs(["feature/x", "--agent=codex"])).toEqual({
+      branch: "feature/x",
+      agentOverride: "codex",
+    } satisfies ParsedOpenCommand);
+  });
+
+  it("parses --shell-only", () => {
+    expect(parseOpenCommandArgs(["feature/x", "--shell-only"])).toEqual({
+      branch: "feature/x",
+      shellOnly: true,
+    } satisfies ParsedOpenCommand);
+  });
+
+  it("throws when --agent and --shell-only are combined", () => {
+    expect(() => parseOpenCommandArgs(["feature/x", "--agent", "codex", "--shell-only"]))
+      .toThrow("Cannot combine --agent with --shell-only");
+  });
+
+  it("returns null for --help", () => {
+    expect(parseOpenCommandArgs(["--help"])).toBeNull();
+  });
+
+  it("throws for unknown options", () => {
+    expect(() => parseOpenCommandArgs(["feature/x", "--unknown"])).toThrow("Unknown option: --unknown");
+  });
+
+  it("throws when --agent has no value", () => {
+    expect(() => parseOpenCommandArgs(["feature/x", "--agent"])).toThrow("--agent requires a value");
+  });
+});
+
 describe("runWorktreeCommand", () => {
   it("dispatches add through the lifecycle service and switches to tmux", async () => {
     const { runtime, calls } = makeRuntime();
@@ -379,6 +427,56 @@ describe("runWorktreeCommand", () => {
 
     expect(exitCode).toBe(0);
     expect(calls).toEqual([{ method: "openWorktree", value: "feature/search" }]);
+    expect(stdout).toEqual(["Opened worktree feature/search"]);
+    expect(switchCalls).toEqual([{ projectDir: "/repo", branch: "feature/search" }]);
+  });
+
+  it("dispatches open --agent through the lifecycle service", async () => {
+    const { runtime, calls } = makeRuntime();
+    const stdout: string[] = [];
+    const switchCalls: Array<{ projectDir: string; branch: string }> = [];
+
+    const exitCode = await runWorktreeCommand(
+      {
+        command: "open",
+        args: ["feature/search", "--agent", "codex"],
+        projectDir: "/repo",
+        port: 5111,
+      },
+      {
+        createRuntime: () => runtime,
+        stdout: (message) => stdout.push(message),
+        switchToTmuxWindow: (projectDir, branch) => switchCalls.push({ projectDir, branch }),
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(calls).toEqual([{ method: "openWorktree", value: { branch: "feature/search", agentOverride: "codex" } }]);
+    expect(stdout).toEqual(["Opened worktree feature/search"]);
+    expect(switchCalls).toEqual([{ projectDir: "/repo", branch: "feature/search" }]);
+  });
+
+  it("dispatches open --shell-only through the lifecycle service", async () => {
+    const { runtime, calls } = makeRuntime();
+    const stdout: string[] = [];
+    const switchCalls: Array<{ projectDir: string; branch: string }> = [];
+
+    const exitCode = await runWorktreeCommand(
+      {
+        command: "open",
+        args: ["feature/search", "--shell-only"],
+        projectDir: "/repo",
+        port: 5111,
+      },
+      {
+        createRuntime: () => runtime,
+        stdout: (message) => stdout.push(message),
+        switchToTmuxWindow: (projectDir, branch) => switchCalls.push({ projectDir, branch }),
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(calls).toEqual([{ method: "openWorktree", value: { branch: "feature/search", shellOnly: true } }]);
     expect(stdout).toEqual(["Opened worktree feature/search"]);
     expect(switchCalls).toEqual([{ projectDir: "/repo", branch: "feature/search" }]);
   });
@@ -717,7 +815,7 @@ describe("runWorktreeCommand", () => {
       expect(exitCode).toBe(0);
       expect(stdout).toEqual(["Sent prompt to feature/search"]);
       expect(fetchCalls).toHaveLength(1);
-      expect(fetchCalls[0].url).toBe("http://localhost:5111/api/worktrees/feature%2Fsearch/send");
+      expect(fetchCalls[0].url).toBe("http://localhost:5111/api/projects/83630750/worktrees/feature%2Fsearch/send");
       expect(fetchCalls[0].init.method).toBe("POST");
       expect(JSON.parse(fetchCalls[0].init.body as string)).toEqual({
         text: "Fix the bug",

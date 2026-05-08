@@ -47,6 +47,78 @@ Do not ship a feature that only works from one surface.
 - Don't add comments, docstrings, or type annotations to code you didn't change.
 - Don't add error handling for scenarios that can't happen. Trust internal code and framework guarantees.
 
+## Project-specific gotchas (learned the hard way)
+
+### Persisted state lives next to git meta
+
+- `WorktreeMeta` (`.git/worktrees/<branch>/webmux/meta.json`) — agent, profile, yolo, conversation-id mapping. Read via `readWorktreeMeta`, written via `writeWorktreeMeta`.
+- `WorktreeRuntimeStatePersisted` (`.git/worktrees/<branch>/webmux/runtime-state.json`) — agent lifecycle, lastEventAt, lastError. Survives webmux restarts. Reconciliation reads it on startup; `ProjectRuntime` writes via the debounced `runtime-state-persistence` service. **Don't add new persisted state to in-memory only — it'll silently reset on every restart.**
+
+### fetchConfig is per-project
+
+Frontend must call `api.fetchConfig({ query: { projectId: currentProjectId } })`. The legacy unscoped form returns the *first* project's config and causes "Unknown profile: default" errors when the user switches projects. The App.svelte effect refetches on `currentProjectId` change.
+
+### Worktree status comes from control-channel events, not the activity probe
+
+For **worktrees**, `state.agent.lifecycle` is updated by `agent_status_changed` and `agent_stopped` events that the agent CLI hooks POST to `/api/runtime/events`. Hook commands are wired in `backend/src/adapters/agent-runtime.ts`. The activity probe is **only** for scratch + external sessions (no hooks available there). Don't replace the lifecycle pipeline with the probe.
+
+### External tmux sessions are never chat-eligible
+
+External (unmanaged) tmux sessions surfaced under "External tmux" are always shell-launched by definition. `supportsSessionChat` must return `false` for `selection.kind === "external"`. Don't try to detect `pane_current_command === "claude"` and promote them.
+
+### Discriminated unions, narrow on `kind`
+
+`AgentsUiConversationMessage` is a discriminated union: `kind: "user" | "assistant" | "tool" | "thinking"`. Don't reach for `role` — that field is gone. When adding new event types, extend the union and update both backend parsers (`claude-cli.ts`, `worktree-conversation-service.ts`) and the frontend renderer (`WorktreeConversationPanel.svelte`).
+
+### Claude session parser walks every assistant record
+
+`backend/src/adapters/claude-cli.ts` `buildClaudeSessionFromText` walks **all** `type: "assistant"` records, not just `stop_reason: "end_turn"`. Tool-use blocks live on intermediate records with `stop_reason: "tool_use"`. If you filter for `end_turn` only, tool/thinking events get silently dropped.
+
+### Activity probe uses content-diff, not pane_last_activity
+
+`tmux display-message -F '#{pane_last_activity}'` returns empty unless `monitor-activity` is enabled per-window — webmux doesn't enable that. The probe (`session-activity-service.ts`) caches a hash of `capture-pane` output and detects activity by diff. If you add new probe consumers, use the existing `summarizeSessionActivity` — don't reinvent.
+
+### Polling settles only on `running=false` stable
+
+`MobileChatSurface.svelte`'s refresh polling only stops once `running` flips to false for `REFRESH_POLL_SETTLE_TICKS` consecutive ticks. Don't add a settle path that fires while `running=true` — Claude has natural >3s silent pauses mid-turn.
+
+### Default profile is agent-only
+
+`DEFAULT_PANES` in `backend/src/adapters/config.ts` is just `[{ id: "agent", kind: "agent", focus: true }]` — no shell pane. Users override with `panes:` in their `.webmux.yaml` if they want one. Don't reintroduce the shell pane to the default.
+
+### Yolo persistence
+
+`WorktreeMeta.yolo` is the source of truth. `openWorktree` reads it; the create/edit dialogs write it. Surfaced as a chip on the sidebar row + topbar via `WorktreeSnapshot.yolo`. Don't introduce a parallel transient yolo flag — store on meta or pass per-call (like `--yolo` on `webmux open`).
+
+### Claude session files rotate — always pick newest
+
+A Claude `.jsonl` session in `~/.claude/projects/<encoded-cwd>/` is **not stable for a given cwd**. After `/quit` + resume (or some other CLI events), Claude writes to a new `<sessionId>.jsonl` even though the cwd is the same. `claude-conversation-service.ts` always picks `listSessions(cwd)[0]` (newest by `lastSeenAt`) and updates `meta.conversation.sessionId` if it rotated. Don't trust a saved sessionId without checking it's still the most recent — or you'll diverge from xterm reality.
+
+### Ctrl-C interrupt doesn't fire Claude lifecycle hooks
+
+The agent CLI hooks only fire on `UserPromptSubmit`, `PostToolUse`, `Stop`, and `Notification`. A `Ctrl-C` interrupt cancels Claude's operation but doesn't trigger any of these — so `state.agent.lifecycle` stays at whatever it was (usually `"running"`) forever. The interrupt API handler in `server.ts` must manually emit `applyEvent({ type: "agent_status_changed", lifecycle: "stopped", ... })` after sending Ctrl-C so the snapshot reflects reality.
+
+### TmuxGateway stub obligation
+
+Adding a method to the `TmuxGateway` interface requires updating **all** `FakeTmuxGateway` test classes — they live in several test files (`session-activity-service.test.ts`, `claude-conversation-service.test.ts`, `worktree-conversation-service.test.ts`, `lifecycle-service.test.ts`, `reconciliation-service.test.ts`, `worktree-storage.test.ts`, etc.). Search `class FakeTmuxGateway` and add a minimal stub. The TS compile error is loud but easy to miss if you only run a single test file.
+
+### Project name lives in the registry, not in `.webmux.yaml`
+
+"+ Project" stores the user-chosen name in `~/.config/webmux/projects.yaml` (the registry). Webmux no longer auto-writes `.webmux.yaml`. A project only needs a yaml if it wants to override workspace defaults (mainBranch, profiles, services, integrations). Display name resolves: registry name → yaml `name:` → dir basename.
+
+### Three-layer config merge: user-global → project yaml → local overlay
+
+`loadConfig` accepts an optional `preferences: UserPreferences` (loaded from `~/.config/webmux/preferences.yaml`). Merge order:
+- `agents`: `{ ...globalAgents, ...projectYamlAgents, ...localOverlayAgents }` — local wins, then project, then global.
+- `workspace.defaultAgent`: explicit project value > `prefs.defaultAgent` (if it's `"claude"` / `"codex"`) > hardcoded `"claude"`.
+- `auto_name`: field-level cascade — project's `provider`/`model`/`systemPrompt` win where present, global fills undefined fields.
+
+The `runtime` constructs one shared `UserPreferencesGateway` and hands it to the registry. Per `add()` / `load()` the registry reads prefs once, then constructs all scopes with the same snapshot. After `PUT /api/preferences` the server iterates every scope and calls `scope.refreshConfig(prefs)`. Existing per-project agents in `.webmux.local.yaml` continue to work without migration — they just merge in on top of any global agents.
+
+### `{@const}` placement in Svelte 5
+
+`{@const}` cannot sit directly inside a `<li>`, `<tr>`, or other plain element — only inside `{#if}`, `{#each}`, `{#snippet}`, `{:else}`, etc. If you need a derived value scoped to a list item, either inline the function call at the use site or wrap with `{#if true}` (last resort).
+
 ## Debugging
 
 When you are uncertain about the root cause of an issue, **add extensive debug logging before guessing at a fix**. This is mandatory, not optional.

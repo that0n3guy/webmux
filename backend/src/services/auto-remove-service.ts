@@ -2,13 +2,13 @@ import { readWorktreePrs } from "../adapters/fs";
 import type { GitGateway } from "../adapters/git";
 import { log } from "../lib/log";
 import type { LifecycleService } from "./lifecycle-service";
-import type { NotificationService } from "./notification-service";
+import type { ProjectNotifier } from "./notification-service";
 
 export interface AutoRemoveDependencies {
   lifecycleService: LifecycleService;
   git: GitGateway;
   projectRoot: string;
-  notifications: NotificationService;
+  notifications: ProjectNotifier;
   isRemoving: (branch: string) => boolean;
   markRemoving: (branch: string) => void;
   unmarkRemoving: (branch: string) => void;

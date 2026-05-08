@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import type { PaneTemplate, PaneKind } from "../domain/config";
 import type { TmuxGateway } from "../adapters/tmux";
-import { buildProjectSessionName, buildWorktreeWindowName } from "../adapters/tmux";
+import { buildProjectSessionName, buildWorktreeWindowName, WEBMUX_WORKTREE_ID_OPTION } from "../adapters/tmux";
 
 export interface PaneCommandSet {
   agent: string;
@@ -31,6 +31,8 @@ export interface SessionLayoutPlan {
   shellCommand: string;
   panes: PlannedPane[];
   focusPaneIndex: number;
+  /** Stable worktree identifier — stamped on the tmux window for branch-rename recovery. */
+  worktreeId?: string;
 }
 
 function quoteShell(value: string): string {
@@ -69,6 +71,7 @@ export function planSessionLayout(
   branch: string,
   templates: PaneTemplate[],
   ctx: SessionLayoutContext,
+  worktreeId?: string,
 ): SessionLayoutPlan {
   if (templates.length === 0) {
     throw new Error("At least one pane template is required");
@@ -100,6 +103,7 @@ export function planSessionLayout(
     shellCommand: ctx.paneCommands.shell,
     panes,
     focusPaneIndex,
+    ...(worktreeId ? { worktreeId } : {}),
   };
 }
 
@@ -134,6 +138,9 @@ export function ensureSessionLayout(
   tmux.setWindowOption(plan.sessionName, plan.windowName, "pane-base-index", "0");
   tmux.setWindowOption(plan.sessionName, plan.windowName, "automatic-rename", "off");
   tmux.setWindowOption(plan.sessionName, plan.windowName, "allow-rename", "off");
+  if (plan.worktreeId) {
+    tmux.setWindowOption(plan.sessionName, plan.windowName, WEBMUX_WORKTREE_ID_OPTION, plan.worktreeId);
+  }
 
   for (const pane of plan.panes.slice(1)) {
     const target = `${plan.sessionName}:${plan.windowName}.${pane.index - 1}`;

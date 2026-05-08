@@ -9,7 +9,7 @@ workspace:
   mainBranch: main
 
   # Relative or absolute path where managed worktrees are created.
-  worktreeRoot: __worktrees
+  worktreeRoot: .worktrees
 
   # Default agent if the UI caller does not choose one.
   # Allowed values: claude, codex

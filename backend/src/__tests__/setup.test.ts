@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { expandTemplate, getDefaultProfileName, loadConfig, persistLocalCustomAgent, removeLocalCustomAgent } from "../adapters/config";
+import type { UserPreferences } from "../adapters/preferences";
 
 describe("expandTemplate", () => {
   it("replaces known placeholders", () => {
@@ -303,7 +304,7 @@ describe("loadConfig", () => {
 
     const config = loadConfig(dir);
 
-    expect(config.name).toBe("Webmux");
+    expect(config.name).toBe(basename(dir));
     expect(Object.keys(config.profiles).sort()).toEqual(["default", "local"]);
     expect(config.profiles.local.runtime).toBe("docker");
     expect(config.profiles.local.image).toBe("local-image");
@@ -442,5 +443,108 @@ describe("loadConfig", () => {
 
     expect(result.exitCode).toBe(1);
     expect(await Bun.file(join(dir, "trace.log")).text()).toBe("project-start\n");
+  });
+});
+
+describe("loadConfig with user-global preferences", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  async function makeGitDir(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "webmux-prefs-"));
+    tempDirs.push(dir);
+    Bun.spawnSync(["git", "init"], { cwd: dir });
+    return dir;
+  }
+
+  it("no prefs option behaves identically to before (case 1)", async () => {
+    const dir = await makeGitDir();
+    await Bun.write(join(dir, ".webmux.yaml"), "name: Test\nworkspace:\n  defaultAgent: codex\n");
+    const config = loadConfig(dir);
+    expect(config.workspace.defaultAgent).toBe("codex");
+    expect(config.agents).toEqual({});
+    expect(config.autoName).toBeNull();
+  });
+
+  it("preferences.defaultAgent: codex applies when yaml omits defaultAgent (case 2)", async () => {
+    const dir = await makeGitDir();
+    await Bun.write(join(dir, ".webmux.yaml"), "name: Test\n");
+    const prefs: UserPreferences = { schemaVersion: 1, defaultAgent: "codex" };
+    const config = loadConfig(dir, { preferences: prefs });
+    expect(config.workspace.defaultAgent).toBe("codex");
+  });
+
+  it("project yaml defaultAgent wins over preferences (case 3)", async () => {
+    const dir = await makeGitDir();
+    await Bun.write(join(dir, ".webmux.yaml"), "name: Test\nworkspace:\n  defaultAgent: claude\n");
+    const prefs: UserPreferences = { schemaVersion: 1, defaultAgent: "codex" };
+    const config = loadConfig(dir, { preferences: prefs });
+    expect(config.workspace.defaultAgent).toBe("claude");
+  });
+
+  it("preferences.agents appear when yaml has no agents (case 4)", async () => {
+    const dir = await makeGitDir();
+    await Bun.write(join(dir, ".webmux.yaml"), "name: Test\n");
+    const prefs: UserPreferences = {
+      schemaVersion: 1,
+      agents: { gemini: { label: "Gemini Global", startCommand: "gemini start" } },
+    };
+    const config = loadConfig(dir, { preferences: prefs });
+    expect(config.agents.gemini).toEqual({ label: "Gemini Global", startCommand: "gemini start" });
+  });
+
+  it("local overlay agents override global agents by id (case 5)", async () => {
+    const dir = await makeGitDir();
+    await Bun.write(join(dir, ".webmux.yaml"), "name: Test\n");
+    await Bun.write(
+      join(dir, ".webmux.local.yaml"),
+      [
+        "agents:",
+        "  gemini:",
+        "    label: Gemini Local",
+        "    startCommand: gemini local",
+        "",
+      ].join("\n"),
+    );
+    const prefs: UserPreferences = {
+      schemaVersion: 1,
+      agents: { gemini: { label: "Gemini Global", startCommand: "gemini global" } },
+    };
+    const config = loadConfig(dir, { preferences: prefs });
+    expect(config.agents.gemini?.label).toBe("Gemini Local");
+  });
+
+  it("preferences.autoName applies when yaml has no auto_name (case 6)", async () => {
+    const dir = await makeGitDir();
+    await Bun.write(join(dir, ".webmux.yaml"), "name: Test\n");
+    const prefs: UserPreferences = { schemaVersion: 1, autoName: { model: "claude-3-haiku" } };
+    const config = loadConfig(dir, { preferences: prefs });
+    expect(config.autoName).toEqual({ provider: "claude", model: "claude-3-haiku" });
+  });
+
+  it("project yaml auto_name model wins over preferences model (case 7)", async () => {
+    const dir = await makeGitDir();
+    await Bun.write(
+      join(dir, ".webmux.yaml"),
+      "name: Test\nauto_name:\n  provider: claude\n  model: project-model\n",
+    );
+    const prefs: UserPreferences = { schemaVersion: 1, autoName: { model: "global-model" } };
+    const config = loadConfig(dir, { preferences: prefs });
+    expect(config.autoName?.model).toBe("project-model");
+  });
+
+  it("field-level merge: project model wins, global systemPrompt fills gap (case 8)", async () => {
+    const dir = await makeGitDir();
+    await Bun.write(
+      join(dir, ".webmux.yaml"),
+      "name: Test\nauto_name:\n  provider: claude\n  model: project-model\n",
+    );
+    const prefs: UserPreferences = { schemaVersion: 1, autoName: { systemPrompt: "global-prompt" } };
+    const config = loadConfig(dir, { preferences: prefs });
+    expect(config.autoName?.model).toBe("project-model");
+    expect(config.autoName?.systemPrompt).toBe("global-prompt");
   });
 });

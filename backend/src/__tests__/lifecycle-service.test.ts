@@ -88,6 +88,18 @@ class FakeTmuxGateway implements TmuxGateway {
     return [...this.windows.values()].map((window) => ({ ...window }));
   }
 
+  capturePane(_target: string, _lines: number): string[] {
+    return [];
+  }
+
+  killSession(_sessionName: string): void {}
+  setSessionOption(_sessionName: string, _optionName: string, _value: string): void {}
+  getSessionOption(_sessionName: string, _optionName: string): string | null { return null; }
+  listAllSessions(): ReturnType<TmuxGateway["listAllSessions"]> { return []; }
+  getFirstWindowName(_sessionName: string): string | null { return null; }
+  getPaneCurrentCommand(_target: string): string | null { return null; }
+  getPaneCurrentPath(_target: string): string | null { return null; }
+
   private key(sessionName: string, windowName: string): string {
     return `${sessionName}:${windowName}`;
   }
@@ -1482,5 +1494,168 @@ describe("LifecycleService", () => {
     expect(new BunGitGateway().listWorktrees(repoRoot).some((entry) => entry.path === worktreePath)).toBe(false);
     expect(run(["git", "branch", "--list", "feature-merge-ahead"], repoRoot)).toBe("");
     expect(await Bun.file(join(repoRoot, "README.md")).text()).toContain("merged ahead change");
+  });
+
+  it("opens a worktree with no opts and uses the persisted meta agent", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const lifecycle = makeLifecycleService(repoRoot, tmux, runtime);
+
+    await lifecycle.createWorktree({ branch: "feature-open-noopts" });
+    tmux.commands.length = 0;
+    await lifecycle.closeWorktree("feature-open-noopts");
+    await lifecycle.openWorktree("feature-open-noopts");
+
+    const agentCommand = tmux.commands.at(-1)?.command;
+    expect(agentCommand).toContain("claude");
+  });
+
+  it("opens a worktree with agentOverride and uses the overridden agent command, not meta.agent", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const lifecycle = makeLifecycleService(
+      repoRoot,
+      tmux,
+      runtime,
+      new FakeDockerGateway(),
+      new FakeHookRunner(),
+      {
+        ...TEST_CONFIG,
+        agents: {
+          gemini: {
+            label: "Gemini CLI",
+            startCommand: 'gemini --task "${PROMPT}" --branch "${BRANCH}"',
+            resumeCommand: 'gemini resume --branch "${BRANCH}"',
+          },
+        },
+      },
+    );
+
+    await lifecycle.createWorktree({ branch: "feature-override-agent" });
+    tmux.commands.length = 0;
+    await lifecycle.closeWorktree("feature-override-agent");
+    await lifecycle.openWorktree("feature-override-agent", { agentOverride: "gemini" });
+
+    const agentCommand = tmux.commands.at(-1)?.command;
+    expect(agentCommand).toContain("gemini");
+    expect(agentCommand).not.toContain("claude");
+
+    const gitDir = new BunGitGateway().resolveWorktreeGitDir(
+      join(repoRoot, "__worktrees", "feature-override-agent"),
+    );
+    const meta = await readWorktreeMeta(gitDir);
+    expect(meta?.agent).toBe("claude");
+  });
+
+  it("opens a managed worktree with agentOverride and uses the override's resume command when capabilities.resume === true", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const lifecycle = makeLifecycleService(
+      repoRoot,
+      tmux,
+      runtime,
+      new FakeDockerGateway(),
+      new FakeHookRunner(),
+      {
+        ...TEST_CONFIG,
+        agents: {
+          myagent: {
+            label: "My Agent",
+            startCommand: 'myagent start --branch "${BRANCH}"',
+            resumeCommand: 'myagent resume-session --branch "${BRANCH}"',
+          },
+        },
+      },
+    );
+
+    await lifecycle.createWorktree({ branch: "feature-override-resume" });
+    tmux.commands.length = 0;
+    await lifecycle.closeWorktree("feature-override-resume");
+    await lifecycle.openWorktree("feature-override-resume", { agentOverride: "myagent" });
+
+    const agentCommand = tmux.commands.at(-1)?.command;
+    expect(agentCommand).toContain("myagent resume-session");
+    expect(agentCommand).not.toContain("myagent start");
+  });
+
+  it("throws LifecycleError 400 when agentOverride and shellOnly are both set", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const lifecycle = makeLifecycleService(repoRoot, tmux, runtime);
+
+    await lifecycle.createWorktree({ branch: "feature-conflict-opts" });
+    await lifecycle.closeWorktree("feature-conflict-opts");
+
+    await expect(
+      lifecycle.openWorktree("feature-conflict-opts", { agentOverride: "claude", shellOnly: true }),
+    ).rejects.toMatchObject({ message: "Cannot combine agentOverride with shellOnly", status: 400 });
+  });
+
+  it("throws LifecycleError 404 when agentOverride refers to an unknown agent id", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const lifecycle = makeLifecycleService(repoRoot, tmux, runtime);
+
+    await lifecycle.createWorktree({ branch: "feature-unknown-agent" });
+    await lifecycle.closeWorktree("feature-unknown-agent");
+
+    await expect(
+      lifecycle.openWorktree("feature-unknown-agent", { agentOverride: "nonexistent-agent" }),
+    ).rejects.toMatchObject({ message: "Unknown agent: nonexistent-agent", status: 404 });
+  });
+
+  it("opens a worktree with shellOnly:true and drops the agent pane from the layout", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const lifecycle = makeLifecycleService(repoRoot, tmux, runtime);
+
+    await lifecycle.createWorktree({ branch: "feature-shell-only" });
+    tmux.commands.length = 0;
+    await lifecycle.closeWorktree("feature-shell-only");
+    await lifecycle.openWorktree("feature-shell-only", { shellOnly: true });
+
+    const window = tmux.listWindows().find((w) => w.windowName === buildWorktreeWindowName("feature-shell-only"));
+    expect(window?.paneCount).toBe(1);
+    expect(tmux.commands.every((cmd) => !cmd.command.includes("claude"))).toBe(true);
+  });
+
+  it("opens with shellOnly:true and synthesizes a shell pane when the profile has only agent panes", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const lifecycle = makeLifecycleService(
+      repoRoot,
+      tmux,
+      runtime,
+      new FakeDockerGateway(),
+      new FakeHookRunner(),
+      {
+        ...TEST_CONFIG,
+        profiles: {
+          ...TEST_CONFIG.profiles,
+          default: {
+            ...TEST_CONFIG.profiles.default,
+            panes: [
+              { id: "agent", kind: "agent", focus: true },
+            ],
+          },
+        },
+      },
+    );
+
+    await lifecycle.createWorktree({ branch: "feature-shell-only-fallback" });
+    tmux.commands.length = 0;
+    await lifecycle.closeWorktree("feature-shell-only-fallback");
+    await lifecycle.openWorktree("feature-shell-only-fallback", { shellOnly: true });
+
+    const window = tmux.listWindows().find((w) => w.windowName === buildWorktreeWindowName("feature-shell-only-fallback"));
+    expect(window?.paneCount).toBe(1);
+    expect(tmux.commands.every((cmd) => !cmd.command.includes("claude"))).toBe(true);
   });
 });

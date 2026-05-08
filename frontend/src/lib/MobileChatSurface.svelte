@@ -1,36 +1,53 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import {
-    attachWorktreeConversation,
-    connectWorktreeConversationStream,
-    fetchWorktreeConversationHistory,
-    interruptWorktreeConversation,
-    sendWorktreeConversationMessage,
-  } from "./api";
-  import {
     applyConversationMessageDelta,
+    applyPersistedPendingMessages,
     buildConversationProgressSignature,
+    loadPendingUserMessages,
     markConversationTurnStarted,
+    preservePendingUserMessages,
+    savePendingUserMessages,
   } from "./worktree-conversation";
+  import { makeConversationClient } from "./session-conversation-client";
   import type {
     AgentsUiConversationEvent,
     AgentsUiConversationState,
     AgentsUiWorktreeConversationResponse,
+    SessionTarget,
     WorktreeInfo,
   } from "./types";
   import WorktreeConversationPanel from "./WorktreeConversationPanel.svelte";
 
   interface Props {
-    worktree: WorktreeInfo;
+    projectId: string;
+    worktree?: WorktreeInfo;
+    target?: SessionTarget;
+    isMobile?: boolean;
   }
 
-  const { worktree }: Props = $props();
+  const { projectId, worktree, target, isMobile = false }: Props = $props();
+
+  const resolvedTarget = $derived<SessionTarget>(
+    target ?? (worktree ? { kind: "worktree", projectId, branch: worktree.branch } : { kind: "worktree", projectId, branch: "" }),
+  );
+
+  const surfaceKey = $derived(
+    resolvedTarget.kind === "worktree"
+      ? `${resolvedTarget.projectId}:wt:${resolvedTarget.branch}`
+      : resolvedTarget.kind === "scratch"
+        ? `${resolvedTarget.projectId}:scratch:${resolvedTarget.scratchId}`
+        : `external:${resolvedTarget.sessionName}`,
+  );
+
+  const client = $derived(makeConversationClient(resolvedTarget));
 
   let conversation = $state<AgentsUiConversationState | null>(null);
   let conversationError = $state<string | null>(null);
   let conversationLoading = $state(false);
   let composerText = $state("");
   let isSending = $state(false);
+  let isInterrupting = $state(false);
   let refreshPollingState = $state<{
     token: number;
     baselineSignature: string | null;
@@ -61,7 +78,16 @@
   }
 
   function applyConversationResponse(response: AgentsUiWorktreeConversationResponse): void {
-    conversation = response.conversation;
+    let next = preservePendingUserMessages(conversation, response.conversation);
+    // On first load (conversation was null), seed any persisted pending messages
+    // from sessionStorage so worktree switches and page reloads don't drop queued
+    // messages while the agent is still processing.
+    if (conversation === null) {
+      const persisted = loadPendingUserMessages(surfaceKey);
+      next = applyPersistedPendingMessages(next, persisted);
+    }
+    conversation = next;
+    savePendingUserMessages(surfaceKey, next.messages);
     conversationError = null;
     syncConversationStream();
   }
@@ -107,7 +133,7 @@
     }
 
     closeConversationStream();
-    const disconnect = connectWorktreeConversationStream(worktree.branch, {
+    const disconnect = client.connectStream({
       onEvent: (event) => {
         handleConversationStreamEvent(conversationId, event);
       },
@@ -122,9 +148,7 @@
   }
 
   function requestConversation(mode: "attach" | "history"): Promise<AgentsUiWorktreeConversationResponse> {
-    return mode === "attach"
-      ? attachWorktreeConversation(worktree.branch)
-      : fetchWorktreeConversationHistory(worktree.branch);
+    return mode === "attach" ? client.attach() : client.fetchHistory();
   }
 
   async function loadConversation(mode: "attach" | "history"): Promise<void> {
@@ -134,6 +158,9 @@
     try {
       const response = await requestConversation(mode);
       applyConversationResponse(response);
+      if (mode === "attach" && response.conversation.running) {
+        startRefreshPolling(response.conversation);
+      }
     } catch (error) {
       conversationError = error instanceof Error ? error.message : String(error);
     } finally {
@@ -168,7 +195,15 @@
       ? currentState.unchangedTicks + 1
       : 0;
 
-    if (sawProgress && unchangedTicks >= REFRESH_POLL_SETTLE_TICKS) {
+    // Pending optimistic messages live only in `conversation` (local state),
+    // not in the server snapshot. Don't settle while any are still preserved
+    // — we need the next snapshot to either include the real user message
+    // (so dedup consumes the pending) or for the user to give up.
+    const hasPendingOptimistic = (conversation?.messages ?? []).some(
+      (m) => m.kind === "user" && m.id.startsWith("pending-user:"),
+    );
+
+    if (sawProgress && unchangedTicks >= REFRESH_POLL_SETTLE_TICKS && !nextConversation.running && !hasPendingOptimistic) {
       refreshPollingState = null;
       return;
     }
@@ -190,7 +225,7 @@
     isSending = true;
     conversationError = null;
     try {
-      const response = await sendWorktreeConversationMessage(worktree.branch, { text });
+      const response = await client.sendMessage({ text });
       composerText = "";
       if (conversation.conversationId !== response.conversationId) {
         conversation = {
@@ -199,6 +234,7 @@
         };
       }
       conversation = markConversationTurnStarted(conversation, response.turnId, text);
+      if (conversation) savePendingUserMessages(surfaceKey, conversation.messages);
       syncConversationStream();
       startRefreshPolling(baselineConversation);
     } catch (error) {
@@ -209,13 +245,17 @@
   }
 
   async function interruptSelectedConversation(): Promise<void> {
+    if (isInterrupting) return;
     const baselineConversation = conversation;
+    isInterrupting = true;
     conversationError = null;
     try {
-      await interruptWorktreeConversation(worktree.branch);
+      await client.interrupt();
       startRefreshPolling(baselineConversation);
     } catch (error) {
       conversationError = error instanceof Error ? error.message : String(error);
+    } finally {
+      isInterrupting = false;
     }
   }
 
@@ -259,11 +299,15 @@
 
 <WorktreeConversationPanel
   {worktree}
+  target={resolvedTarget}
   {conversation}
   {conversationError}
   {conversationLoading}
   {composerText}
   {isSending}
+  {isInterrupting}
+  compact={true}
+  submitOnEnter={!isMobile}
   onAttach={() => void loadConversation("attach")}
   onComposerInput={(value) => {
     composerText = value;

@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type {
   AgentId,
@@ -17,6 +17,7 @@ import type {
   ProjectConfig,
   ServiceSpec,
 } from "../domain/config";
+import type { UserPreferences } from "./preferences";
 
 export type { CustomAgentConfig, LinkedRepoConfig, MountSpec, PaneTemplate, ProfileConfig, ProjectConfig };
 export type ServiceConfig = ServiceSpec;
@@ -24,6 +25,7 @@ export type DockerProfileConfig = ProfileConfig & { runtime: "docker"; image: st
 
 interface LoadConfigOptions {
   resolvedRoot?: boolean;
+  preferences?: UserPreferences;
 }
 
 interface LocalProjectConfigOverlay {
@@ -38,14 +40,13 @@ interface LocalProjectConfigOverlay {
 
 const DEFAULT_PANES: PaneTemplate[] = [
   { id: "agent", kind: "agent", focus: true },
-  { id: "shell", kind: "shell", split: "right", sizePct: 25 },
 ];
 
 const DEFAULT_CONFIG: ProjectConfig = {
   name: "Webmux",
   workspace: {
     mainBranch: "main",
-    worktreeRoot: "../worktrees",
+    worktreeRoot: ".worktrees",
     defaultAgent: "claude",
     autoPull: { enabled: false, intervalSeconds: 300 },
   },
@@ -104,6 +105,11 @@ function isStringArray(value: unknown): value is string[] {
 
 function parseAgentKind(value: unknown): AgentKind {
   return value === "codex" ? "codex" : "claude";
+}
+
+function parseAgentKindOrUndefined(value: unknown): AgentKind | undefined {
+  if (value === "claude" || value === "codex") return value;
+  return undefined;
 }
 
 function parsePanes(raw: unknown): PaneTemplate[] {
@@ -208,7 +214,7 @@ function cloneAgents(agents: Record<AgentId, CustomAgentConfig>): Record<AgentId
   );
 }
 
-function parseCustomAgent(raw: unknown): CustomAgentConfig | null {
+export function parseCustomAgent(raw: unknown): CustomAgentConfig | null {
   if (!isRecord(raw)) return null;
   if (typeof raw.label !== "string" || !raw.label.trim()) return null;
   if (typeof raw.startCommand !== "string" || !raw.startCommand.trim()) return null;
@@ -341,7 +347,14 @@ function parseConfigDocument(text: string): Record<string, unknown> {
   return isRecord(parsed) ? parsed : {};
 }
 
-function parseProjectConfig(parsed: Record<string, unknown>): ProjectConfig {
+function parseProjectConfig(
+  parsed: Record<string, unknown>,
+  opts: { globalDefaultAgent?: AgentKind } = {},
+): ProjectConfig {
+  const explicitDefaultAgent: AgentKind | undefined = isRecord(parsed.workspace)
+    ? parseAgentKindOrUndefined(parsed.workspace.defaultAgent)
+    : undefined;
+
   return {
     name: typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : DEFAULT_CONFIG.name,
     workspace: {
@@ -351,9 +364,7 @@ function parseProjectConfig(parsed: Record<string, unknown>): ProjectConfig {
       worktreeRoot: isRecord(parsed.workspace) && typeof parsed.workspace.worktreeRoot === "string"
         ? parsed.workspace.worktreeRoot
         : DEFAULT_CONFIG.workspace.worktreeRoot,
-      defaultAgent: isRecord(parsed.workspace)
-        ? parseAgentKind(parsed.workspace.defaultAgent)
-        : DEFAULT_CONFIG.workspace.defaultAgent,
+      defaultAgent: explicitDefaultAgent ?? opts.globalDefaultAgent ?? DEFAULT_CONFIG.workspace.defaultAgent,
       autoPull: isRecord(parsed.workspace)
         ? parseAutoPull(parsed.workspace.autoPull)
         : DEFAULT_CONFIG.workspace.autoPull,
@@ -499,16 +510,50 @@ export function projectRoot(dir: string): string {
   return commonDir ? dirname(resolve(dir, commonDir)) : gitRoot(dir);
 }
 
+function mergeAutoNameWithPreferences(
+  projectAutoName: AutoNameConfig | null,
+  prefsAutoName: { model?: string; systemPrompt?: string } | undefined,
+): AutoNameConfig | null {
+  if (projectAutoName === null && prefsAutoName === undefined) return null;
+
+  const provider: "claude" | "codex" = projectAutoName?.provider ?? "claude";
+  const model = projectAutoName?.model ?? prefsAutoName?.model;
+  const systemPrompt = projectAutoName?.systemPrompt ?? prefsAutoName?.systemPrompt;
+
+  if (model === undefined && systemPrompt === undefined) return null;
+
+  return {
+    provider,
+    ...(model !== undefined ? { model } : {}),
+    ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+  };
+}
+
 /** Load `.webmux.yaml` from the shared project root into the final project config shape. */
 export function loadConfig(dir: string, options: LoadConfigOptions = {}): ProjectConfig {
   const root = options.resolvedRoot ? dir : projectRoot(dir);
+  const prefs = options.preferences;
+
+  const globalDefaultAgent: AgentKind | undefined = prefs?.defaultAgent !== undefined
+    ? parseAgentKindOrUndefined(prefs.defaultAgent)
+    : undefined;
 
   let projectConfig: ProjectConfig;
+  let hadConfigFile = false;
   try {
     const text = readConfigFile(root).trim();
-    projectConfig = text ? parseProjectConfig(parseConfigDocument(text)) : defaultConfig();
+    if (text) {
+      projectConfig = parseProjectConfig(parseConfigDocument(text), { globalDefaultAgent });
+      hadConfigFile = true;
+    } else {
+      projectConfig = parseProjectConfig({}, { globalDefaultAgent });
+    }
   } catch {
-    projectConfig = defaultConfig();
+    projectConfig = parseProjectConfig({}, { globalDefaultAgent });
+  }
+  if (!hadConfigFile) {
+    const dirName = basename(root);
+    if (dirName) projectConfig = { ...projectConfig, name: dirName };
   }
 
   const localOverlay = loadLocalProjectConfigOverlay(root);
@@ -530,6 +575,10 @@ export function loadConfig(dir: string, options: LoadConfigOptions = {}): Projec
       }
     : projectConfig.integrations;
 
+  const mergedAutoName = prefs !== undefined
+    ? mergeAutoNameWithPreferences(projectConfig.autoName, prefs.autoName)
+    : projectConfig.autoName;
+
   return {
     ...projectConfig,
     workspace,
@@ -538,11 +587,13 @@ export function loadConfig(dir: string, options: LoadConfigOptions = {}): Projec
       ...cloneProfiles(localOverlay.profiles),
     },
     agents: {
+      ...cloneAgents(prefs?.agents ?? {}),
       ...cloneAgents(projectConfig.agents),
       ...cloneAgents(localOverlay.agents),
     },
     lifecycleHooks: mergeLifecycleHooks(projectConfig.lifecycleHooks, localOverlay.lifecycleHooks),
     integrations,
+    autoName: mergedAutoName,
   };
 }
 

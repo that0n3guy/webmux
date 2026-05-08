@@ -3,20 +3,27 @@ import { join, resolve } from "node:path";
 import { mkdirSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import {
-  AgentIdParamsSchema,
   AgentsSendMessageRequestSchema,
   apiPaths,
   AvailableBranchesQuerySchema,
+  CreateProjectRequestSchema,
+  CreateScratchSessionRequestSchema,
   CreateWorktreeRequestSchema,
   NotificationIdParamsSchema,
+  OpenWorktreeRequestSchema,
   PullMainRequestSchema,
+  RemoveProjectRequestSchema,
+  UpdateUserPreferencesRequestSchema,
   RunIdParamsSchema,
   SendWorktreePromptRequestSchema,
   SetWorktreeArchivedRequestSchema,
   ToggleEnabledRequestSchema,
+  UpdateWorktreeRequestSchema,
   UpsertCustomAgentRequestSchema,
   WorktreeNameParamsSchema,
 } from "@webmux/api-contract";
+import { buildTmuxConversationStorage } from "./services/conversation-storage";
+import { probeSessionActivity, summarizeSessionActivity } from "./services/session-activity-service";
 import { log } from "./lib/log";
 import {
   attach,
@@ -34,6 +41,7 @@ import {
   type TerminalAttachTarget,
 } from "./adapters/terminal";
 import { loadControlToken } from "./adapters/control-token";
+import { readWorktreeMeta, writeWorktreeMeta } from "./adapters/fs";
 import { ClaudeCliClient } from "./adapters/claude-cli";
 import { CodexAppServerClient } from "./adapters/codex-app-server";
 import {
@@ -48,6 +56,7 @@ import { jsonResponse, errorResponse } from "./lib/http";
 import { isRecord, isStringArray } from "./lib/type-guards";
 import { parseJsonBody, parseParams, parseQuery } from "./api-validation";
 import { hasRecentDashboardActivity, touchDashboardActivity } from "./services/dashboard-activity";
+import { listExternalSessions } from "./services/external-tmux-service";
 import { buildArchivedWorktreePathSet, normalizeArchivePath } from "./services/archive-service";
 import { resolveAgentChatSupport } from "./services/agent-chat-service";
 import { validateCustomAgentInput } from "./services/agent-validation-service";
@@ -72,29 +81,34 @@ import {
 } from "./services/agents-ui-stream-service";
 import { classifyAgentsTerminalWorktreeError } from "./services/agents-ui-action-service";
 import { buildProjectSnapshot } from "./services/snapshot-service";
-import { ClaudeConversationService } from "./services/claude-conversation-service";
-import { WorktreeConversationService } from "./services/worktree-conversation-service";
+import { ClaudeConversationService, type ClaudeConversationProbeContext } from "./services/claude-conversation-service";
+import { WorktreeConversationService, type WorktreeConversationProbeContext } from "./services/worktree-conversation-service";
 import { parseRuntimeEvent } from "./domain/events";
 import type { AgentsUiConversationEvent, AgentsUiWorktreeConversationResponse } from "./domain/agents-ui";
 import type { ProjectSnapshot, WorktreeSnapshot } from "./domain/model";
 import { isValidBranchName, isValidWorktreeName } from "./domain/policies";
 import { createWebmuxRuntime } from "./runtime";
+import type { ProjectScope } from "./services/project-scope";
+import type { UserPreferences } from "./adapters/preferences";
 
 const PORT = parseInt(Bun.env.PORT || "5111", 10);
 const STATIC_DIR = Bun.env.WEBMUX_STATIC_DIR || "";
-const runtime = createWebmuxRuntime({
+const STARTUP_PROJECT_DIR = Bun.env.WEBMUX_PROJECT_DIR || process.cwd();
+const runtime = await createWebmuxRuntime({
   port: PORT,
-  projectDir: Bun.env.WEBMUX_PROJECT_DIR || process.cwd(),
+  projectDir: STARTUP_PROJECT_DIR,
 });
-const PROJECT_DIR = runtime.projectDir;
-const config: ProjectConfig = runtime.config;
+const projects = runtime.projectRegistry.list();
+if (projects.length === 0) {
+  log.error(
+    `[server] no projects registered (cwd=${STARTUP_PROJECT_DIR} has no .webmux.yaml, and ~/.config/webmux/projects.yaml is empty or missing). Run \`webmux init\` in a project dir, or POST /api/projects with a path.`,
+  );
+  process.exit(1);
+}
+
 const git = runtime.git;
-const archiveStateService = runtime.archiveStateService;
 const tmux = runtime.tmux;
-const projectRuntime = runtime.projectRuntime;
-const worktreeCreationTracker = runtime.worktreeCreationTracker;
 const runtimeNotifications = runtime.runtimeNotifications;
-const reconciliationService = runtime.reconciliationService;
 const codexAppServerClient = new CodexAppServerClient({
   clientName: "webmux-agents",
   clientVersion: "0.0.0",
@@ -108,41 +122,58 @@ const claudeConversationService = new ClaudeConversationService({
   claude: claudeCliClient,
   git,
 });
-const removingBranches = new Set<string>();
-const lifecycleService = runtime.lifecycleService;
-let linearAutoCreateEnabled = config.integrations.linear.autoCreateWorktrees;
-let stopLinearAutoCreate: (() => void) | null = null;
-let autoRemoveOnMergeEnabled = config.integrations.github.autoRemoveOnMerge;
 
-/** Safe to call multiple times — the guard prevents duplicate monitors. */
-function startLinearAutoCreate(): void {
-  if (stopLinearAutoCreate) return;
-  stopLinearAutoCreate = startLinearAutoCreateMonitor({
-    lifecycleService,
-    git,
-    projectRoot: PROJECT_DIR,
-    isActive: hasRecentDashboardActivity,
-  });
+// Per-project toggle state: keyed by projectId
+const linearAutoCreateEnabledByProject = new Map<string, boolean>();
+const stopLinearAutoCreateByProject = new Map<string, (() => void) | null>();
+const autoRemoveOnMergeEnabledByProject = new Map<string, boolean>();
+
+// Initialize per-project toggle state from loaded config
+for (const proj of runtime.projectRegistry.list()) {
+  const scope = runtime.projectRegistry.get(proj.id);
+  if (!scope) continue;
+  linearAutoCreateEnabledByProject.set(proj.id, scope.config.integrations.linear.autoCreateWorktrees);
+  stopLinearAutoCreateByProject.set(proj.id, null);
+  autoRemoveOnMergeEnabledByProject.set(proj.id, scope.config.integrations.github.autoRemoveOnMerge);
 }
 
-function stopLinearAutoCreateMonitor(): void {
-  if (stopLinearAutoCreate) {
-    stopLinearAutoCreate();
-    stopLinearAutoCreate = null;
+/** Safe to call multiple times — the guard prevents duplicate monitors. */
+function startLinearAutoCreate(scope: ProjectScope): void {
+  const existing = stopLinearAutoCreateByProject.get(scope.projectId);
+  if (existing) return;
+  const stop = startLinearAutoCreateMonitor({
+    lifecycleService: scope.lifecycleService,
+    git,
+    projectRoot: scope.projectDir,
+    isActive: hasRecentDashboardActivity,
+  });
+  stopLinearAutoCreateByProject.set(scope.projectId, stop);
+}
+
+function stopLinearAutoCreateMonitor(scope: ProjectScope): void {
+  const stop = stopLinearAutoCreateByProject.get(scope.projectId);
+  if (stop) {
+    stop();
+    stopLinearAutoCreateByProject.set(scope.projectId, null);
   }
 }
 
-const autoRemoveDeps: AutoRemoveDependencies = {
-  lifecycleService,
-  git,
-  projectRoot: PROJECT_DIR,
-  notifications: runtimeNotifications,
-  isRemoving: (branch: string) => removingBranches.has(branch),
-  markRemoving: (branch: string) => removingBranches.add(branch),
-  unmarkRemoving: (branch: string) => removingBranches.delete(branch),
-};
+function buildAutoRemoveDeps(scope: ProjectScope): AutoRemoveDependencies {
+  const { projectId } = scope;
+  return {
+    lifecycleService: scope.lifecycleService,
+    git,
+    projectRoot: scope.projectDir,
+    notifications: {
+      notify: (input) => runtimeNotifications.notify({ ...input, projectId }),
+    },
+    isRemoving: (branch: string) => scope.removingBranches.has(branch),
+    markRemoving: (branch: string) => scope.removingBranches.add(branch),
+    unmarkRemoving: (branch: string) => scope.removingBranches.delete(branch),
+  };
+}
 
-function getFrontendConfig(): {
+function getFrontendConfig(scope: ProjectScope): {
   name: string;
   services: ProjectConfig["services"];
   profiles: Array<{ name: string; systemPrompt?: string }>;
@@ -158,7 +189,12 @@ function getFrontendConfig(): {
   projectDir: string;
   mainBranch: string;
 } {
-  const defaultProfileName = getDefaultProfileName(config);
+  const config = scope.config;
+  const projectDefaultProfile = getDefaultProfileName(config);
+  const globalDefaultProfile = scope.preferences.defaultProfile;
+  const defaultProfileName = globalDefaultProfile && config.profiles[globalDefaultProfile]
+    ? globalDefaultProfile
+    : projectDefaultProfile;
   const orderedProfileEntries = Object.entries(config.profiles).sort(([left], [right]) => {
     if (left === defaultProfileName) return -1;
     if (right === defaultProfileName) return 1;
@@ -180,11 +216,11 @@ function getFrontendConfig(): {
     startupEnvs: config.startupEnvs,
     linkedRepos: config.integrations.github.linkedRepos.map((lr) => ({
       alias: lr.alias,
-      ...(lr.dir ? { dir: resolve(PROJECT_DIR, lr.dir) } : {}),
+      ...(lr.dir ? { dir: resolve(scope.projectDir, lr.dir) } : {}),
     })),
-    linearAutoCreateWorktrees: linearAutoCreateEnabled,
-    autoRemoveOnMerge: autoRemoveOnMergeEnabled,
-    projectDir: PROJECT_DIR,
+    linearAutoCreateWorktrees: linearAutoCreateEnabledByProject.get(scope.projectId) ?? config.integrations.linear.autoCreateWorktrees,
+    autoRemoveOnMerge: autoRemoveOnMergeEnabledByProject.get(scope.projectId) ?? config.integrations.github.autoRemoveOnMerge,
+    projectDir: scope.projectDir,
     mainBranch: config.workspace.mainBranch,
   };
 }
@@ -193,6 +229,7 @@ function getFrontendConfig(): {
 
 interface TerminalWsData {
   kind: "terminal";
+  projectId: string;
   branch: string;
   worktreeId: string | null;
   attachId: string | null;
@@ -201,12 +238,29 @@ interface TerminalWsData {
 
 interface AgentsWsData {
   kind: "agents";
+  projectId: string;
   branch: string;
   conversationId: string | null;
   unsubscribe: (() => void) | null;
 }
 
-type WsData = TerminalWsData | AgentsWsData;
+interface ExternalTerminalWsData {
+  kind: "terminal-external";
+  sessionName: string;
+  attachId: string | null;
+  attached: boolean;
+}
+
+interface ScratchTerminalWsData {
+  kind: "terminal-scratch";
+  projectId: string;
+  scratchId: string;
+  sessionName: string;
+  attachId: string | null;
+  attached: boolean;
+}
+
+type WsData = TerminalWsData | AgentsWsData | ExternalTerminalWsData | ScratchTerminalWsData;
 type ParamsRequest = Request & { params: Record<string, string> };
 
 type WsInboundMessage =
@@ -289,42 +343,42 @@ function catching(label: string, fn: () => Promise<Response>): Promise<Response>
   });
 }
 
-function ensureBranchNotRemoving(branch: string): void {
-  if (removingBranches.has(branch)) {
+function ensureBranchNotRemoving(scope: ProjectScope, branch: string): void {
+  if (scope.removingBranches.has(branch)) {
     throw new LifecycleError(`Worktree is being removed: ${branch}`, 409);
   }
 }
 
-function ensureBranchNotCreating(branch: string): void {
-  if (worktreeCreationTracker.has(branch)) {
+function ensureBranchNotCreating(scope: ProjectScope, branch: string): void {
+  if (scope.worktreeCreationTracker.has(branch)) {
     throw new LifecycleError(`Worktree is being created: ${branch}`, 409);
   }
 }
 
-function ensureBranchNotBusy(branch: string): void {
-  ensureBranchNotRemoving(branch);
-  ensureBranchNotCreating(branch);
+function ensureBranchNotBusy(scope: ProjectScope, branch: string): void {
+  ensureBranchNotRemoving(scope, branch);
+  ensureBranchNotCreating(scope, branch);
 }
 
-async function withRemovingBranch<T>(branch: string, fn: () => Promise<T>): Promise<T> {
-  ensureBranchNotBusy(branch);
-  removingBranches.add(branch);
+async function withRemovingBranch<T>(scope: ProjectScope, branch: string, fn: () => Promise<T>): Promise<T> {
+  ensureBranchNotBusy(scope, branch);
+  scope.removingBranches.add(branch);
   try {
     return await fn();
   } finally {
-    removingBranches.delete(branch);
+    scope.removingBranches.delete(branch);
   }
 }
 
-async function resolveTerminalWorktree(branch: string): Promise<{
+async function resolveTerminalWorktree(scope: ProjectScope, branch: string): Promise<{
   worktreeId: string;
   attachTarget: TerminalAttachTarget;
 }> {
-  ensureBranchNotBusy(branch);
-  let state = projectRuntime.getWorktreeByBranch(branch);
+  ensureBranchNotBusy(scope, branch);
+  let state = scope.projectRuntime.getWorktreeByBranch(branch);
   if (!state || !state.session.exists || !state.session.sessionName) {
-    await reconciliationService.reconcile(PROJECT_DIR);
-    state = projectRuntime.getWorktreeByBranch(branch);
+    await scope.reconciliationService.reconcile(scope.projectDir);
+    state = scope.projectRuntime.getWorktreeByBranch(branch);
   }
   if (!state) {
     throw new Error(`Worktree not found: ${branch}`);
@@ -342,7 +396,7 @@ async function resolveTerminalWorktree(branch: string): Promise<{
   };
 }
 
-async function resolveAgentsTerminalWorktree(branch: string): Promise<{
+async function resolveAgentsTerminalWorktree(scope: ProjectScope, branch: string): Promise<{
   ok: true;
   data: {
     worktreeId: string;
@@ -355,7 +409,7 @@ async function resolveAgentsTerminalWorktree(branch: string): Promise<{
   try {
     return {
       ok: true,
-      data: await resolveTerminalWorktree(branch),
+      data: await resolveTerminalWorktree(scope, branch),
     };
   } catch (error) {
     const classified = classifyAgentsTerminalWorktreeError(error);
@@ -367,13 +421,13 @@ async function resolveAgentsTerminalWorktree(branch: string): Promise<{
   }
 }
 
-async function apiGetNativeTerminalLaunch(branch: string): Promise<Response> {
+async function apiGetNativeTerminalLaunch(scope: ProjectScope, branch: string): Promise<Response> {
   touchDashboardActivity();
-  ensureBranchNotBusy(branch);
-  await reconciliationService.reconcile(PROJECT_DIR);
+  ensureBranchNotBusy(scope, branch);
+  await scope.reconciliationService.reconcile(scope.projectDir);
   const launch = buildNativeTerminalLaunch({
     branch,
-    state: projectRuntime.getWorktreeByBranch(branch),
+    state: scope.projectRuntime.getWorktreeByBranch(branch),
     tmuxCommand: buildNativeTerminalTmuxCommand(Bun.env),
     sessionPrefix: `wm-native-${PORT}-`,
   });
@@ -384,13 +438,10 @@ async function apiGetNativeTerminalLaunch(branch: string): Promise<Response> {
 }
 
 function getAttachedSessionId(
-  data: TerminalWsData,
+  data: TerminalWsData | ExternalTerminalWsData | ScratchTerminalWsData,
   ws: { readyState: number; send: (data: string) => void },
 ): string | null {
-  if (data.attached && data.attachId) {
-    return data.attachId;
-  }
-
+  if (data.attached && data.attachId) return data.attachId;
   sendWs(ws, { type: "error", message: "Terminal not attached" });
   return null;
 }
@@ -403,14 +454,18 @@ async function hasValidControlToken(req: Request): Promise<boolean> {
 
 // --- Process helpers ---
 
-async function getWorktreeGitDirs(): Promise<Map<string, string>> {
+async function getWorktreeGitDirs(scope: ProjectScope): Promise<Map<string, string>> {
   const gitDirs = new Map<string, string>();
-  const projectRoot = resolve(PROJECT_DIR);
+  const projectRoot = resolve(scope.projectDir);
   for (const entry of git.listWorktrees(projectRoot)) {
     if (entry.bare || resolve(entry.path) === projectRoot || !entry.branch) continue;
     gitDirs.set(entry.branch, git.resolveWorktreeGitDir(entry.path));
   }
   return gitDirs;
+}
+
+function buildConversationProbeContext(scope: ProjectScope): ClaudeConversationProbeContext & WorktreeConversationProbeContext {
+  return { tmux, projectRoot: scope.projectDir };
 }
 
 function makeCallbacks(ws: { send: (data: string) => void; readyState: number }): {
@@ -427,21 +482,21 @@ function makeCallbacks(ws: { send: (data: string) => void; readyState: number })
   };
 }
 
-async function readProjectSnapshot(): Promise<ProjectSnapshot> {
+async function readProjectSnapshot(scope: ProjectScope): Promise<ProjectSnapshot> {
   const linearApiKey = Bun.env.LINEAR_API_KEY;
-  const linearIssuesPromise = config.integrations.linear.enabled && linearApiKey?.trim()
+  const linearIssuesPromise = scope.config.integrations.linear.enabled && linearApiKey?.trim()
     ? fetchAssignedIssues()
     : Promise.resolve({ ok: true as const, data: [] });
-  await reconciliationService.reconcile(PROJECT_DIR);
-  const archiveState = await archiveStateService.prune(projectRuntime.listWorktrees().map((worktree) => worktree.path));
+  await scope.reconciliationService.reconcile(scope.projectDir);
+  const archiveState = await scope.archiveStateService.prune(scope.projectRuntime.listWorktrees().map((worktree) => worktree.path));
   const linearResult = await linearIssuesPromise;
   const archivedPaths = buildArchivedWorktreePathSet(archiveState);
   const linearIssues = linearResult.ok ? linearResult.data : [];
   return buildProjectSnapshot({
-    projectName: config.name,
-    mainBranch: config.workspace.mainBranch,
-    runtime: projectRuntime,
-    creatingWorktrees: worktreeCreationTracker.list(),
+    projectName: scope.config.name,
+    mainBranch: scope.config.workspace.mainBranch,
+    runtime: scope.projectRuntime,
+    creatingWorktrees: scope.worktreeCreationTracker.list(),
     notifications: runtimeNotifications.list(),
     isArchived: (path) => archivedPaths.has(normalizeArchivePath(path)),
     findLinearIssue: (branch) => {
@@ -456,37 +511,71 @@ async function readProjectSnapshot(): Promise<ProjectSnapshot> {
     },
     findAgentLabel: (agentId) => {
       if (!agentId) return null;
-      return getAgentDefinition(config, agentId)?.label ?? agentId;
+      return getAgentDefinition(scope.config, agentId)?.label ?? agentId;
     },
   });
 }
 
 // --- API handler functions (thin I/O layer, testable by injecting deps) ---
 
-async function apiGetProject(): Promise<Response> {
+async function apiGetProject(scope: ProjectScope): Promise<Response> {
   touchDashboardActivity();
-  return jsonResponse(await readProjectSnapshot());
+  return jsonResponse(await readProjectSnapshot(scope));
 }
 
-async function apiGetWorktrees(): Promise<Response> {
+async function apiGetWorktrees(scope: ProjectScope): Promise<Response> {
   touchDashboardActivity();
   return jsonResponse({
-    worktrees: (await readProjectSnapshot()).worktrees,
+    worktrees: (await readProjectSnapshot(scope)).worktrees,
   });
+}
+
+async function apiListExternalSessions(): Promise<Response> {
+  const all = tmux.listAllSessions();
+  const sessions = listExternalSessions(all, tmux);
+  return jsonResponse({ sessions });
+}
+
+async function apiListScratchSessions(scope: ProjectScope): Promise<Response> {
+  return jsonResponse({ sessions: scope.scratchSessionService.list() });
+}
+
+async function apiCreateScratchSession(scope: ProjectScope, req: Request): Promise<Response> {
+  const body = CreateScratchSessionRequestSchema.parse(await req.json());
+  const meta = await scope.scratchSessionService.create({
+    displayName: body.displayName,
+    kind: body.kind,
+    agentId: body.agentId ?? null,
+    ...(body.yolo === undefined ? {} : { yolo: body.yolo }),
+  });
+  const snap = scope.scratchSessionService.list().find((s) => s.id === meta.id);
+  if (!snap) throw new Error("scratch session created but not visible in list");
+  return jsonResponse({ session: snap }, 201);
+}
+
+async function apiRemoveScratchSession(scope: ProjectScope, id: string): Promise<Response> {
+  scope.scratchSessionService.remove(id);
+  return jsonResponse({ ok: true });
+}
+
+function parseScratchSessionIdParam(params: Record<string, string>): { ok: true; data: string } | { ok: false; response: Response } {
+  const id = params.id;
+  if (!id || id.length === 0) return { ok: false, response: errorResponse("Missing scratch session id", 400) };
+  return { ok: true, data: id };
 }
 
 function findSnapshotWorktree(snapshot: ProjectSnapshot, branch: string): WorktreeSnapshot | null {
   return snapshot.worktrees.find((worktree) => worktree.branch === branch) ?? null;
 }
 
-async function resolveAgentsWorktree(branch: string): Promise<{
+async function resolveAgentsWorktree(scope: ProjectScope, branch: string): Promise<{
   ok: true;
   worktree: WorktreeSnapshot;
 } | {
   ok: false;
   response: Response;
 }> {
-  const snapshot = await readProjectSnapshot();
+  const snapshot = await readProjectSnapshot(scope);
   const worktree = findSnapshotWorktree(snapshot, branch);
   if (!worktree) {
     return {
@@ -501,75 +590,75 @@ async function resolveAgentsWorktree(branch: string): Promise<{
   };
 }
 
-function resolveWorktreeAgentChatSupport(worktree: WorktreeSnapshot, action: "chat" | "interrupt") {
+function resolveWorktreeAgentChatSupport(scope: ProjectScope, worktree: WorktreeSnapshot, action: "chat" | "interrupt") {
   return resolveAgentChatSupport({
     agentId: worktree.agentName,
     agentLabel: worktree.agentLabel,
-    agent: worktree.agentName ? getAgentDefinition(config, worktree.agentName) : null,
+    agent: worktree.agentName ? getAgentDefinition(scope.config, worktree.agentName) : null,
     action,
   });
 }
 
-async function apiAttachAgentsWorktree(branch: string): Promise<Response> {
+async function apiAttachAgentsWorktree(scope: ProjectScope, branch: string): Promise<Response> {
   touchDashboardActivity();
-  const resolved = await resolveAgentsWorktree(branch);
+  const resolved = await resolveAgentsWorktree(scope, branch);
   if (!resolved.ok) return resolved.response;
 
-  const chatSupport = resolveWorktreeAgentChatSupport(resolved.worktree, "chat");
+  const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.worktree, "chat");
   if (!chatSupport.ok) {
     return errorResponse(chatSupport.error, chatSupport.status);
   }
 
   const result = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.attachWorktreeConversation(resolved.worktree)
-    : await worktreeConversationService.attachWorktreeConversation(resolved.worktree);
+    ? await claudeConversationService.attachWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope))
+    : await worktreeConversationService.attachWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope));
   return result.ok
     ? jsonResponse(result.data)
     : errorResponse(result.error, result.status);
 }
 
-async function apiGetAgentsWorktreeHistory(branch: string): Promise<Response> {
+async function apiGetAgentsWorktreeHistory(scope: ProjectScope, branch: string): Promise<Response> {
   touchDashboardActivity();
-  const resolved = await resolveAgentsWorktree(branch);
+  const resolved = await resolveAgentsWorktree(scope, branch);
   if (!resolved.ok) return resolved.response;
 
-  const chatSupport = resolveWorktreeAgentChatSupport(resolved.worktree, "chat");
+  const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.worktree, "chat");
   if (!chatSupport.ok) {
     return errorResponse(chatSupport.error, chatSupport.status);
   }
 
   const result = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.readWorktreeConversation(resolved.worktree)
-    : await worktreeConversationService.readWorktreeConversation(resolved.worktree);
+    ? await claudeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope))
+    : await worktreeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope));
   return result.ok
     ? jsonResponse(result.data)
     : errorResponse(result.error, result.status);
 }
 
-async function apiSendAgentsWorktreeMessage(branch: string, req: Request): Promise<Response> {
+async function apiSendAgentsWorktreeMessage(scope: ProjectScope, branch: string, req: Request): Promise<Response> {
   touchDashboardActivity();
   const parsed = await parseJsonBody(req, AgentsSendMessageRequestSchema);
   if (!parsed.ok) return parsed.response;
 
-  const resolved = await resolveAgentsWorktree(branch);
+  const resolved = await resolveAgentsWorktree(scope, branch);
   if (!resolved.ok) return resolved.response;
   if (!resolved.worktree.mux) {
     return errorResponse("Open this worktree in the main dashboard before sending messages here", 409);
   }
 
-  const chatSupport = resolveWorktreeAgentChatSupport(resolved.worktree, "chat");
+  const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.worktree, "chat");
   if (!chatSupport.ok) {
     return errorResponse(chatSupport.error, chatSupport.status);
   }
 
   const conversationResult = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.readWorktreeConversation(resolved.worktree)
-    : await worktreeConversationService.readWorktreeConversation(resolved.worktree);
+    ? await claudeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope))
+    : await worktreeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope));
   if (!conversationResult.ok) {
     return errorResponse(conversationResult.error, conversationResult.status);
   }
 
-  const terminalWorktree = await resolveAgentsTerminalWorktree(branch);
+  const terminalWorktree = await resolveAgentsTerminalWorktree(scope, branch);
   if (!terminalWorktree.ok) return terminalWorktree.response;
   const sendResult = await sendTerminalPrompt(
     terminalWorktree.data.worktreeId,
@@ -591,31 +680,41 @@ async function apiSendAgentsWorktreeMessage(branch: string, req: Request): Promi
   });
 }
 
-async function apiInterruptAgentsWorktree(branch: string): Promise<Response> {
+async function apiInterruptAgentsWorktree(scope: ProjectScope, branch: string): Promise<Response> {
   touchDashboardActivity();
-  const resolved = await resolveAgentsWorktree(branch);
+  const resolved = await resolveAgentsWorktree(scope, branch);
   if (!resolved.ok) return resolved.response;
   if (!resolved.worktree.mux) {
     return errorResponse("Open this worktree in the main dashboard before interrupting it here", 409);
   }
 
-  const chatSupport = resolveWorktreeAgentChatSupport(resolved.worktree, "interrupt");
+  const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.worktree, "interrupt");
   if (!chatSupport.ok) {
     return errorResponse(chatSupport.error, chatSupport.status);
   }
 
   const conversationResult = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.readWorktreeConversation(resolved.worktree)
-    : await worktreeConversationService.readWorktreeConversation(resolved.worktree);
+    ? await claudeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope))
+    : await worktreeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope));
   if (!conversationResult.ok) {
     return errorResponse(conversationResult.error, conversationResult.status);
   }
 
-  const terminalWorktree = await resolveAgentsTerminalWorktree(branch);
+  const terminalWorktree = await resolveAgentsTerminalWorktree(scope, branch);
   if (!terminalWorktree.ok) return terminalWorktree.response;
   const interruptResult = await interruptPrompt(terminalWorktree.data.attachTarget, 0);
   if (!interruptResult.ok) {
     return errorResponse(interruptResult.error, 503);
+  }
+
+  const runtimeState = scope.projectRuntime.getWorktreeByBranch(branch);
+  if (runtimeState) {
+    scope.projectRuntime.applyEvent({
+      type: "agent_status_changed",
+      worktreeId: runtimeState.worktreeId,
+      branch,
+      lifecycle: "stopped",
+    });
   }
 
   return jsonResponse({
@@ -625,7 +724,290 @@ async function apiInterruptAgentsWorktree(branch: string): Promise<Response> {
   });
 }
 
+// ── Scratch session chat ─────────────────────────────────────────────────────
+
+function resolveScratchChatTarget(scope: ProjectScope, id: string): {
+  ok: true;
+  facade: WorktreeSnapshot;
+  attachTarget: { sessionName: string; windowName: string; paneIndex: number };
+  scratchCreatedAt: string;
+} | {
+  ok: false;
+  response: Response;
+} {
+  const metas = scope.scratchSessionService.list();
+  const meta = metas.find((s) => s.id === id);
+  if (!meta) {
+    return { ok: false, response: errorResponse(`Scratch session not found: ${id}`, 404) };
+  }
+  if (meta.kind !== "agent" || !meta.agentId) {
+    return { ok: false, response: errorResponse("Chat is only available for agent-kind scratch sessions", 404) };
+  }
+  const chatSupport = resolveAgentChatSupport({
+    agentId: meta.agentId,
+    agentLabel: meta.agentId,
+    agent: getAgentDefinition(scope.config, meta.agentId),
+    action: "chat",
+  });
+  if (!chatSupport.ok) {
+    return { ok: false, response: errorResponse(chatSupport.error, chatSupport.status) };
+  }
+  const windowName = tmux.getFirstWindowName(meta.sessionName);
+  if (!windowName) {
+    return { ok: false, response: errorResponse("Scratch session has no tmux window", 409) };
+  }
+  const target = `${meta.sessionName}:${windowName}.0`;
+  const probe = probeSessionActivity(tmux, target);
+  const { running } = summarizeSessionActivity(probe, () => new Date());
+  const agentDef = getAgentDefinition(scope.config, meta.agentId);
+  const facade: WorktreeSnapshot = {
+    branch: meta.id,
+    path: meta.cwd,
+    dir: meta.cwd,
+    archived: false,
+    profile: null,
+    agentName: meta.agentId,
+    agentLabel: agentDef?.label ?? meta.agentId,
+    mux: true,
+    dirty: false,
+    unpushed: false,
+    paneCount: 1,
+    status: running ? "running" : "idle",
+    elapsed: "",
+    services: [],
+    prs: [],
+    linearIssue: null,
+    creation: null,
+  };
+  return {
+    ok: true,
+    facade,
+    attachTarget: { sessionName: meta.sessionName, windowName, paneIndex: 0 },
+    scratchCreatedAt: meta.createdAt,
+  };
+}
+
+async function apiAttachAgentsScratchConversation(scope: ProjectScope, id: string): Promise<Response> {
+  touchDashboardActivity();
+  const resolved = resolveScratchChatTarget(scope, id);
+  if (!resolved.ok) return resolved.response;
+  const storage = buildTmuxConversationStorage({ tmux, sessionName: resolved.attachTarget.sessionName });
+  const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.facade, "chat");
+  if (!chatSupport.ok) return errorResponse(chatSupport.error, chatSupport.status);
+  const result = chatSupport.data.provider === "claude"
+    ? await claudeConversationService.attachWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage, resolved.scratchCreatedAt)
+    : await worktreeConversationService.attachWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage);
+  return result.ok ? jsonResponse(result.data) : errorResponse(result.error, result.status);
+}
+
+async function apiGetAgentsScratchConversationHistory(scope: ProjectScope, id: string): Promise<Response> {
+  touchDashboardActivity();
+  const resolved = resolveScratchChatTarget(scope, id);
+  if (!resolved.ok) return resolved.response;
+  const storage = buildTmuxConversationStorage({ tmux, sessionName: resolved.attachTarget.sessionName });
+  const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.facade, "chat");
+  if (!chatSupport.ok) return errorResponse(chatSupport.error, chatSupport.status);
+  const result = chatSupport.data.provider === "claude"
+    ? await claudeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage, resolved.scratchCreatedAt)
+    : await worktreeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage);
+  return result.ok ? jsonResponse(result.data) : errorResponse(result.error, result.status);
+}
+
+async function apiSendAgentsScratchConversationMessage(scope: ProjectScope, id: string, req: Request): Promise<Response> {
+  touchDashboardActivity();
+  const parsed = await parseJsonBody(req, AgentsSendMessageRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const resolved = resolveScratchChatTarget(scope, id);
+  if (!resolved.ok) return resolved.response;
+  const storage = buildTmuxConversationStorage({ tmux, sessionName: resolved.attachTarget.sessionName });
+  const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.facade, "chat");
+  if (!chatSupport.ok) return errorResponse(chatSupport.error, chatSupport.status);
+  const conversationResult = chatSupport.data.provider === "claude"
+    ? await claudeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage, resolved.scratchCreatedAt)
+    : await worktreeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage);
+  if (!conversationResult.ok) return errorResponse(conversationResult.error, conversationResult.status);
+  const attachTarget: import("./adapters/terminal").TerminalAttachTarget = {
+    ownerSessionName: resolved.attachTarget.sessionName,
+    windowName: resolved.attachTarget.windowName,
+  };
+  const sendResult = await sendTerminalPrompt(
+    `scratch:${id}`,
+    attachTarget,
+    parsed.data.text,
+    resolved.attachTarget.paneIndex,
+    undefined,
+    chatSupport.data.submitDelayMs,
+  );
+  if (!sendResult.ok) return errorResponse(sendResult.error, 503);
+  return jsonResponse({
+    conversationId: conversationResult.data.conversation.conversationId,
+    turnId: `tmux:${crypto.randomUUID()}`,
+    running: true as const,
+  });
+}
+
+async function apiInterruptAgentsScratchConversation(scope: ProjectScope, id: string): Promise<Response> {
+  touchDashboardActivity();
+  const resolved = resolveScratchChatTarget(scope, id);
+  if (!resolved.ok) return resolved.response;
+  const storage = buildTmuxConversationStorage({ tmux, sessionName: resolved.attachTarget.sessionName });
+  const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.facade, "interrupt");
+  if (!chatSupport.ok) return errorResponse(chatSupport.error, chatSupport.status);
+  const conversationResult = chatSupport.data.provider === "claude"
+    ? await claudeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage, resolved.scratchCreatedAt)
+    : await worktreeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage);
+  if (!conversationResult.ok) return errorResponse(conversationResult.error, conversationResult.status);
+  const attachTarget: import("./adapters/terminal").TerminalAttachTarget = {
+    ownerSessionName: resolved.attachTarget.sessionName,
+    windowName: resolved.attachTarget.windowName,
+  };
+  const interruptResult = await interruptPrompt(attachTarget, resolved.attachTarget.paneIndex);
+  if (!interruptResult.ok) return errorResponse(interruptResult.error, 503);
+  return jsonResponse({
+    conversationId: conversationResult.data.conversation.conversationId,
+    turnId: conversationResult.data.conversation.activeTurnId ?? `tmux:${crypto.randomUUID()}`,
+    interrupted: true as const,
+  });
+}
+
+// ── External session chat ────────────────────────────────────────────────────
+
+function resolveExternalChatTarget(sessionName: string): {
+  ok: true;
+  facade: WorktreeSnapshot;
+  attachTarget: { sessionName: string; windowName: string; paneIndex: number };
+  agentProvider: "claude" | "codex";
+  submitDelayMs: number;
+} | {
+  ok: false;
+  response: Response;
+} {
+  const allSessions = tmux.listAllSessions();
+  const sessionEntry = allSessions.find((s) => s.name === sessionName);
+  if (!sessionEntry) {
+    return { ok: false, response: errorResponse(`External session not found: ${sessionName}`, 404) };
+  }
+  const windowName = tmux.getFirstWindowName(sessionName);
+  if (!windowName) {
+    return { ok: false, response: errorResponse("External session has no tmux window", 409) };
+  }
+  const paneTarget = `${sessionName}:${windowName}.0`;
+  const currentCommand = tmux.getPaneCurrentCommand(paneTarget);
+  const baseName = currentCommand ? currentCommand.split("/").pop() ?? currentCommand : null;
+  const agentId = baseName === "claude" ? "claude" : baseName === "codex" ? "codex" : null;
+  if (!agentId) {
+    return { ok: false, response: errorResponse("Chat is only supported for Claude and Codex sessions", 404) };
+  }
+  const cwd = tmux.getPaneCurrentPath(paneTarget) ?? sessionName;
+  const probe = probeSessionActivity(tmux, paneTarget);
+  const { running } = summarizeSessionActivity(probe, () => new Date());
+  const agentLabel = agentId === "claude" ? "Claude" : "Codex";
+  const facade: WorktreeSnapshot = {
+    branch: sessionName,
+    path: cwd,
+    dir: cwd,
+    archived: false,
+    profile: null,
+    agentName: agentId,
+    agentLabel,
+    mux: true,
+    dirty: false,
+    unpushed: false,
+    paneCount: 1,
+    status: running ? "running" : "idle",
+    elapsed: "",
+    services: [],
+    prs: [],
+    linearIssue: null,
+    creation: null,
+  };
+  const submitDelayMs = 200;
+  return {
+    ok: true,
+    facade,
+    attachTarget: { sessionName, windowName, paneIndex: 0 },
+    agentProvider: agentId,
+    submitDelayMs,
+  };
+}
+
+async function apiAttachAgentsExternalConversation(sessionName: string): Promise<Response> {
+  touchDashboardActivity();
+  const resolved = resolveExternalChatTarget(sessionName);
+  if (!resolved.ok) return resolved.response;
+  const storage = buildTmuxConversationStorage({ tmux, sessionName });
+  const result = resolved.agentProvider === "claude"
+    ? await claudeConversationService.attachWorktreeConversation(resolved.facade, { tmux, projectRoot: sessionName }, storage)
+    : await worktreeConversationService.attachWorktreeConversation(resolved.facade, undefined, storage);
+  return result.ok ? jsonResponse(result.data) : errorResponse(result.error, result.status);
+}
+
+async function apiGetAgentsExternalConversationHistory(sessionName: string): Promise<Response> {
+  touchDashboardActivity();
+  const resolved = resolveExternalChatTarget(sessionName);
+  if (!resolved.ok) return resolved.response;
+  const storage = buildTmuxConversationStorage({ tmux, sessionName });
+  const result = resolved.agentProvider === "claude"
+    ? await claudeConversationService.readWorktreeConversation(resolved.facade, { tmux, projectRoot: sessionName }, storage)
+    : await worktreeConversationService.readWorktreeConversation(resolved.facade, undefined, storage);
+  return result.ok ? jsonResponse(result.data) : errorResponse(result.error, result.status);
+}
+
+async function apiSendAgentsExternalConversationMessage(sessionName: string, req: Request): Promise<Response> {
+  touchDashboardActivity();
+  const parsed = await parseJsonBody(req, AgentsSendMessageRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const resolved = resolveExternalChatTarget(sessionName);
+  if (!resolved.ok) return resolved.response;
+  const storage = buildTmuxConversationStorage({ tmux, sessionName });
+  const conversationResult = resolved.agentProvider === "claude"
+    ? await claudeConversationService.readWorktreeConversation(resolved.facade, { tmux, projectRoot: sessionName }, storage)
+    : await worktreeConversationService.readWorktreeConversation(resolved.facade, undefined, storage);
+  if (!conversationResult.ok) return errorResponse(conversationResult.error, conversationResult.status);
+  const attachTarget: import("./adapters/terminal").TerminalAttachTarget = {
+    ownerSessionName: resolved.attachTarget.sessionName,
+    windowName: resolved.attachTarget.windowName,
+  };
+  const sendResult = await sendTerminalPrompt(
+    `external:${sessionName}`,
+    attachTarget,
+    parsed.data.text,
+    resolved.attachTarget.paneIndex,
+    undefined,
+    resolved.submitDelayMs,
+  );
+  if (!sendResult.ok) return errorResponse(sendResult.error, 503);
+  return jsonResponse({
+    conversationId: conversationResult.data.conversation.conversationId,
+    turnId: `tmux:${crypto.randomUUID()}`,
+    running: true as const,
+  });
+}
+
+async function apiInterruptAgentsExternalConversation(sessionName: string): Promise<Response> {
+  touchDashboardActivity();
+  const resolved = resolveExternalChatTarget(sessionName);
+  if (!resolved.ok) return resolved.response;
+  const storage = buildTmuxConversationStorage({ tmux, sessionName });
+  const conversationResult = resolved.agentProvider === "claude"
+    ? await claudeConversationService.readWorktreeConversation(resolved.facade, { tmux, projectRoot: sessionName }, storage)
+    : await worktreeConversationService.readWorktreeConversation(resolved.facade, undefined, storage);
+  if (!conversationResult.ok) return errorResponse(conversationResult.error, conversationResult.status);
+  const attachTarget: import("./adapters/terminal").TerminalAttachTarget = {
+    ownerSessionName: resolved.attachTarget.sessionName,
+    windowName: resolved.attachTarget.windowName,
+  };
+  const interruptResult = await interruptPrompt(attachTarget, resolved.attachTarget.paneIndex);
+  if (!interruptResult.ok) return errorResponse(interruptResult.error, 503);
+  return jsonResponse({
+    conversationId: conversationResult.data.conversation.conversationId,
+    turnId: conversationResult.data.conversation.activeTurnId ?? `tmux:${crypto.randomUUID()}`,
+    interrupted: true as const,
+  });
+}
+
 async function loadAgentsConversationSnapshot(
+  scope: ProjectScope,
   branch: string,
 ): Promise<{
   ok: true;
@@ -634,7 +1016,7 @@ async function loadAgentsConversationSnapshot(
   ok: false;
   message: string;
 }> {
-  const resolved = await resolveAgentsWorktree(branch);
+  const resolved = await resolveAgentsWorktree(scope, branch);
   if (!resolved.ok) {
     return {
       ok: false,
@@ -642,7 +1024,7 @@ async function loadAgentsConversationSnapshot(
     };
   }
 
-  const chatSupport = resolveWorktreeAgentChatSupport(resolved.worktree, "chat");
+  const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.worktree, "chat");
   if (!chatSupport.ok) {
     return {
       ok: false,
@@ -651,8 +1033,8 @@ async function loadAgentsConversationSnapshot(
   }
 
   const result = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.readWorktreeConversation(resolved.worktree)
-    : await worktreeConversationService.readWorktreeConversation(resolved.worktree);
+    ? await claudeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope))
+    : await worktreeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope));
   return result.ok
     ? { ok: true, data: result.data }
     : { ok: false, message: result.error };
@@ -679,7 +1061,15 @@ async function openAgentsSocket(
   ws: { readyState: number; send: (data: string) => void; close: (code?: number, reason?: string) => void },
   data: AgentsWsData,
 ): Promise<void> {
-  const snapshot = await loadAgentsConversationSnapshot(data.branch);
+  const scope = runtime.projectRegistry.get(data.projectId);
+  if (!scope) {
+    const msg = `Project not found: ${data.projectId}`;
+    sendAgentsWs(ws, { type: "error", message: msg });
+    ws.close(1011, msg.slice(0, 123));
+    return;
+  }
+
+  const snapshot = await loadAgentsConversationSnapshot(scope, data.branch);
   if (!snapshot.ok) {
     sendAgentsWs(ws, { type: "error", message: snapshot.message });
     ws.close(1011, snapshot.message.slice(0, 123));
@@ -709,7 +1099,9 @@ async function openAgentsSocket(
     if (!shouldRefreshAgentsConversationSnapshot(notification)) return;
 
     void (async () => {
-      const nextSnapshot = await loadAgentsConversationSnapshot(data.branch);
+      const projScope = runtime.projectRegistry.get(data.projectId);
+      if (!projScope) return;
+      const nextSnapshot = await loadAgentsConversationSnapshot(projScope, data.branch);
       if (!nextSnapshot.ok) {
         sendAgentsWs(ws, { type: "error", message: nextSnapshot.message });
         return;
@@ -735,17 +1127,33 @@ async function apiRuntimeEvent(req: Request): Promise<Response> {
   } catch {
     return errorResponse("Invalid JSON", 400);
   }
+
+  // Runtime events are project-scoped; look up project from the event body if present,
+  // otherwise fall back to the first project (single-project compat for lifecycle hooks).
+  const maybeProjectId = isRecord(raw) && typeof raw.projectId === "string" ? raw.projectId : null;
+  let targetScope: ProjectScope | null = null;
+  if (maybeProjectId) {
+    targetScope = runtime.projectRegistry.get(maybeProjectId);
+    if (!targetScope) return errorResponse(`Project not found: ${maybeProjectId}`, 404);
+  } else {
+    const first = runtime.projectRegistry.list()[0];
+    if (first) targetScope = runtime.projectRegistry.get(first.id);
+  }
+
+  if (!targetScope) return errorResponse("No project available", 404);
+  const scope = targetScope;
+
   const event = parseRuntimeEvent(raw);
   if (!event) return errorResponse("Invalid runtime event body", 400);
 
   try {
-    projectRuntime.applyEvent(event);
+    scope.projectRuntime.applyEvent(event);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes("Unknown worktree id")) {
-      await reconciliationService.reconcile(PROJECT_DIR);
+      await scope.reconciliationService.reconcile(scope.projectDir);
       try {
-        projectRuntime.applyEvent(event);
+        scope.projectRuntime.applyEvent(event);
       } catch (retryError) {
         const retryMessage = retryError instanceof Error ? retryError.message : String(retryError);
         if (retryMessage.includes("Unknown worktree id")) {
@@ -758,34 +1166,35 @@ async function apiRuntimeEvent(req: Request): Promise<Response> {
     }
   }
 
-  const notification = runtimeNotifications.recordEvent(event);
+  const notification = runtimeNotifications.recordEvent(event, scope.projectId);
   return jsonResponse({
     ok: true,
     ...(notification ? { notification } : {}),
   });
 }
 
-async function apiListBranches(req: Request): Promise<Response> {
+async function apiListBranches(scope: ProjectScope, req: Request): Promise<Response> {
   const parsed = parseQuery(req, AvailableBranchesQuerySchema);
   if (!parsed.ok) return parsed.response;
 
   const includeRemote = parsed.data.includeRemote === true;
   return jsonResponse({
-    branches: lifecycleService.listAvailableBranches({ includeRemote }),
+    branches: scope.lifecycleService.listAvailableBranches({ includeRemote }),
   });
 }
 
-async function apiListBaseBranches(): Promise<Response> {
+async function apiListBaseBranches(scope: ProjectScope): Promise<Response> {
   return jsonResponse({
-    branches: lifecycleService.listBaseBranches(),
+    branches: scope.lifecycleService.listBaseBranches(),
   });
 }
 
-async function apiCreateWorktree(req: Request): Promise<Response> {
+async function apiCreateWorktree(scope: ProjectScope, req: Request): Promise<Response> {
   const parsed = await parseJsonBody(req, CreateWorktreeRequestSchema);
   if (!parsed.ok) return parsed.response;
 
   const body = parsed.data;
+  const config = scope.config;
   const envOverrides = body.envOverrides && Object.keys(body.envOverrides).length > 0 ? body.envOverrides : undefined;
   const branch = body.branch?.trim() ? body.branch.trim() : undefined;
   const baseBranch = body.baseBranch?.trim() ? body.baseBranch.trim() : undefined;
@@ -856,7 +1265,7 @@ async function apiCreateWorktree(req: Request): Promise<Response> {
   if (resolvedBranch) {
     const targetBranches = buildCreateWorktreeTargets(resolvedBranch, selectedAgents).map((target) => target.branch);
     for (const targetBranch of targetBranches) {
-      ensureBranchNotBusy(targetBranch);
+      ensureBranchNotBusy(scope, targetBranch);
     }
 
     if (baseBranch && targetBranches.some((targetBranch) => targetBranch === baseBranch)) {
@@ -867,7 +1276,7 @@ async function apiCreateWorktree(req: Request): Promise<Response> {
   log.info(
     `[worktree:add] mode=${mode ?? "new"}${resolvedBranch ? ` branch=${resolvedBranch}` : ""}${baseBranch ? ` base=${baseBranch}` : ""}${profile ? ` profile=${profile}` : ""} agents=${selectedAgents.join(",")}${createLinearTicket ? " linearTicket=true" : ""}${prompt ? ` prompt="${prompt.slice(0, 80)}"` : ""}`,
   );
-  const result = await lifecycleService.createWorktrees({
+  const result = await scope.lifecycleService.createWorktrees({
     mode,
     branch: resolvedBranch,
     baseBranch,
@@ -875,6 +1284,7 @@ async function apiCreateWorktree(req: Request): Promise<Response> {
     profile,
     ...(agents && agents.length > 0 ? { agents } : { agent }),
     envOverrides,
+    ...(body.yolo === undefined ? {} : { yolo: body.yolo }),
   });
   log.debug(`[worktree:add] done branches=${result.branches.join(",")}`);
   return jsonResponse({
@@ -883,52 +1293,68 @@ async function apiCreateWorktree(req: Request): Promise<Response> {
   }, 201);
 }
 
-async function apiDeleteWorktree(name: string): Promise<Response> {
-  return withRemovingBranch(name, async () => {
+async function apiDeleteWorktree(scope: ProjectScope, name: string): Promise<Response> {
+  return withRemovingBranch(scope, name, async () => {
     log.info(`[worktree:rm] name=${name}`);
-    await lifecycleService.removeWorktree(name);
+    await scope.lifecycleService.removeWorktree(name);
     log.debug(`[worktree:rm] done name=${name}`);
     return jsonResponse({ ok: true });
   });
 }
 
-async function apiOpenWorktree(name: string): Promise<Response> {
-  ensureBranchNotBusy(name);
+async function apiOpenWorktree(scope: ProjectScope, name: string, req: Request): Promise<Response> {
+  ensureBranchNotBusy(scope, name);
+  let rawBody: unknown = {};
+  try {
+    rawBody = await req.json();
+  } catch {
+    // empty or missing body — treat as no overrides
+  }
+  const parsed = OpenWorktreeRequestSchema.safeParse(rawBody);
+  if (!parsed.success) {
+    return errorResponse(`Invalid request body: ${parsed.error.issues[0]?.message ?? "Invalid request"}`, 400);
+  }
+  const body = parsed.data;
+  const agentOverride = body.agentOverride;
+  const shellOnly = body.shellOnly;
   log.info(`[worktree:open] name=${name}`);
-  const result = await lifecycleService.openWorktree(name);
+  const result = await scope.lifecycleService.openWorktree(name, {
+    ...(agentOverride !== undefined ? { agentOverride } : {}),
+    ...(shellOnly !== undefined ? { shellOnly } : {}),
+  });
   log.debug(`[worktree:open] done name=${name} worktreeId=${result.worktreeId}`);
   return jsonResponse({ ok: true });
 }
 
-async function apiCloseWorktree(name: string): Promise<Response> {
-  ensureBranchNotBusy(name);
+async function apiCloseWorktree(scope: ProjectScope, name: string): Promise<Response> {
+  ensureBranchNotBusy(scope, name);
   log.info(`[worktree:close] name=${name}`);
-  await lifecycleService.closeWorktree(name);
+  await scope.lifecycleService.closeWorktree(name);
   log.debug(`[worktree:close] done name=${name}`);
   return jsonResponse({ ok: true });
 }
 
-async function apiSetWorktreeArchived(name: string, req: Request): Promise<Response> {
-  ensureBranchNotBusy(name);
+async function apiSetWorktreeArchived(scope: ProjectScope, name: string, req: Request): Promise<Response> {
+  ensureBranchNotBusy(scope, name);
   const parsed = await parseJsonBody(req, SetWorktreeArchivedRequestSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
 
   log.info(`[worktree:archive] name=${name} archived=${body.archived}`);
-  await lifecycleService.setWorktreeArchived(name, body.archived);
+  await scope.lifecycleService.setWorktreeArchived(name, body.archived);
   log.debug(`[worktree:archive] done name=${name} archived=${body.archived}`);
   return jsonResponse({ ok: true, archived: body.archived });
 }
 
-async function apiSendPrompt(name: string, req: Request): Promise<Response> {
-  ensureBranchNotBusy(name);
+async function apiSendPrompt(scope: ProjectScope, name: string, req: Request): Promise<Response> {
+  ensureBranchNotBusy(scope, name);
   const parsed = await parseJsonBody(req, SendWorktreePromptRequestSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
   const text = body.text;
   const preamble = body.preamble;
   log.info(`[worktree:send] name=${name} text="${text.slice(0, 80)}"`);
-  const terminalWorktree = await resolveTerminalWorktree(name);
+  const terminalWorktree = await resolveTerminalWorktree(scope, name);
   const result = await sendTerminalPrompt(
     terminalWorktree.worktreeId,
     terminalWorktree.attachTarget,
@@ -940,16 +1366,42 @@ async function apiSendPrompt(name: string, req: Request): Promise<Response> {
   return jsonResponse({ ok: true });
 }
 
-async function apiMergeWorktree(name: string): Promise<Response> {
-  ensureBranchNotBusy(name);
+async function apiMergeWorktree(scope: ProjectScope, name: string): Promise<Response> {
+  ensureBranchNotBusy(scope, name);
   log.info(`[worktree:merge] name=${name}`);
-  await lifecycleService.mergeWorktree(name);
+  await scope.lifecycleService.mergeWorktree(name);
   log.debug(`[worktree:merge] done name=${name}`);
   return jsonResponse({ ok: true });
 }
 
-async function apiListAgents(): Promise<Response> {
-  return jsonResponse({ agents: listAgentDetails(config) });
+async function apiUpdateWorktree(scope: ProjectScope, name: string, req: Request): Promise<Response> {
+  ensureBranchNotBusy(scope, name);
+  const parsed = await parseJsonBody(req, UpdateWorktreeRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
+
+  if (body.agent !== undefined) {
+    const agentDef = getAgentDefinition(scope.config, body.agent);
+    if (!agentDef) return errorResponse(`Unknown agent: ${body.agent}`, 404);
+  }
+
+  const gitDirs = await getWorktreeGitDirs(scope);
+  const gitDir = gitDirs.get(name);
+  if (!gitDir) return errorResponse(`Worktree not found: ${name}`, 404);
+
+  const meta = await readWorktreeMeta(gitDir);
+  if (!meta) return errorResponse(`Worktree is not webmux-managed: ${name}`, 404);
+
+  if (body.yolo !== undefined) meta.yolo = body.yolo;
+  if (body.agent !== undefined) meta.agent = body.agent;
+
+  await writeWorktreeMeta(gitDir, meta);
+  log.info(`[worktree:update] name=${name} agent=${body.agent ?? "(unchanged)"} yolo=${body.yolo ?? "(unchanged)"}`);
+  return jsonResponse({ ok: true });
+}
+
+async function apiListAgents(scope: ProjectScope): Promise<Response> {
+  return jsonResponse({ agents: listAgentDetails(scope.config) });
 }
 
 async function apiValidateAgent(req: Request): Promise<Response> {
@@ -958,13 +1410,13 @@ async function apiValidateAgent(req: Request): Promise<Response> {
   return jsonResponse(validateCustomAgentInput(parsed.data));
 }
 
-async function apiCreateAgent(req: Request): Promise<Response> {
+async function apiCreateAgent(scope: ProjectScope, req: Request): Promise<Response> {
   const parsed = await parseJsonBody(req, UpsertCustomAgentRequestSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
   const agentId = normalizeCustomAgentId(body.label);
 
-  if (isBuiltInAgentId(agentId) || config.agents[agentId]) {
+  if (isBuiltInAgentId(agentId) || scope.config.agents[agentId]) {
     return errorResponse(`Agent already exists: ${agentId}`, 409);
   }
 
@@ -974,10 +1426,10 @@ async function apiCreateAgent(req: Request): Promise<Response> {
     ...(body.resumeCommand?.trim() ? { resumeCommand: body.resumeCommand.trim() } : {}),
   };
 
-  await persistLocalCustomAgent(PROJECT_DIR, agentId, agentConfig);
-  config.agents[agentId] = agentConfig;
+  await persistLocalCustomAgent(scope.projectDir, agentId, agentConfig);
+  scope.config.agents[agentId] = agentConfig;
 
-  const agent = listAgentDetails(config).find((entry) => entry.id === agentId);
+  const agent = listAgentDetails(scope.config).find((entry) => entry.id === agentId);
   if (!agent) {
     return errorResponse(`Created agent could not be loaded: ${agentId}`, 500);
   }
@@ -985,11 +1437,11 @@ async function apiCreateAgent(req: Request): Promise<Response> {
   return jsonResponse({ agent });
 }
 
-async function apiUpdateAgent(agentId: string, req: Request): Promise<Response> {
+async function apiUpdateAgent(scope: ProjectScope, agentId: string, req: Request): Promise<Response> {
   if (isBuiltInAgentId(agentId)) {
     return errorResponse(`Built-in agent cannot be edited: ${agentId}`, 400);
   }
-  if (!config.agents[agentId]) {
+  if (!scope.config.agents[agentId]) {
     return errorResponse(`Unknown agent: ${agentId}`, 404);
   }
 
@@ -1002,10 +1454,10 @@ async function apiUpdateAgent(agentId: string, req: Request): Promise<Response> 
     ...(body.resumeCommand?.trim() ? { resumeCommand: body.resumeCommand.trim() } : {}),
   };
 
-  await persistLocalCustomAgent(PROJECT_DIR, agentId, agentConfig);
-  config.agents[agentId] = agentConfig;
+  await persistLocalCustomAgent(scope.projectDir, agentId, agentConfig);
+  scope.config.agents[agentId] = agentConfig;
 
-  const agent = listAgentDetails(config).find((entry) => entry.id === agentId);
+  const agent = listAgentDetails(scope.config).find((entry) => entry.id === agentId);
   if (!agent) {
     return errorResponse(`Updated agent could not be loaded: ${agentId}`, 500);
   }
@@ -1013,53 +1465,95 @@ async function apiUpdateAgent(agentId: string, req: Request): Promise<Response> 
   return jsonResponse({ agent });
 }
 
-async function apiDeleteAgent(agentId: string): Promise<Response> {
+async function apiDeleteAgent(scope: ProjectScope, agentId: string): Promise<Response> {
   if (isBuiltInAgentId(agentId)) {
     return errorResponse(`Built-in agent cannot be deleted: ${agentId}`, 400);
   }
-  if (!config.agents[agentId]) {
+  if (!scope.config.agents[agentId]) {
     return errorResponse(`Unknown agent: ${agentId}`, 404);
   }
 
-  await removeLocalCustomAgent(PROJECT_DIR, agentId);
-  delete config.agents[agentId];
+  await removeLocalCustomAgent(scope.projectDir, agentId);
+  delete scope.config.agents[agentId];
   return jsonResponse({ ok: true });
 }
 
-async function apiSetLinearAutoCreate(req: Request): Promise<Response> {
+function listKnownProfileNames(): string[] {
+  const names = new Set<string>();
+  for (const info of runtime.projectRegistry.list()) {
+    const scope = runtime.projectRegistry.get(info.id);
+    if (!scope) continue;
+    for (const name of Object.keys(scope.config.profiles)) names.add(name);
+  }
+  return [...names].sort();
+}
+
+async function apiGetPreferences(): Promise<Response> {
+  const prefs = await runtime.preferencesGateway.load();
+  return jsonResponse({ preferences: prefs, knownProfiles: listKnownProfileNames() });
+}
+
+async function apiUpdatePreferences(req: Request): Promise<Response> {
+  const parsed = await parseJsonBody(req, UpdateUserPreferencesRequestSchema);
+  if (!parsed.ok) return parsed.response;
+
+  const next: UserPreferences = {
+    schemaVersion: 1,
+    ...(parsed.data.defaultAgent !== undefined ? { defaultAgent: parsed.data.defaultAgent } : {}),
+    ...(parsed.data.defaultProfile !== undefined ? { defaultProfile: parsed.data.defaultProfile } : {}),
+    ...(parsed.data.agents !== undefined ? { agents: parsed.data.agents } : {}),
+    ...(parsed.data.autoName !== undefined ? { autoName: parsed.data.autoName } : {}),
+  };
+
+  await runtime.preferencesGateway.save(next);
+
+  for (const info of runtime.projectRegistry.list()) {
+    const scope = runtime.projectRegistry.get(info.id);
+    if (!scope) continue;
+    try {
+      scope.refreshConfig(next);
+    } catch (err) {
+      log.warn(`[preferences] refreshConfig failed for ${info.id}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  return jsonResponse({ preferences: next, knownProfiles: listKnownProfileNames() });
+}
+
+async function apiSetLinearAutoCreate(scope: ProjectScope, req: Request): Promise<Response> {
   const parsed = await parseJsonBody(req, ToggleEnabledRequestSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
 
-  linearAutoCreateEnabled = body.enabled;
-  if (linearAutoCreateEnabled) {
+  linearAutoCreateEnabledByProject.set(scope.projectId, body.enabled);
+  if (body.enabled) {
     resetProcessedIssues();
-    startLinearAutoCreate();
+    startLinearAutoCreate(scope);
     log.info("[config] Linear auto-create worktrees enabled");
   } else {
-    stopLinearAutoCreateMonitor();
+    stopLinearAutoCreateMonitor(scope);
     log.info("[config] Linear auto-create worktrees disabled");
   }
 
-  await persistLocalLinearConfig(PROJECT_DIR, { autoCreateWorktrees: linearAutoCreateEnabled });
+  await persistLocalLinearConfig(scope.projectDir, { autoCreateWorktrees: body.enabled });
 
-  return jsonResponse({ ok: true, enabled: linearAutoCreateEnabled });
+  return jsonResponse({ ok: true, enabled: body.enabled });
 }
 
-async function apiSetAutoRemoveOnMerge(req: Request): Promise<Response> {
+async function apiSetAutoRemoveOnMerge(scope: ProjectScope, req: Request): Promise<Response> {
   const parsed = await parseJsonBody(req, ToggleEnabledRequestSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
 
-  autoRemoveOnMergeEnabled = body.enabled;
-  log.info(`[config] Auto-remove on merge ${autoRemoveOnMergeEnabled ? "enabled" : "disabled"}`);
+  autoRemoveOnMergeEnabledByProject.set(scope.projectId, body.enabled);
+  log.info(`[config] Auto-remove on merge ${body.enabled ? "enabled" : "disabled"}`);
 
-  await persistLocalGitHubConfig(PROJECT_DIR, { autoRemoveOnMerge: autoRemoveOnMergeEnabled });
+  await persistLocalGitHubConfig(scope.projectDir, { autoRemoveOnMerge: body.enabled });
 
-  return jsonResponse({ ok: true, enabled: autoRemoveOnMergeEnabled });
+  return jsonResponse({ ok: true, enabled: body.enabled });
 }
 
-async function apiPullMain(req: Request): Promise<Response> {
+async function apiPullMain(scope: ProjectScope, req: Request): Promise<Response> {
   const raw: unknown = await req.json().catch(() => ({}));
   const parsed = PullMainRequestSchema.safeParse(raw);
   if (!parsed.success) {
@@ -1068,12 +1562,12 @@ async function apiPullMain(req: Request): Promise<Response> {
   const force = parsed.data.force === true;
   const repo = parsed.data.repo ?? "";
 
-  let projectRoot = PROJECT_DIR;
+  let projectRoot = scope.projectDir;
   if (repo) {
-    const linkedRepo = config.integrations.github.linkedRepos.find((lr) => lr.alias === repo);
+    const linkedRepo = scope.config.integrations.github.linkedRepos.find((lr) => lr.alias === repo);
     if (!linkedRepo) return errorResponse(`Unknown linked repo: ${repo}`, 404);
     if (!linkedRepo.dir) return errorResponse(`Linked repo "${repo}" has no dir configured`, 400);
-    const resolvedDir = resolve(PROJECT_DIR, linkedRepo.dir);
+    const resolvedDir = resolve(scope.projectDir, linkedRepo.dir);
     const repoRoot = git.resolveRepoRoot(resolvedDir);
     if (!repoRoot) return errorResponse(`Linked repo "${repo}" dir is not a git repository: ${resolvedDir}`, 400);
     projectRoot = repoRoot;
@@ -1081,20 +1575,20 @@ async function apiPullMain(req: Request): Promise<Response> {
 
   // NOTE: linked repos inherit the project's mainBranch setting — if a linked
   // repo uses a different default branch this will need a per-repo override.
-  const deps = { git, projectRoot, mainBranch: config.workspace.mainBranch };
+  const deps = { git, projectRoot, mainBranch: scope.config.workspace.mainBranch };
   const result = force ? forcePullMainBranch(deps) : pullMainBranch(deps);
 
   log.info(`[pull-main] ${repo || "main"} ${force ? "force " : ""}pull: ${result.status}`);
   return jsonResponse(result);
 }
 
-async function apiGetLinearIssues(): Promise<Response> {
+async function apiGetLinearIssues(scope: ProjectScope): Promise<Response> {
   const apiKey = Bun.env.LINEAR_API_KEY;
-  const fetchResult = config.integrations.linear.enabled && apiKey?.trim()
+  const fetchResult = scope.config.integrations.linear.enabled && apiKey?.trim()
     ? await fetchAssignedIssues()
     : undefined;
   const result = buildLinearIssuesResponse({
-    integrationEnabled: config.integrations.linear.enabled,
+    integrationEnabled: scope.config.integrations.linear.enabled,
     apiKey,
     fetchResult,
   });
@@ -1104,9 +1598,9 @@ async function apiGetLinearIssues(): Promise<Response> {
 
 const MAX_DIFF_BYTES = 200 * 1024;
 
-async function apiGetWorktreeDiff(name: string): Promise<Response> {
-  await reconciliationService.reconcile(PROJECT_DIR);
-  const state = projectRuntime.getWorktreeByBranch(name);
+async function apiGetWorktreeDiff(scope: ProjectScope, name: string): Promise<Response> {
+  await scope.reconciliationService.reconcile(scope.projectDir);
+  const state = scope.projectRuntime.getWorktreeByBranch(name);
   if (!state) return errorResponse(`Worktree not found: ${name}`, 404);
 
   const uncommitted = git.readDiff(state.path);
@@ -1150,8 +1644,8 @@ function sanitizeFilename(name: string): string {
   return base.replace(/[^a-zA-Z0-9._-]/g, "_") || "upload";
 }
 
-async function apiUploadFiles(name: string, req: Request): Promise<Response> {
-  const state = projectRuntime.getWorktreeByBranch(name);
+async function apiUploadFiles(scope: ProjectScope, name: string, req: Request): Promise<Response> {
+  const state = scope.projectRuntime.getWorktreeByBranch(name);
   if (!state) return errorResponse(`Worktree not found: ${name}`, 404);
 
   let formData: FormData;
@@ -1231,9 +1725,7 @@ function parseNotificationIdParam(params: Record<string, string>):
 function parseAgentIdParam(params: Record<string, string>):
   | { ok: true; data: string }
   | { ok: false; response: Response } {
-  const parsed = parseParams(params, AgentIdParamsSchema);
-  if (!parsed.ok) return parsed;
-  const agentId = parsed.data.id.trim();
+  const agentId = params.id?.trim();
   if (!agentId) {
     return {
       ok: false,
@@ -1246,6 +1738,38 @@ function parseAgentIdParam(params: Record<string, string>):
   };
 }
 
+function parseProjectIdParam(
+  params: Record<string, string>,
+): { ok: true; data: { id: string; scope: ProjectScope } } | { ok: false; response: Response } {
+  const id = params.projectId;
+  if (!id || id.length === 0) {
+    return { ok: false, response: errorResponse("Missing projectId", 400) };
+  }
+  const scope = runtime.projectRegistry.get(id);
+  if (!scope) {
+    return { ok: false, response: errorResponse(`Project not found: ${id}`, 404) };
+  }
+  return { ok: true, data: { id, scope } };
+}
+
+// --- Project registry handlers ---
+
+async function apiListProjects(): Promise<Response> {
+  return jsonResponse({ projects: runtime.projectRegistry.list() });
+}
+
+async function apiCreateProject(req: Request): Promise<Response> {
+  const body = CreateProjectRequestSchema.parse(await req.json());
+  const project = await runtime.projectRegistry.add(body);
+  return jsonResponse({ project }, 201);
+}
+
+async function apiRemoveProject(id: string, req: Request): Promise<Response> {
+  const body = RemoveProjectRequestSchema.parse(await req.json());
+  await runtime.projectRegistry.remove(id, { killSessions: body.killSessions ?? false });
+  return jsonResponse({ ok: true });
+}
+
 // --- Server ---
 
 Bun.serve({
@@ -1254,97 +1778,202 @@ Bun.serve({
 
   routes: {
     [apiPaths.streamAgentsWorktreeConversation]: (req, server) => {
+      const projectId = decodeURIComponent(req.params.projectId);
       const branch = decodeURIComponent(req.params.name);
-      return server.upgrade(req, { data: { kind: "agents", branch, conversationId: null, unsubscribe: null } })
+      const scope = runtime.projectRegistry.get(projectId);
+      if (!scope) return new Response("Project not found", { status: 404 });
+      return server.upgrade(req, { data: { kind: "agents", projectId, branch, conversationId: null, unsubscribe: null } })
         ? undefined
         : new Response("WebSocket upgrade failed", { status: 400 });
     },
 
-    "/ws/:worktree": (req, server) => {
+    "/ws/projects/:projectId/:worktree": (req, server) => {
+      const projectId = decodeURIComponent(req.params.projectId);
       const branch = decodeURIComponent(req.params.worktree);
+      const scope = runtime.projectRegistry.get(projectId);
+      if (!scope) return new Response("Project not found", { status: 404 });
       return server.upgrade(req, {
-        data: { kind: "terminal", branch, worktreeId: null, attachId: null, attached: false },
+        data: { kind: "terminal", projectId, branch, worktreeId: null, attachId: null, attached: false },
       })
         ? undefined
         : new Response("WebSocket upgrade failed", { status: 400 });
     },
 
+    "/ws/external/:sessionName": (req, server) => {
+      const sessionName = decodeURIComponent(req.params.sessionName);
+      return server.upgrade(req, {
+        data: { kind: "terminal-external", sessionName, attachId: null, attached: false },
+      })
+        ? undefined
+        : new Response("WebSocket upgrade failed", { status: 400 });
+    },
+
+    "/ws/projects/:projectId/scratch/:id": (req, server) => {
+      const projectId = decodeURIComponent(req.params.projectId);
+      const id = decodeURIComponent(req.params.id);
+      const scope = runtime.projectRegistry.get(projectId);
+      if (!scope) return new Response("Project not found", { status: 404 });
+      const meta = scope.scratchSessionService.list().find((s) => s.id === id);
+      if (!meta) return new Response("Scratch session not found", { status: 404 });
+      return server.upgrade(req, {
+        data: {
+          kind: "terminal-scratch",
+          projectId,
+          scratchId: id,
+          sessionName: meta.sessionName,
+          attachId: null,
+          attached: false,
+        },
+      })
+        ? undefined
+        : new Response("WebSocket upgrade failed", { status: 400 });
+    },
+
+    [apiPaths.fetchPreferences]: {
+      GET: () => catching("GET /api/preferences", () => apiGetPreferences()),
+      PUT: (req) => catching("PUT /api/preferences", () => apiUpdatePreferences(req)),
+    },
+
     [apiPaths.fetchConfig]: {
-      GET: () => jsonResponse(getFrontendConfig()),
+      GET: (req) => {
+        const url = new URL(req.url);
+        const projectId = url.searchParams.get("projectId");
+        const scope = projectId
+          ? runtime.projectRegistry.get(projectId)
+          : (() => {
+              const first = runtime.projectRegistry.list()[0];
+              return first ? runtime.projectRegistry.get(first.id) : null;
+            })();
+        if (!scope) return errorResponse("No project available", 404);
+        return jsonResponse(getFrontendConfig(scope));
+      },
+    },
+
+    [apiPaths.fetchExternalSessions]: {
+      GET: () => catching("GET /api/external-sessions", () => apiListExternalSessions()),
+    },
+
+    [apiPaths.fetchProjects]: {
+      GET: () => catching("GET /api/projects", () => apiListProjects()),
+      POST: (req) => catching("POST /api/projects", () => apiCreateProject(req)),
+    },
+
+    [apiPaths.removeProject]: {
+      DELETE: (req) => {
+        const id = req.params.projectId;
+        if (!id || id.length === 0) return errorResponse("Missing projectId", 400);
+        return catching("DELETE /api/projects/:projectId", () => apiRemoveProject(id, req));
+      },
     },
 
     [apiPaths.fetchAvailableBranches]: {
-      GET: (req) => catching("GET /api/branches", () => apiListBranches(req)),
+      GET: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("GET /api/projects/:projectId/branches", () => apiListBranches(parsed.data.scope, req));
+      },
     },
 
     [apiPaths.fetchBaseBranches]: {
-      GET: () => catching("GET /api/base-branches", () => apiListBaseBranches()),
+      GET: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("GET /api/projects/:projectId/base-branches", () => apiListBaseBranches(parsed.data.scope));
+      },
     },
 
     [apiPaths.fetchProject]: {
-      GET: () => catching("GET /api/project", () => apiGetProject()),
+      GET: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("GET /api/projects/:projectId/project", () => apiGetProject(parsed.data.scope));
+      },
     },
 
     [apiPaths.fetchAgents]: {
-      GET: () => catching("GET /api/agents", () => apiListAgents()),
-      POST: (req) => catching("POST /api/agents", () => apiCreateAgent(req)),
+      GET: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("GET /api/projects/:projectId/agents", () => apiListAgents(parsed.data.scope));
+      },
+      POST: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("POST /api/projects/:projectId/agents", () => apiCreateAgent(parsed.data.scope, req));
+      },
     },
 
     [apiPaths.validateAgent]: {
-      POST: (req) => catching("POST /api/agents/validate", () => apiValidateAgent(req)),
+      POST: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("POST /api/projects/:projectId/agents/validate", () => apiValidateAgent(req));
+      },
     },
 
     [apiPaths.updateAgent]: {
       PUT: (req) => {
-        const parsed = parseAgentIdParam(req.params);
-        if (!parsed.ok) return parsed.response;
-        return catching("PUT /api/agents/:id", () => apiUpdateAgent(parsed.data, req));
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
+        const parsedAgent = parseAgentIdParam(req.params);
+        if (!parsedAgent.ok) return parsedAgent.response;
+        return catching("PUT /api/projects/:projectId/agents/:id", () => apiUpdateAgent(parsedProject.data.scope, parsedAgent.data, req));
       },
       DELETE: (req) => {
-        const parsed = parseAgentIdParam(req.params);
-        if (!parsed.ok) return parsed.response;
-        return catching("DELETE /api/agents/:id", () => apiDeleteAgent(parsed.data));
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
+        const parsedAgent = parseAgentIdParam(req.params);
+        if (!parsedAgent.ok) return parsedAgent.response;
+        return catching("DELETE /api/projects/:projectId/agents/:id", () => apiDeleteAgent(parsedProject.data.scope, parsedAgent.data));
       },
     },
 
     [apiPaths.attachAgentsWorktreeConversation]: {
       POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`POST ${apiPaths.attachAgentsWorktreeConversation}`, () => apiAttachAgentsWorktree(name));
+        return catching(`POST ${apiPaths.attachAgentsWorktreeConversation}`, () => apiAttachAgentsWorktree(parsedProject.data.scope, name));
       },
     },
 
     [apiPaths.fetchAgentsWorktreeConversationHistory]: {
       GET: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`GET ${apiPaths.fetchAgentsWorktreeConversationHistory}`, () => apiGetAgentsWorktreeHistory(name));
+        return catching(`GET ${apiPaths.fetchAgentsWorktreeConversationHistory}`, () => apiGetAgentsWorktreeHistory(parsedProject.data.scope, name));
       },
     },
 
     [apiPaths.sendAgentsWorktreeConversationMessage]: {
       POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
         return catching(
           `POST ${apiPaths.sendAgentsWorktreeConversationMessage}`,
-          () => apiSendAgentsWorktreeMessage(name, req),
+          () => apiSendAgentsWorktreeMessage(parsedProject.data.scope, name, req),
         );
       },
     },
 
     [apiPaths.interruptAgentsWorktreeConversation]: {
       POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
         return catching(
           `POST ${apiPaths.interruptAgentsWorktreeConversation}`,
-          () => apiInterruptAgentsWorktree(name),
+          () => apiInterruptAgentsWorktree(parsedProject.data.scope, name),
         );
       },
     },
@@ -1353,113 +1982,260 @@ Bun.serve({
       POST: (req) => catching("POST /api/runtime/events", () => apiRuntimeEvent(req)),
     },
 
+    [apiPaths.fetchScratchSessions]: {
+      GET: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("GET /api/projects/:projectId/scratch-sessions", () => apiListScratchSessions(parsed.data.scope));
+      },
+      POST: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("POST /api/projects/:projectId/scratch-sessions", () => apiCreateScratchSession(parsed.data.scope, req));
+      },
+    },
+
+    [apiPaths.removeScratchSession]: {
+      DELETE: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
+        const parsed = parseScratchSessionIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("DELETE /api/projects/:projectId/scratch-sessions/:id", () => apiRemoveScratchSession(parsedProject.data.scope, parsed.data));
+      },
+    },
+
+    [apiPaths.attachAgentsScratchConversation]: {
+      POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
+        const parsed = parseScratchSessionIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching(`POST ${apiPaths.attachAgentsScratchConversation}`, () => apiAttachAgentsScratchConversation(parsedProject.data.scope, parsed.data));
+      },
+    },
+
+    [apiPaths.fetchAgentsScratchConversationHistory]: {
+      GET: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
+        const parsed = parseScratchSessionIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching(`GET ${apiPaths.fetchAgentsScratchConversationHistory}`, () => apiGetAgentsScratchConversationHistory(parsedProject.data.scope, parsed.data));
+      },
+    },
+
+    [apiPaths.sendAgentsScratchConversationMessage]: {
+      POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
+        const parsed = parseScratchSessionIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching(`POST ${apiPaths.sendAgentsScratchConversationMessage}`, () => apiSendAgentsScratchConversationMessage(parsedProject.data.scope, parsed.data, req));
+      },
+    },
+
+    [apiPaths.interruptAgentsScratchConversation]: {
+      POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
+        const parsed = parseScratchSessionIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching(`POST ${apiPaths.interruptAgentsScratchConversation}`, () => apiInterruptAgentsScratchConversation(parsedProject.data.scope, parsed.data));
+      },
+    },
+
+    [apiPaths.attachAgentsExternalConversation]: {
+      POST: (req) => {
+        const name = req.params.name;
+        if (!name || name.length === 0) return errorResponse("Missing session name", 400);
+        return catching(`POST ${apiPaths.attachAgentsExternalConversation}`, () => apiAttachAgentsExternalConversation(name));
+      },
+    },
+
+    [apiPaths.fetchAgentsExternalConversationHistory]: {
+      GET: (req) => {
+        const name = req.params.name;
+        if (!name || name.length === 0) return errorResponse("Missing session name", 400);
+        return catching(`GET ${apiPaths.fetchAgentsExternalConversationHistory}`, () => apiGetAgentsExternalConversationHistory(name));
+      },
+    },
+
+    [apiPaths.sendAgentsExternalConversationMessage]: {
+      POST: (req) => {
+        const name = req.params.name;
+        if (!name || name.length === 0) return errorResponse("Missing session name", 400);
+        return catching(`POST ${apiPaths.sendAgentsExternalConversationMessage}`, () => apiSendAgentsExternalConversationMessage(name, req));
+      },
+    },
+
+    [apiPaths.interruptAgentsExternalConversation]: {
+      POST: (req) => {
+        const name = req.params.name;
+        if (!name || name.length === 0) return errorResponse("Missing session name", 400);
+        return catching(`POST ${apiPaths.interruptAgentsExternalConversation}`, () => apiInterruptAgentsExternalConversation(name));
+      },
+    },
+
     [apiPaths.fetchWorktrees]: {
-      GET: () => catching("GET /api/worktrees", () => apiGetWorktrees()),
-      POST: (req) => catching("POST /api/worktrees", () => apiCreateWorktree(req)),
+      GET: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("GET /api/projects/:projectId/worktrees", () => apiGetWorktrees(parsed.data.scope));
+      },
+      POST: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("POST /api/projects/:projectId/worktrees", () => apiCreateWorktree(parsed.data.scope, req));
+      },
     },
 
     [apiPaths.removeWorktree]: {
       DELETE: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`DELETE /api/worktrees/${name}`, () => apiDeleteWorktree(name));
+        return catching(`DELETE /api/projects/:projectId/worktrees/${name}`, () => apiDeleteWorktree(parsedProject.data.scope, name));
+      },
+      PATCH: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
+        const parsed = parseWorktreeNameParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        const name = parsed.data;
+        return catching(`PATCH /api/projects/:projectId/worktrees/${name}`, () => apiUpdateWorktree(parsedProject.data.scope, name, req));
       },
     },
 
     [apiPaths.openWorktree]: {
       POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`POST /api/worktrees/${name}/open`, () => apiOpenWorktree(name));
+        return catching(`POST /api/projects/:projectId/worktrees/${name}/open`, () => apiOpenWorktree(parsedProject.data.scope, name, req));
       },
     },
 
-    "/api/worktrees/:name/terminal-launch": {
+    "/api/projects/:projectId/worktrees/:name/terminal-launch": {
       GET: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`GET /api/worktrees/${name}/terminal-launch`, () => apiGetNativeTerminalLaunch(name));
+        return catching(`GET /api/projects/:projectId/worktrees/${name}/terminal-launch`, () => apiGetNativeTerminalLaunch(parsedProject.data.scope, name));
       },
     },
 
     [apiPaths.closeWorktree]: {
       POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`POST /api/worktrees/${name}/close`, () => apiCloseWorktree(name));
+        return catching(`POST /api/projects/:projectId/worktrees/${name}/close`, () => apiCloseWorktree(parsedProject.data.scope, name));
       },
     },
 
     [apiPaths.setWorktreeArchived]: {
       PUT: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`PUT /api/worktrees/${name}/archive`, () => apiSetWorktreeArchived(name, req));
+        return catching(`PUT /api/projects/:projectId/worktrees/${name}/archive`, () => apiSetWorktreeArchived(parsedProject.data.scope, name, req));
       },
     },
 
     [apiPaths.sendWorktreePrompt]: {
       POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`POST /api/worktrees/${name}/send`, () => apiSendPrompt(name, req));
+        return catching(`POST /api/projects/:projectId/worktrees/${name}/send`, () => apiSendPrompt(parsedProject.data.scope, name, req));
       },
     },
 
-    "/api/worktrees/:name/upload": {
+    "/api/projects/:projectId/worktrees/:name/upload": {
       POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`POST /api/worktrees/${name}/upload`, () => apiUploadFiles(name, req));
+        return catching(`POST /api/projects/:projectId/worktrees/${name}/upload`, () => apiUploadFiles(parsedProject.data.scope, name, req));
       },
     },
 
     [apiPaths.mergeWorktree]: {
       POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`POST /api/worktrees/${name}/merge`, () => apiMergeWorktree(name));
+        return catching(`POST /api/projects/:projectId/worktrees/${name}/merge`, () => apiMergeWorktree(parsedProject.data.scope, name));
       },
     },
 
     [apiPaths.fetchWorktreeDiff]: {
       GET: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseWorktreeNameParam(req.params);
         if (!parsed.ok) return parsed.response;
         const name = parsed.data;
-        return catching(`GET /api/worktrees/${name}/diff`, () => apiGetWorktreeDiff(name));
+        return catching(`GET /api/projects/:projectId/worktrees/${name}/diff`, () => apiGetWorktreeDiff(parsedProject.data.scope, name));
       },
     },
 
     [apiPaths.fetchLinearIssues]: {
-      GET: () => catching("GET /api/linear/issues", () => apiGetLinearIssues()),
+      GET: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("GET /api/projects/:projectId/linear/issues", () => apiGetLinearIssues(parsed.data.scope));
+      },
     },
 
     [apiPaths.setLinearAutoCreate]: {
-      PUT: (req) => catching("PUT /api/linear/auto-create", () => apiSetLinearAutoCreate(req)),
+      PUT: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("PUT /api/projects/:projectId/linear/auto-create", () => apiSetLinearAutoCreate(parsed.data.scope, req));
+      },
     },
 
     [apiPaths.setAutoRemoveOnMerge]: {
-      PUT: (req) => catching("PUT /api/github/auto-remove-on-merge", () => apiSetAutoRemoveOnMerge(req)),
+      PUT: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("PUT /api/projects/:projectId/github/auto-remove-on-merge", () => apiSetAutoRemoveOnMerge(parsed.data.scope, req));
+      },
     },
 
     [apiPaths.pullMain]: {
-      POST: (req) => catching("POST /api/pull-main", () => apiPullMain(req)),
+      POST: (req) => {
+        const parsed = parseProjectIdParam(req.params);
+        if (!parsed.ok) return parsed.response;
+        return catching("POST /api/projects/:projectId/pull-main", () => apiPullMain(parsed.data.scope, req));
+      },
     },
 
     [apiPaths.fetchCiLogs]: {
       GET: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseRunIdParam(req.params);
         if (!parsed.ok) return parsed.response;
-        return catching(`GET /api/ci-logs/${parsed.data}`, () => apiCiLogs(parsed.data));
+        return catching(`GET /api/projects/:projectId/ci-logs/${parsed.data}`, () => apiCiLogs(parsed.data));
       },
     },
 
@@ -1469,6 +2245,8 @@ Bun.serve({
 
     [apiPaths.dismissNotification]: {
       POST: (req) => {
+        const parsedProject = parseProjectIdParam(req.params);
+        if (!parsedProject.ok) return parsedProject.response;
         const parsed = parseNotificationIdParam(req.params);
         if (!parsed.ok) return parsed.response;
         const id = parsed.data;
@@ -1514,8 +2292,12 @@ Bun.serve({
 
     open(ws) {
       const data = ws.data;
-      if (data.kind === "terminal") {
-        log.debug(`[ws] open branch=${data.branch}`);
+      if (data.kind === "terminal" || data.kind === "terminal-external" || data.kind === "terminal-scratch") {
+        const label =
+          data.kind === "terminal" ? data.branch :
+          data.kind === "terminal-external" ? data.sessionName :
+          `scratch:${data.scratchId}`;
+        log.debug(`[ws] open ${data.kind} target=${label}`);
         return;
       }
 
@@ -1535,7 +2317,6 @@ Bun.serve({
         sendWs(ws, { type: "error", message: "malformed message" });
         return;
       }
-      const { branch } = data;
 
       switch (msg.type) {
         case "input": {
@@ -1550,51 +2331,59 @@ Bun.serve({
           await sendKeys(attachId, msg.hexBytes);
           break;
         }
-        case "selectPane":
-          {
-            const attachId = getAttachedSessionId(data, ws);
-            if (!attachId) return;
-            log.debug(`[ws] selectPane pane=${msg.pane} branch=${branch} attachId=${attachId}`);
-            await selectPane(attachId, msg.pane);
-          }
+        case "selectPane": {
+          const attachId = getAttachedSessionId(data, ws);
+          if (!attachId) return;
+          log.debug(`[ws] selectPane pane=${msg.pane} kind=${data.kind} attachId=${attachId}`);
+          await selectPane(attachId, msg.pane);
           break;
+        }
         case "resize":
           if (!data.attached) {
-            // First resize = client reporting actual dimensions. Attach now.
+            // Lazy attach: first resize carries initial dimensions. Mark attached
+            // before the async work so a re-entrant resize during attach is a no-op.
             data.attached = true;
-            log.debug(`[ws] first resize (attaching) branch=${branch} cols=${msg.cols} rows=${msg.rows}`);
             try {
-              if (msg.initialPane !== undefined) {
-                log.debug(`[ws] initialPane=${msg.initialPane} branch=${branch}`);
+              let attachTarget: TerminalAttachTarget;
+              let attachIdPrefix: string;
+              if (data.kind === "terminal") {
+                const projScope = runtime.projectRegistry.get(data.projectId);
+                if (!projScope) throw new Error(`Project not found: ${data.projectId}`);
+                const terminalWorktree = await resolveTerminalWorktree(projScope, data.branch);
+                attachTarget = terminalWorktree.attachTarget;
+                attachIdPrefix = terminalWorktree.worktreeId;
+                data.worktreeId = terminalWorktree.worktreeId;
+              } else if (data.kind === "terminal-external") {
+                const windowName = tmux.getFirstWindowName(data.sessionName);
+                if (!windowName) throw new Error(`tmux session not found: ${data.sessionName}`);
+                attachTarget = { ownerSessionName: data.sessionName, windowName };
+                attachIdPrefix = `external-${data.sessionName}`;
+              } else {
+                // terminal-scratch
+                const windowName = tmux.getFirstWindowName(data.sessionName);
+                if (!windowName) throw new Error(`scratch tmux session not found: ${data.sessionName}`);
+                attachTarget = { ownerSessionName: data.sessionName, windowName };
+                attachIdPrefix = `scratch-${data.scratchId}`;
               }
-              const terminalWorktree = await resolveTerminalWorktree(branch);
-              const attachId = `${terminalWorktree.worktreeId}:${randomUUID()}`;
-              data.worktreeId = terminalWorktree.worktreeId;
+
+              const attachId = `${attachIdPrefix}:${randomUUID()}`;
               data.attachId = attachId;
-              await attach(
-                attachId,
-                terminalWorktree.attachTarget,
-                msg.cols,
-                msg.rows,
-                msg.initialPane,
-              );
+              await attach(attachId, attachTarget, msg.cols, msg.rows, msg.initialPane);
               const { onData, onExit } = makeCallbacks(ws);
               setCallbacks(attachId, onData, onExit);
               const scrollback = getScrollback(attachId);
-              log.debug(
-                `[ws] attached branch=${branch} worktreeId=${terminalWorktree.worktreeId} attachId=${attachId} scrollback=${scrollback.length} bytes`,
-              );
+              log.debug(`[ws] attached kind=${data.kind} attachId=${attachId} scrollback=${scrollback.length} bytes`);
               if (scrollback.length > 0) {
                 sendWs(ws, { type: "scrollback", data: scrollback });
               }
             } catch (err: unknown) {
               const errMsg = err instanceof Error ? err.message : String(err);
               data.attached = false;
-              data.worktreeId = null;
               data.attachId = null;
-              log.error(`[ws] attach failed branch=${branch}: ${errMsg}`);
+              if (data.kind === "terminal") data.worktreeId = null;
+              log.error(`[ws] attach failed kind=${data.kind}: ${errMsg}`);
               sendWs(ws, { type: "error", message: errMsg });
-              ws.close(1011, errMsg.slice(0, 123)); // 1011 = Internal Error
+              ws.close(1011, errMsg.slice(0, 123));
             }
           } else {
             const attachId = getAttachedSessionId(data, ws);
@@ -1614,9 +2403,12 @@ Bun.serve({
         return;
       }
 
-      log.debug(
-        `[ws] close branch=${data.branch} code=${code} reason=${reason} attached=${data.attached} worktreeId=${data.worktreeId} attachId=${data.attachId}`,
-      );
+      const label =
+        data.kind === "terminal" ? `branch=${data.branch} worktreeId=${data.worktreeId}` :
+        data.kind === "terminal-external" ? `external=${data.sessionName}` :
+        `scratch=${data.scratchId} session=${data.sessionName}`;
+      log.debug(`[ws] close ${label} code=${code} reason=${reason} attached=${data.attached} attachId=${data.attachId}`);
+
       if (data.attachId) {
         clearCallbacks(data.attachId);
         await detach(data.attachId);
@@ -1634,19 +2426,38 @@ if (tmuxCheck.exitCode !== 0) {
 }
 
 cleanupStaleSessions();
-startPrMonitor(getWorktreeGitDirs, config.integrations.github.linkedRepos, PROJECT_DIR, undefined, hasRecentDashboardActivity, async () => {
-  if (autoRemoveOnMergeEnabled) {
-    await runAutoRemove(autoRemoveDeps);
-  }
-});
-if (linearAutoCreateEnabled) {
-  startLinearAutoCreate();
-}
-if (config.workspace.autoPull.enabled) {
-  startAutoPullMonitor(
-    { git, projectRoot: PROJECT_DIR, mainBranch: config.workspace.mainBranch },
-    config.workspace.autoPull.intervalSeconds * 1000,
+
+// Start per-project background monitors
+for (const proj of runtime.projectRegistry.list()) {
+  const projScope = runtime.projectRegistry.get(proj.id);
+  if (!projScope) continue;
+
+  const autoRemoveEnabled = autoRemoveOnMergeEnabledByProject.get(proj.id) ?? false;
+  const autoRemoveDeps = buildAutoRemoveDeps(projScope);
+
+  startPrMonitor(
+    () => getWorktreeGitDirs(projScope),
+    projScope.config.integrations.github.linkedRepos,
+    projScope.projectDir,
+    undefined,
+    hasRecentDashboardActivity,
+    async () => {
+      if (autoRemoveOnMergeEnabledByProject.get(proj.id) ?? autoRemoveEnabled) {
+        await runAutoRemove(autoRemoveDeps);
+      }
+    },
   );
+
+  if (linearAutoCreateEnabledByProject.get(proj.id) ?? false) {
+    startLinearAutoCreate(projScope);
+  }
+
+  if (projScope.config.workspace.autoPull.enabled) {
+    startAutoPullMonitor(
+      { git, projectRoot: projScope.projectDir, mainBranch: projScope.config.workspace.mainBranch },
+      projScope.config.workspace.autoPull.intervalSeconds * 1000,
+    );
+  }
 }
 
 log.info(`Dev Dashboard API running at http://localhost:${PORT}`);

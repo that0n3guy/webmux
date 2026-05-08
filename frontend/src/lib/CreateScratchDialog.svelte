@@ -1,0 +1,150 @@
+<script lang="ts">
+  import type { CreateScratchSessionRequest } from "@webmux/api-contract";
+  import type { ProjectInfo } from "./types";
+  import BaseDialog from "./BaseDialog.svelte";
+  import Btn from "./Btn.svelte";
+  import Toggle from "./Toggle.svelte";
+
+  let {
+    projectName,
+    projects,
+    defaultProjectId,
+    agentChoices,
+    lockedKind,
+    onProjectChange,
+    onClose,
+    onCreate,
+  }: {
+    projectName: string;
+    projects: ProjectInfo[];
+    defaultProjectId: string;
+    agentChoices: { id: string; label: string }[];
+    lockedKind?: "shell" | "agent";
+    onProjectChange?: (projectId: string) => void;
+    onClose: () => void;
+    onCreate: (req: CreateScratchSessionRequest) => Promise<void>;
+  } = $props();
+
+  const YOLO_STORAGE_KEY = "wm-yolo";
+
+  let selectedProjectId = $state(defaultProjectId);
+  $effect(() => {
+    selectedProjectId = defaultProjectId;
+  });
+
+  let displayName = $state("");
+  let kind = $state<"shell" | "agent">(lockedKind ?? "shell");
+  let agentId = $state<string>(agentChoices[0]?.id ?? "");
+  const savedYolo = localStorage.getItem(YOLO_STORAGE_KEY);
+  let yolo = $state(savedYolo === null ? true : savedYolo === "true");
+  let busy = $state(false);
+  let error = $state<string | null>(null);
+
+  async function submit(e: SubmitEvent) {
+    e.preventDefault();
+    if (busy || displayName.trim() === "") return;
+    busy = true;
+    error = null;
+    try {
+      localStorage.setItem(YOLO_STORAGE_KEY, String(yolo));
+      await onCreate({
+        displayName: displayName.trim(),
+        kind,
+        agentId: kind === "agent" ? agentId : undefined,
+        ...(kind === "agent" ? { yolo } : {}),
+      });
+      displayName = "";
+      onClose();
+    } catch (err: unknown) {
+      error = err instanceof Error ? err.message : String(err);
+    } finally {
+      busy = false;
+    }
+  }
+</script>
+
+<BaseDialog onclose={onClose} className="md:max-w-[420px]">
+  <form onsubmit={submit} class="flex flex-col gap-4">
+    <div>
+      <h2 class="text-base">{lockedKind === "agent" ? "New AI session" : "New scratch session"}</h2>
+      {#if projects.length === 1}
+        <p class="text-[12px] text-muted mt-0.5">in <span class="text-primary font-medium">{projectName}</span></p>
+      {/if}
+    </div>
+
+    {#if projects.length > 1}
+      <div>
+        <label class="block text-xs text-muted mb-1.5" for="scratch-project">Project</label>
+        <select
+          id="scratch-project"
+          bind:value={selectedProjectId}
+          onchange={() => onProjectChange?.(selectedProjectId)}
+          class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] outline-none focus:border-accent"
+        >
+          {#each projects as p (p.id)}
+            <option value={p.id}>{p.name}</option>
+          {/each}
+        </select>
+      </div>
+    {/if}
+
+    <div>
+      <label class="block text-xs text-muted mb-1.5" for="scratch-name">Name</label>
+      <input
+        id="scratch-name"
+        bind:value={displayName}
+        required
+        autocomplete="off"
+        class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] placeholder:text-muted/50 outline-none focus:border-accent"
+        placeholder="my-scratch"
+      />
+    </div>
+
+    {#if !lockedKind}
+      <fieldset class="flex flex-col gap-2 text-[13px]">
+        <legend class="text-xs text-muted mb-1.5">Type</legend>
+        <label class="flex items-center gap-2">
+          <input type="radio" bind:group={kind} value="shell" /> Shell
+        </label>
+        <label class="flex items-center gap-2">
+          <input type="radio" bind:group={kind} value="agent" disabled={agentChoices.length === 0} /> Agent
+        </label>
+      </fieldset>
+    {/if}
+
+    {#if kind === "agent"}
+      <div>
+        <label class="block text-xs text-muted mb-1.5" for="scratch-agent">Agent</label>
+        <select
+          id="scratch-agent"
+          bind:value={agentId}
+          class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] outline-none focus:border-accent"
+        >
+          {#each agentChoices as a (a.id)}
+            <option value={a.id}>{a.label}</option>
+          {/each}
+        </select>
+      </div>
+      <div class="flex items-center justify-between gap-3 px-3 py-2 rounded-md border border-edge bg-surface">
+        <div>
+          <span class="text-[13px] text-primary">Skip permissions (yolo)</span>
+          <p class="text-[11px] text-muted mt-0.5">
+            Launch with <code class="text-accent/80">--dangerously-skip-permissions</code> / <code class="text-accent/80">--yolo</code>.
+          </p>
+        </div>
+        <Toggle bind:checked={yolo} aria-label="Skip permissions" />
+      </div>
+    {/if}
+
+    {#if error}
+      <div class="text-[12px] text-red-400">{error}</div>
+    {/if}
+
+    <div class="flex gap-2 justify-end pt-2">
+      <Btn variant="ghost" onclick={onClose} disabled={busy}>Cancel</Btn>
+      <Btn variant="primary" type="submit" disabled={busy || displayName.trim() === ""}>
+        {busy ? "Creating…" : "Create"}
+      </Btn>
+    </div>
+  </form>
+</BaseDialog>

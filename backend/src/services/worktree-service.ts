@@ -34,6 +34,7 @@ export interface InitializeManagedWorktreeOptions {
   controlToken?: string;
   now?: () => Date;
   worktreeId?: string;
+  yolo?: boolean;
 }
 
 export interface InitializeManagedWorktreeResult {
@@ -60,6 +61,7 @@ export interface CreateManagedWorktreeOptions {
   controlToken?: string;
   now?: () => Date;
   worktreeId?: string;
+  yolo?: boolean;
   deleteBranchOnRollback?: boolean;
   sessionLayoutPlan?: SessionLayoutPlan;
   sessionLayoutPlanBuilder?: (initialized: InitializeManagedWorktreeResult) => SessionLayoutPlan;
@@ -157,6 +159,7 @@ export async function initializeManagedWorktree(
     runtime: opts.runtime,
     startupEnvValues: { ...(opts.startupEnvValues ?? {}) },
     allocatedPorts: { ...(opts.allocatedPorts ?? {}) },
+    ...(opts.yolo === undefined ? {} : { yolo: opts.yolo }),
   };
 
   const paths = await ensureWorktreeStorageDirs(opts.gitDir);
@@ -220,6 +223,7 @@ export async function createManagedWorktree(
       controlToken: opts.controlToken,
       now: opts.now,
       worktreeId: opts.worktreeId,
+      yolo: opts.yolo,
     });
 
     if (deps.tmux) {

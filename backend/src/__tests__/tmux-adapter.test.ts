@@ -1,13 +1,35 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildProjectSessionName,
   buildWorktreeWindowName,
+  parseSessionSummaries,
   parseWindowSummaries,
   sanitizeTmuxNameSegment,
 } from "../adapters/tmux";
+
+test("parseSessionSummaries: parses three sessions including attached and grouped", () => {
+  const raw = [
+    "mcpsaa\t1\t1\t",
+    "wm-webmux-test-f01fb94b\t2\t0\twm-webmux-test-f01fb94b",
+    "wm-dash-3100-7\t2\t1\twm-webmux-test-f01fb94b",
+  ].join("\n");
+
+  const out = parseSessionSummaries(raw);
+  expect(out).toEqual([
+    { name: "mcpsaa", windowCount: 1, attached: true, group: null },
+    { name: "wm-webmux-test-f01fb94b", windowCount: 2, attached: false, group: "wm-webmux-test-f01fb94b" },
+    { name: "wm-dash-3100-7", windowCount: 2, attached: true, group: "wm-webmux-test-f01fb94b" },
+  ]);
+});
+
+test("parseSessionSummaries: skips blank lines and malformed rows", () => {
+  const raw = "\nfoo\t1\t0\t\n\n";
+  const out = parseSessionSummaries(raw);
+  expect(out).toEqual([{ name: "foo", windowCount: 1, attached: false, group: null }]);
+});
 
 const isolatedTmuxScriptPath = new URL("../../../scripts/run-with-isolated-tmux.sh", import.meta.url).pathname;
 
@@ -144,7 +166,7 @@ describe("buildWorktreeWindowName", () => {
 });
 
 describe("parseWindowSummaries", () => {
-  it("parses tmux list-windows output", () => {
+  it("parses tmux list-windows output (legacy 3-field rows fall back to nulls)", () => {
     const output = [
       "wm-project-a1b2c3d4\twm-main\t2",
       "wm-project-a1b2c3d4\twm-feature/search\t3",
@@ -155,11 +177,31 @@ describe("parseWindowSummaries", () => {
         sessionName: "wm-project-a1b2c3d4",
         windowName: "wm-main",
         paneCount: 2,
+        paneCurrentPath: null,
+        webmuxWorktreeId: null,
       },
       {
         sessionName: "wm-project-a1b2c3d4",
         windowName: "wm-feature/search",
         paneCount: 3,
+        paneCurrentPath: null,
+        webmuxWorktreeId: null,
+      },
+    ]);
+  });
+
+  it("parses 5-field rows with pane_current_path and @webmux-worktree-id", () => {
+    const output = [
+      "wm-project-a1b2c3d4\twm-feature/search\t1\t/home/dev/__worktrees/feature/search\twt-abc123",
+    ].join("\n");
+
+    expect(parseWindowSummaries(output)).toEqual([
+      {
+        sessionName: "wm-project-a1b2c3d4",
+        windowName: "wm-feature/search",
+        paneCount: 1,
+        paneCurrentPath: "/home/dev/__worktrees/feature/search",
+        webmuxWorktreeId: "wt-abc123",
       },
     ]);
   });

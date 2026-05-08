@@ -51,7 +51,7 @@ export function resolveAgentChatSupport(input: {
       ok: true,
       data: {
         provider: input.agent.implementation.agent,
-        submitDelayMs: input.agent.implementation.agent === "codex" ? 200 : 0,
+        submitDelayMs: 200,
       },
     };
   }

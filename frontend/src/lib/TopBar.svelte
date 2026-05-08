@@ -7,7 +7,6 @@
   } from "./types";
   import LinearBadge from "./LinearBadge.svelte";
   import RepoGroup from "./RepoGroup.svelte";
-  import Btn from "./Btn.svelte";
   import NotificationItem from "./NotificationItem.svelte";
   import { makeCursorUrl } from "./utils";
 
@@ -17,9 +16,12 @@
     sshHost,
     linkedRepos = [],
     isMobile = false,
+    showMobileChat = false,
+    showViewToggle = false,
     notificationHistory = [],
     unreadCount = 0,
     ontogglesidebar,
+    ontoggleview,
     onclose,
     onarchive,
     onmerge,
@@ -37,9 +39,12 @@
     sshHost: string;
     linkedRepos?: LinkedRepoInfo[];
     isMobile?: boolean;
+    showMobileChat?: boolean;
+    showViewToggle?: boolean;
     notificationHistory?: AppNotification[];
     unreadCount?: number;
     ontogglesidebar?: () => void;
+    ontoggleview?: () => void;
     onclose: () => void;
     onarchive: () => void;
     onmerge: () => void;
@@ -55,6 +60,20 @@
 
   let bellOpen = $state(false);
   let moreOpen = $state(false);
+  let actionsOpen = $state(false);
+  let actionsButtonEl = $state<HTMLButtonElement | null>(null);
+  let actionsMenuTop = $state(0);
+  let actionsMenuLeft = $state(0);
+
+  function toggleActions(e: MouseEvent): void {
+    e.stopPropagation();
+    if (!actionsOpen && actionsButtonEl) {
+      const rect = actionsButtonEl.getBoundingClientRect();
+      actionsMenuTop = rect.bottom + 4;
+      actionsMenuLeft = rect.right;
+    }
+    actionsOpen = !actionsOpen;
+  }
 
   function toggleBell(): void {
     bellOpen = !bellOpen;
@@ -68,6 +87,9 @@
     }
     if (!target.closest(".more-container")) {
       moreOpen = false;
+    }
+    if (!target.closest(".actions-container")) {
+      actionsOpen = false;
     }
   }
 
@@ -148,6 +170,9 @@
             onclick={ondirtyclick}
           >{worktree.dirty ? "dirty" : "unpushed"}</button>
         {/if}
+        {#if worktree?.yolo}
+          <span class="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-accent/50 text-accent tracking-wider uppercase">yolo</span>
+        {/if}
         {#if worktree?.linearIssue}
           <LinearBadge issue={worktree.linearIssue} clickable={true} />
         {/if}
@@ -182,25 +207,53 @@
   <!-- Right: action buttons (pinned, vertically centered) -->
   <div class="shrink-0 flex gap-2 items-center px-4">
     {#if worktree}
-      {#if worktree.mux === "✓"}
-        <Btn variant="default" onclick={onclose} title="Close worktree window"
-          >{isMobile ? "C" : "Close"}</Btn
-        >
-      {/if}
-      <Btn
-        variant="accent-outline"
-        onclick={onarchive}
-        disabled={archiving || worktree.creating}
-        title={worktree.archived ? "Restore archived worktree" : "Archive worktree"}
-      >
-        {isMobile ? (worktree.archived ? "Re" : "A") : (worktree.archived ? "Restore" : "Archive")}
-      </Btn>
-      <Btn variant="accent-outline" onclick={onmerge} title="Merge worktree"
-        >{isMobile ? "M" : "Merge"}</Btn
-      >
-      <Btn variant="danger-outline" onclick={onremove} title="Remove worktree"
-        >{isMobile ? "R" : "Remove"}</Btn
-      >
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="actions-container relative" onkeydown={(e) => { if (e.key === "Escape") actionsOpen = false; }}>
+        <button
+          bind:this={actionsButtonEl}
+          type="button"
+          class="rounded-md border cursor-pointer px-3 py-1.5 text-xs border-edge bg-surface text-primary hover:bg-hover"
+          onclick={toggleActions}
+        >Actions ▾</button>
+        {#if actionsOpen}
+          <div
+            class="actions-dropdown"
+            style:top="{actionsMenuTop}px"
+            style:left="{actionsMenuLeft}px"
+            role="menu"
+            aria-label="Worktree actions"
+          >
+            {#if worktree.mux === "✓"}
+              <button
+                type="button"
+                class="actions-item"
+                role="menuitem"
+                onclick={() => { actionsOpen = false; onclose(); }}
+              >Close</button>
+            {/if}
+            <button
+              type="button"
+              class="actions-item"
+              role="menuitem"
+              disabled={archiving || worktree.creating}
+              onclick={() => { actionsOpen = false; onarchive(); }}
+            >{worktree.archived ? "Restore" : "Archive"}</button>
+            <button
+              type="button"
+              class="actions-item"
+              role="menuitem"
+              onclick={() => { actionsOpen = false; onmerge(); }}
+            >Merge</button>
+            <div class="actions-divider"></div>
+            <button
+              type="button"
+              class="actions-item actions-item-danger"
+              role="menuitem"
+              onclick={() => { actionsOpen = false; onremove(); }}
+            >Remove</button>
+          </div>
+        {/if}
+      </div>
     {/if}
 
     {#if isMobile && worktree && hasMoreContent}
@@ -247,6 +300,16 @@
           </div>
         {/if}
       </div>
+    {/if}
+
+    {#if showViewToggle}
+      <button
+        type="button"
+        class="p-1.5 rounded-md cursor-pointer bg-transparent border border-transparent text-muted hover:text-primary hover:border-edge"
+        title={showMobileChat ? "Switch to terminal" : "Switch to chat"}
+        aria-label={showMobileChat ? "Switch to terminal view" : "Switch to chat view"}
+        onclick={ontoggleview}
+      >{showMobileChat ? "⌨" : "💬"}</button>
     {/if}
 
     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -366,5 +429,49 @@
     background: var(--color-topbar);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     z-index: 50;
+  }
+
+  .actions-dropdown {
+    position: fixed;
+    margin-top: 0;
+    min-width: 10rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--color-edge);
+    background: var(--color-sidebar);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    z-index: 50;
+    transform: translateX(-100%);
+    padding: 0.25rem 0;
+  }
+
+  .actions-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 0.375rem 0.75rem;
+    font-size: 13px;
+    background: transparent;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  .actions-item:hover:not(:disabled) {
+    background: var(--color-hover);
+  }
+
+  .actions-item:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .actions-item-danger {
+    color: var(--color-danger);
+  }
+
+  .actions-divider {
+    height: 1px;
+    background: var(--color-edge);
+    margin: 0.25rem 0;
   }
 </style>

@@ -5,14 +5,23 @@
   import { FitAddon } from "@xterm/addon-fit";
   import { WebLinksAddon } from "@xterm/addon-web-links";
   import { uploadFiles } from "./api";
+  import type { Selection } from "./types";
   import "@xterm/xterm/css/xterm.css";
 
-  let { worktree, isMobile = false, initialPane, terminalTheme }: {
-    worktree: string;
+  let { selection, isMobile = false, initialPane, terminalTheme }: {
+    selection: Selection;
     isMobile?: boolean;
     initialPane?: number;
     terminalTheme: ITheme;
   } = $props();
+
+  const wsPath = $derived(
+    selection.kind === "worktree"
+      ? `/ws/projects/${encodeURIComponent(selection.projectId)}/${encodeURIComponent(selection.branch)}`
+      : selection.kind === "external"
+        ? `/ws/external/${encodeURIComponent(selection.sessionName)}`
+        : `/ws/projects/${encodeURIComponent(selection.projectId)}/scratch/${encodeURIComponent(selection.id)}`
+  );
 
   const DISCONNECTED_NOTICE = "\r\n\x1b[90m[Disconnected]\x1b[0m";
   const RECONNECTED_NOTICE = "\r\n\x1b[32m[Reconnected]\x1b[0m";
@@ -220,8 +229,12 @@
   }
 
   async function uploadAndTypeFiles(files: File[]): Promise<void> {
+    if (selection.kind !== "worktree") {
+      // upload not supported for external/scratch sessions
+      return;
+    }
     try {
-      const result = await uploadFiles(worktree, files);
+      const result = await uploadFiles(selection.projectId, selection.branch, files);
       const paths = result.files.map((f) => f.path).join(" ");
       sendInput(paths);
     } catch (err: unknown) {
@@ -261,7 +274,7 @@
   function connect(announceReconnect = false): void {
     if (destroyed || ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const nextWs = new WebSocket(`${protocol}//${location.host}/ws/${encodeURIComponent(worktree)}`);
+    const nextWs = new WebSocket(`${protocol}//${location.host}${wsPath}`);
     ws = nextWs;
 
     nextWs.onmessage = (event) => {
@@ -378,6 +391,16 @@
 
       if (e.type !== "keydown") return true;
 
+      // Ctrl+Backspace: delete previous word. Browsers send \x08 (BS) which
+      // bash/readline binds to backward-delete-char (one char) — same as plain
+      // Backspace. Send \x17 (Ctrl+W = backward-kill-word) instead.
+      if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.key === "Backspace") {
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "input", data: "\x17" }));
+        }
+        return false;
+      }
+
       const mod = e.metaKey || e.ctrlKey;
       if (mod && (e.key === "c" || e.key === "C")) {
         if (term.hasSelection()) {
@@ -386,6 +409,15 @@
           return false;
         }
         return true;
+      }
+      // Paste: block xterm's literal-\x16 emission for Cmd+V / Ctrl+V / Ctrl+Shift+V.
+      // The browser's native paste event still fires on xterm's textarea and forwards
+      // the pasted text via onData — so we don't need to manually re-send. Without
+      // this guard, xterm sends \x16 BEFORE the paste text, which confuses CLI agents
+      // (e.g. Claude Code) that treat \x16 as image-paste. Power users who want a
+      // literal control character can use `Ctrl+Q Ctrl+V` (bash quoted-insert).
+      if (mod && (e.key === "v" || e.key === "V")) {
+        return false;
       }
       if (mod && (e.key === "ArrowUp" || e.key === "ArrowDown")) return false;
       if (mod && (e.key === "k" || e.key === "K")) return false;

@@ -2,6 +2,7 @@ import type { AgentId, RuntimeKind } from "./config";
 
 export const WORKTREE_META_SCHEMA_VERSION = 1;
 export const WORKTREE_ARCHIVE_STATE_VERSION = 1;
+export const WORKTREE_RUNTIME_STATE_VERSION = 1;
 
 export type WorktreeConversationProvider = "codexAppServer" | "claudeCode";
 
@@ -37,6 +38,7 @@ export interface WorktreeMeta {
   runtime: RuntimeKind;
   startupEnvValues: Record<string, string>;
   allocatedPorts: Record<string, number>;
+  yolo?: boolean;
   conversation?: WorktreeConversationMeta | null;
 }
 
@@ -57,6 +59,15 @@ export interface WorktreeStoragePaths {
   runtimeEnvPath: string;
   controlEnvPath: string;
   prsPath: string;
+  runtimeStatePath: string;
+}
+
+export interface WorktreeRuntimeStatePersisted {
+  schemaVersion: number;
+  lifecycle: AgentLifecycle;
+  lastStartedAt: string | null;
+  lastEventAt: string | null;
+  lastError: string | null;
 }
 
 export interface ControlEnvMap extends Record<string, string> {
@@ -153,6 +164,7 @@ export interface CreatingWorktreeState {
   profile: string | null;
   agentName: AgentId | null;
   phase: WorktreeCreationPhase;
+  yolo: boolean;
 }
 
 export interface WorktreeCreationSnapshot {
@@ -166,6 +178,7 @@ export interface ManagedWorktreeRuntimeState {
   path: string;
   profile: string | null;
   agentName: AgentId | null;
+  yolo: boolean;
   git: GitWorktreeRuntimeState;
   session: SessionRuntimeState;
   agent: AgentRuntimeState;
@@ -201,6 +214,7 @@ export interface WorktreeSnapshot {
   prs: PrEntry[];
   linearIssue: LinkedLinearIssue | null;
   creation: WorktreeCreationSnapshot | null;
+  yolo: boolean;
 }
 
 export interface ProjectSnapshot {
@@ -221,4 +235,38 @@ export interface NativeTerminalLaunch {
   branch: string;
   path: string;
   shellCommand: string;
+}
+
+export interface ExternalTmuxSession {
+  name: string;
+  windowCount: number;
+  attached: boolean;
+  agentStatus?: "running" | "idle";
+  statusWord?: string | null;
+}
+
+export type ScratchSessionKind = "shell" | "agent";
+
+export interface ScratchSessionMeta {
+  id: string;
+  displayName: string;
+  sessionName: string;        // tmux session name, e.g., "wm-scratch-abc123"
+  kind: ScratchSessionKind;
+  agentId: string | null;     // present when kind === "agent"
+  cwd: string;
+  createdAt: string;
+}
+
+export interface ScratchSessionSnapshot {
+  id: string;
+  displayName: string;
+  sessionName: string;
+  kind: ScratchSessionKind;
+  agentId: string | null;
+  cwd: string;
+  createdAt: string;
+  windowCount: number;
+  attached: boolean;
+  agentStatus?: "running" | "idle";
+  statusWord?: string | null;
 }

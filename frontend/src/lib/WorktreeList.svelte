@@ -6,6 +6,8 @@
   import { worktreeCreationPhaseLabel } from "./utils";
 
   let openMenuBranch = $state<string | null>(null);
+  let menuTop = $state(0);
+  let menuRight = $state(0);
 
   let {
     rows,
@@ -20,6 +22,7 @@
     onarchive,
     onmerge,
     onremove,
+    onedit,
   }: {
     rows: WorktreeListRow[];
     selected: string | null;
@@ -33,10 +36,18 @@
     onarchive: (branch: string) => void;
     onmerge: (branch: string) => void;
     onremove: (branch: string) => void;
+    onedit: (branch: string) => void;
   } = $props();
 
-  function toggleMenu(branch: string): void {
-    openMenuBranch = openMenuBranch === branch ? null : branch;
+  function toggleMenu(branch: string, triggerEl: HTMLButtonElement): void {
+    if (openMenuBranch === branch) {
+      openMenuBranch = null;
+      return;
+    }
+    const rect = triggerEl.getBoundingClientRect();
+    menuTop = rect.bottom + 4;
+    menuRight = window.innerWidth - rect.right;
+    openMenuBranch = branch;
   }
 
   function runMenuAction(branch: string, action: (branch: string) => void): void {
@@ -60,11 +71,17 @@
       }
     }
 
+    function handleScroll(): void {
+      openMenuBranch = null;
+    }
+
     document.addEventListener("click", handleDocumentClick);
     document.addEventListener("keydown", handleEscape);
+    document.addEventListener("scroll", handleScroll, { capture: true });
     return () => {
       document.removeEventListener("click", handleDocumentClick);
       document.removeEventListener("keydown", handleEscape);
+      document.removeEventListener("scroll", handleScroll, { capture: true } as EventListenerOptions);
     };
   });
 </script>
@@ -137,6 +154,9 @@
           {#if wt.profile}
             <span>{wt.profile}</span>
           {/if}
+          {#if wt.yolo}
+            <span class="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-accent/50 text-accent tracking-wider uppercase">yolo</span>
+          {/if}
         </span>
         {#if wt.services.length > 0}
           <span class="flex gap-2 text-[11px] text-muted font-mono">
@@ -158,7 +178,7 @@
         aria-expanded={openMenuBranch === wt.branch}
         onclick={(event) => {
           event.stopPropagation();
-          toggleMenu(wt.branch);
+          toggleMenu(wt.branch, event.currentTarget as HTMLButtonElement);
         }}
       >
         <svg
@@ -179,7 +199,9 @@
       </button>
       {#if openMenuBranch === wt.branch}
         <div
-          class="absolute top-9 right-2 z-10 min-w-32 rounded-md border border-edge bg-surface shadow-lg p-1"
+          class="fixed z-50 min-w-32 rounded-md border border-edge bg-surface shadow-lg p-1"
+          style:top="{menuTop}px"
+          style:right="{menuRight}px"
           data-worktree-row-menu
         >
           <button
@@ -192,6 +214,17 @@
             }}
           >
             Close
+          </button>
+          <button
+            type="button"
+            disabled={isCreating}
+            class="w-full px-2 py-1.5 rounded text-left text-xs text-primary hover:bg-hover disabled:opacity-50 disabled:cursor-not-allowed"
+            onclick={(event) => {
+              event.stopPropagation();
+              runMenuAction(wt.branch, onedit);
+            }}
+          >
+            Edit…
           </button>
           <button
             type="button"

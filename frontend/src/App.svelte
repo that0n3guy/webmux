@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount, type Component } from "svelte";
-  import WorktreeList from "./lib/WorktreeList.svelte";
+  import ProjectTree from "./lib/ProjectTree.svelte";
   import TopBar from "./lib/TopBar.svelte";
   import Terminal from "./lib/Terminal.svelte";
   import ConfirmDialog from "./lib/ConfirmDialog.svelte";
   import CreateWorktreeDialog from "./lib/CreateWorktreeDialog.svelte";
+  import EditWorktreeDialog from "./lib/EditWorktreeDialog.svelte";
   import SettingsDialog from "./lib/SettingsDialog.svelte";
   import CiDetailsDialog from "./lib/CiDetailsDialog.svelte";
   import CommentReviewDialog from "./lib/CommentReviewDialog.svelte";
@@ -15,15 +16,23 @@
   import MobileChatSurface from "./lib/MobileChatSurface.svelte";
   import SidebarRepoRow from "./lib/SidebarRepoRow.svelte";
   import Toggle from "./lib/Toggle.svelte";
+  import CreateScratchDialog from "./lib/CreateScratchDialog.svelte";
+  import AddProjectDialog from "./lib/AddProjectDialog.svelte";
+  import NewMenu from "./lib/NewMenu.svelte";
+  import ConfirmRemoveProjectDialog from "./lib/ConfirmRemoveProjectDialog.svelte";
   import type {
     AvailableBranch,
     AppConfig,
     AppNotification,
     CreateWorktreeRequest,
     DiffDialogProps,
+    ExternalTmuxSession,
     PrEntry,
     LinearIssueAvailability,
     LinearIssue,
+    ProjectInfo,
+    ScratchSessionSnapshot,
+    Selection,
     ToastInput,
     ToastItem,
     UiToastItem,
@@ -51,7 +60,21 @@
   import { getTheme } from "./lib/themes";
   import type { ThemeKey } from "./lib/themes";
   import { setToastController } from "./lib/toast-context";
-  import { api, fetchWorktrees, subscribeNotifications } from "./lib/api";
+  import {
+    api,
+    fetchWorktrees,
+    fetchProjects,
+    subscribeNotifications,
+    fetchExternalSessions,
+    fetchScratchSessions,
+    createScratchSession,
+    removeScratchSession,
+    createProject,
+    removeProject,
+    openWorktree,
+    updateWorktree,
+  } from "./lib/api";
+  import type { CreateProjectRequest } from "@webmux/api-contract";
 
   function createDefaultConfig(): AppConfig {
     return {
@@ -78,15 +101,42 @@
     return agent?.capabilities.inAppChat ?? (worktree.agentName === "codex" || worktree.agentName === "claude");
   }
 
+  function supportsSessionChat(sel: Selection | null): boolean {
+    if (!sel) return false;
+    if (sel.kind === "worktree") {
+      return canConnect && supportsWorktreeChat(selectedWorktree);
+    }
+    if (sel.kind === "scratch") {
+      const sessions = scratchByProject.get(sel.projectId) ?? [];
+      const session = sessions.find((s) => s.id === sel.id);
+      if (!session?.agentId) return false;
+      const agent = config.agents.find((candidate) => candidate.id === session.agentId);
+      return agent?.capabilities.inAppChat ?? (session.agentId === "claude" || session.agentId === "codex");
+    }
+    return false;
+  }
+
   let config = $state<AppConfig>(createDefaultConfig());
-  let worktrees = $state<WorktreeInfo[]>([]);
+  let projects = $state<ProjectInfo[]>([]);
+  let currentProjectId = $state<string | null>(null);
+  let worktreesByProject = $state<Map<string, WorktreeInfo[]>>(new Map());
+  let scratchByProject = $state<Map<string, ScratchSessionSnapshot[]>>(new Map());
   let selectedBranch = $state<string | null>(loadSavedSelectedWorktree());
+  let selectedExternalSession = $state<string | null>(null);
+  let selectedScratchSession = $state<{ id: string; sessionName: string } | null>(null);
+  let externalSessions = $state<ExternalTmuxSession[]>([]);
+  let showCreateScratchDialog = $state(false);
+  let showCreateAISessionDialog = $state(false);
   let hasLoadedWorktrees = $state(false);
   let removeBranch = $state<string | null>(null);
+  let editWorktreeBranch = $state<string | null>(null);
+  let scratchToRemove = $state<{ id: string; displayName: string } | null>(null);
   let mergeBranch = $state<string | null>(null);
   let removingBranches = $state<Set<string>>(new Set());
   let showCreateDialog = $state(false);
   let showSettingsDialog = $state(false);
+  let showAddProjectDialog = $state(false);
+  let projectToRemove = $state<{ id: string; name: string } | null>(null);
   let ciDetailsPr = $state<PrEntry | null>(null);
   let commentReviewPr = $state<PrEntry | null>(null);
   let showDiffDialog = $state(false);
@@ -167,7 +217,7 @@
     return includeRemote ? "remote" : "local";
   }
 
-  function fetchAvailableBranchesCached(includeRemote: boolean): Promise<AvailableBranch[]> {
+  function fetchAvailableBranchesCached(projectId: string, includeRemote: boolean): Promise<AvailableBranch[]> {
     const key = getAvailableBranchCacheKey(includeRemote);
     const cached = availableBranchCache[key];
     if (cached) return Promise.resolve(cached);
@@ -175,7 +225,7 @@
     const inFlight = availableBranchRequests[key];
     if (inFlight) return inFlight;
 
-    const request = api.fetchAvailableBranches({ query: { includeRemote } })
+    const request = api.fetchAvailableBranches({ params: { projectId }, query: { includeRemote } })
       .then((data) => {
         availableBranchCache[key] = data.branches;
         return data.branches;
@@ -188,11 +238,11 @@
     return request;
   }
 
-  function fetchBaseBranchesCached(): Promise<AvailableBranch[]> {
+  function fetchBaseBranchesCached(projectId: string): Promise<AvailableBranch[]> {
     if (baseBranchCache) return Promise.resolve(baseBranchCache);
     if (baseBranchRequest) return baseBranchRequest;
 
-    baseBranchRequest = api.fetchBaseBranches()
+    baseBranchRequest = api.fetchBaseBranches({ params: { projectId } })
       .then((data) => {
         baseBranchCache = data.branches;
         return data.branches;
@@ -275,7 +325,9 @@
 
   function handleDismissNotification(id: number): void {
     notifications = notifications.filter((n) => n.id !== id);
-    api.dismissNotification({ params: { id } }).catch(() => {});
+    if (currentProjectId) {
+      api.dismissNotification({ params: { projectId: currentProjectId, id } }).catch(() => {});
+    }
   }
 
   function handleSseDismiss(id: number): void {
@@ -300,6 +352,8 @@
 
     handleDismissToast(id);
     selectedBranch = toast.branch;
+    selectedExternalSession = null;
+    selectedScratchSession = null;
     notifiedBranches = new Set([...notifiedBranches].filter((branch) => branch !== toast.branch));
     if (isMobile) sidebarOpen = false;
   }
@@ -376,19 +430,36 @@
 
   let openingBranches = $state<Set<string>>(new Set());
   let archivingBranches = $state<Set<string>>(new Set());
+  let openWithMenuOpen = $state(false);
+  let openWithMenuTop = $state(0);
+  let openWithMenuLeft = $state(0);
+  let openWithCaretEl = $state<HTMLButtonElement | null>(null);
   let trimmedWorktreeSearch = $derived(searchQuery.trim());
-  let archivedWorktreeCount = $derived(worktrees.filter((w) => w.archived).length);
+  // Current project's worktree list (flat, for single-project operations)
+  let currentWorktrees = $derived(currentProjectId ? (worktreesByProject.get(currentProjectId) ?? []) : []);
+  // Per-project rows (filtered + built) for the tree
+  let rowsByProject = $derived(
+    new Map(
+      [...worktreesByProject].map(([id, ws]) => [
+        id,
+        buildWorktreeListRows(
+          filterWorktrees(ws, { query: id === currentProjectId ? trimmedWorktreeSearch : "", showArchived: id === currentProjectId ? showArchivedWorktrees : false }),
+        ),
+      ]),
+    ),
+  );
+  let archivedWorktreeCount = $derived(currentWorktrees.filter((w) => w.archived).length);
   let hiddenArchivedMatchCount = $derived(
-    showArchivedWorktrees ? 0 : countArchivedMatches(worktrees, trimmedWorktreeSearch),
+    showArchivedWorktrees ? 0 : countArchivedMatches(currentWorktrees, trimmedWorktreeSearch),
   );
   let visibleWorktrees = $derived(
-    filterWorktrees(worktrees, {
+    filterWorktrees(currentWorktrees, {
       query: trimmedWorktreeSearch,
       showArchived: showArchivedWorktrees,
     }),
   );
   let visibleWorktreeRows = $derived(buildWorktreeListRows(visibleWorktrees));
-  let creatingWorktrees = $derived(worktrees.filter((w) => w.creating));
+  let creatingWorktrees = $derived(currentWorktrees.filter((w) => w.creating));
   let backendCreatingCount = $derived(creatingWorktrees.length);
   let activeCreateCount = $derived(Math.max(pendingCreateCount, backendCreatingCount));
   let hasCreatingWorktrees = $derived(activeCreateCount > 0);
@@ -404,12 +475,36 @@
       : undefined,
   );
   let selectedWorktree = $derived(
-    selectedBranch && !removingBranches.has(selectedBranch)
-      ? worktrees.find((w) => w.branch === selectedBranch)
+    currentProjectId && selectedBranch && !removingBranches.has(selectedBranch)
+      ? worktreesByProject.get(currentProjectId)?.find((w) => w.branch === selectedBranch)
       : undefined,
   );
+  let selection = $derived<Selection | null>(
+    currentProjectId === null
+      ? null
+      : selectedScratchSession
+        ? { kind: "scratch", projectId: currentProjectId, id: selectedScratchSession.id, sessionName: selectedScratchSession.sessionName }
+        : selectedExternalSession
+          ? { kind: "external", sessionName: selectedExternalSession }
+          : selectedBranch
+            ? { kind: "worktree", projectId: currentProjectId, branch: selectedBranch }
+            : null
+  );
   let canConnect = $derived(!!selectedBranch && selectedWorktree?.mux === "✓" && !selectedWorktree?.creating);
-  let showMobileChat = $derived(isMobile && canConnect && supportsWorktreeChat(selectedWorktree));
+  let mobileViewOverride = $state<"auto" | "terminal" | "chat">(
+    ((): "auto" | "terminal" | "chat" => {
+      const saved = localStorage.getItem("webmux.viewOverride");
+      return saved === "terminal" || saved === "chat" ? saved : "auto";
+    })(),
+  );
+  let showMobileChat = $derived(
+    mobileViewOverride === "terminal"
+      ? false
+      : mobileViewOverride === "chat"
+        ? supportsSessionChat(selection)
+        : isMobile && supportsSessionChat(selection),
+  );
+  let showViewToggle = $derived(supportsSessionChat(selection));
   let isSelectedOpening = $derived(selectedBranch ? openingBranches.has(selectedBranch) : false);
   let isSelectedArchiving = $derived(selectedBranch ? archivingBranches.has(selectedBranch) : false);
   let pollIntervalMs = $derived(
@@ -427,6 +522,8 @@
   );
 
   $effect(() => {
+    // Don't auto-select a worktree while a non-worktree session is active
+    if (selectedExternalSession || selectedScratchSession) return;
     const nextSelectedBranch = resolveSelectedBranch(
       selectedBranch,
       trimmedWorktreeSearch ? selectedWorktree : selectedVisibleWorktree,
@@ -439,15 +536,27 @@
   });
 
   $effect(() => {
+    const id = currentProjectId;
+    if (!id) return;
+    api.fetchConfig({ query: { projectId: id } })
+      .then((c) => {
+        config = c;
+      })
+      .catch(() => {});
+  });
+
+  $effect(() => {
     if (pendingCreateCount === 0 || latestAutoSelectCreateId === -1) return;
     const target = pendingCreateBranchHint
-      ? worktrees.find((w) => w.branch === pendingCreateBranchHint)
+      ? currentWorktrees.find((w) => w.branch === pendingCreateBranchHint)
       : creatingWorktrees.length === 1
         ? creatingWorktrees[0]
         : undefined;
     if (!target) return;
     revealWorktreeInFilters(target.branch);
     selectedBranch = target.branch;
+    selectedExternalSession = null;
+    selectedScratchSession = null;
     if (isMobile) sidebarOpen = false;
   });
 
@@ -467,7 +576,7 @@
   });
 
   $effect(() => {
-    if (!showCreateDialog) return;
+    if (!showCreateDialog || !currentProjectId) return;
 
     const cached = availableBranchCache[getAvailableBranchCacheKey(includeRemoteBranches)];
     if (cached) {
@@ -481,7 +590,7 @@
     availableBranchesLoading = true;
     availableBranchesError = null;
 
-    fetchAvailableBranchesCached(includeRemoteBranches)
+    fetchAvailableBranchesCached(currentProjectId, includeRemoteBranches)
       .then((branches) => {
         if (fetchId !== nextAvailableBranchFetchId) return;
         availableBranches = branches;
@@ -497,7 +606,7 @@
   });
 
   $effect(() => {
-    if (!showCreateDialog) return;
+    if (!showCreateDialog || !currentProjectId) return;
 
     if (baseBranchCache) {
       baseBranches = baseBranchCache;
@@ -511,7 +620,7 @@
     baseBranchesLoading = true;
     baseBranchesError = null;
 
-    fetchBaseBranchesCached()
+    fetchBaseBranchesCached(currentProjectId)
       .then((branches) => {
         if (fetchId !== nextBaseBranchFetchId) return;
         baseBranches = branches;
@@ -527,7 +636,7 @@
   });
 
   $effect(() => {
-    document.title = config.name ? `${config.name} - Dashboard` : "Dev Dashboard";
+    document.title = "webmux";
   });
 
   let paneBarPanes = $derived.by(() => {
@@ -541,23 +650,42 @@
   let showPaneBar = $derived(isMobile && canConnect && !showMobileChat && paneBarPanes.length > 0);
 
   function refreshLinear(): void {
+    if (!currentProjectId) return;
     const now = Date.now();
     if (now - linearLastFetch < LINEAR_THROTTLE_MS) return;
     linearLastFetch = now;
-    api.fetchLinearIssues().then((data) => {
+    api.fetchLinearIssues({ params: { projectId: currentProjectId } }).then((data) => {
       linearAvailability = data.availability;
       linearIssues = data.issues;
     }).catch((err: unknown) => console.warn("[linear]", err));
   }
 
-  async function refresh() {
+  async function refreshAll(): Promise<void> {
     try {
-      worktrees = await fetchWorktrees();
+      const list = await fetchProjects();
+      projects = list;
+      if (list.length > 0 && !currentProjectId) {
+        currentProjectId = list[0].id;
+      }
+
+      const ids = list.map((p) => p.id);
+      const [worktreesPairs, scratchPairs, ext] = await Promise.all([
+        Promise.all(ids.map(async (id) => [id, await fetchWorktrees(id)] as const)),
+        Promise.all(ids.map(async (id) => [id, await fetchScratchSessions(id)] as const)),
+        fetchExternalSessions(),
+      ]);
+      worktreesByProject = new Map(worktreesPairs);
+      scratchByProject = new Map(scratchPairs);
+      externalSessions = ext;
       hasLoadedWorktrees = true;
     } catch (err) {
-      console.error("Failed to refresh:", err);
+      console.warn("refreshAll failed", err);
     }
     refreshLinear();
+  }
+
+  async function refresh(): Promise<void> {
+    await refreshAll();
   }
 
   function openCreateDialog(issue: LinearIssue | null = null): void {
@@ -586,13 +714,13 @@
     if (shouldAutoSelectCreatedWorktree) {
       pendingCreateBranchHint = expectedCreatedCount > 1 ? null : request.branch ?? null;
     }
-    showCreateDialog = false;
-    assignIssue = null;
 
     try {
-      const createPromise = api.createWorktree({ body: request });
+      const createPromise = api.createWorktree({ params: { projectId: currentProjectId! }, body: request });
       void refresh();
       const result = await createPromise;
+      showCreateDialog = false;
+      assignIssue = null;
       if (shouldAutoSelectCreatedWorktree) {
         pendingCreateBranchHint = result.primaryBranch;
       }
@@ -608,6 +736,7 @@
       }
     } catch (err) {
       showToast({ tone: "error", message: `Failed to create: ${errorMessage(err)}` });
+      throw err;
     } finally {
       pendingCreateCount = Math.max(0, pendingCreateCount - expectedCreatedCount);
       if (shouldAutoSelectCreatedWorktree && requestId === latestAutoSelectCreateId) {
@@ -631,7 +760,7 @@
   }
 
   function revealWorktreeInFilters(branch: string): void {
-    const worktree = worktrees.find((candidate) => candidate.branch === branch);
+    const worktree = currentWorktrees.find((candidate) => candidate.branch === branch);
     if (!worktree) return;
     if (worktree.archived) {
       showArchivedWorktrees = true;
@@ -641,9 +770,22 @@
     }
   }
 
-  function handleSelectWorktree(branch: string): void {
+  function handleSelectWorktreeByBranch(branch: string): void {
     revealWorktreeInFilters(branch);
     selectedBranch = branch;
+    selectedExternalSession = null;
+    selectedScratchSession = null;
+    notifiedBranches = new Set([...notifiedBranches].filter((candidate) => candidate !== branch));
+    if (isMobile) sidebarOpen = false;
+  }
+
+  function handleSelectWorktree(projectId: string, branch: string): void {
+    currentProjectId = projectId;
+    revealWorktreeInFilters(branch);
+    selectedBranch = branch;
+    selectedExternalSession = null;
+    selectedScratchSession = null;
+    saveSelectedWorktree(branch);
     notifiedBranches = new Set([...notifiedBranches].filter((candidate) => candidate !== branch));
     if (isMobile) sidebarOpen = false;
   }
@@ -656,7 +798,7 @@
 
     removingBranches = new Set([...removingBranches, branch]);
     try {
-      await api.removeWorktree({ params: { name: branch } });
+      await api.removeWorktree({ params: { projectId: currentProjectId!, name: branch } });
       invalidateBranchCaches();
       await refresh();
     } catch (err) {
@@ -676,7 +818,7 @@
 
     removingBranches = new Set([...removingBranches, branch]);
     try {
-      await api.mergeWorktree({ params: { name: branch } });
+      await api.mergeWorktree({ params: { projectId: currentProjectId!, name: branch } });
       invalidateBranchCaches();
       await refresh();
     } catch (err) {
@@ -693,6 +835,7 @@
     pullMainError = "";
     try {
       const result = await api.pullMain({
+        params: { projectId: currentProjectId! },
         body: { ...(pullMainForce ? { force: true } : {}) },
       });
       if (result.status === "updated" || result.status === "already_up_to_date") {
@@ -723,6 +866,7 @@
     pullLinkedRepoError = "";
     try {
       const result = await api.pullMain({
+        params: { projectId: currentProjectId! },
         body: {
           ...(pullLinkedRepoForce ? { force: true } : {}),
           ...(pullLinkedRepoAlias ? { repo: pullLinkedRepoAlias } : {}),
@@ -749,7 +893,7 @@
     if (!branch) return;
     openingBranches = new Set([...openingBranches, branch]);
     try {
-      await api.openWorktree({ params: { name: branch } });
+      await openWorktree(currentProjectId!, branch);
       await refresh();
     } catch (err) {
       showToast({ tone: "error", message: `Failed to open worktree: ${errorMessage(err)}` });
@@ -758,8 +902,51 @@
     }
   }
 
+  async function openSelectedWorktreeWith(opts: { agentOverride?: string; shellOnly?: boolean }): Promise<void> {
+    const branch = selectedBranch;
+    if (!branch) return;
+    openWithMenuOpen = false;
+    openingBranches = new Set([...openingBranches, branch]);
+    try {
+      await openWorktree(currentProjectId!, branch, opts);
+      await refresh();
+    } catch (err) {
+      showToast({ tone: "error", message: `Failed to open worktree: ${errorMessage(err)}` });
+    } finally {
+      openingBranches = new Set([...openingBranches].filter((x) => x !== branch));
+    }
+  }
+
+  function toggleOpenWithMenu(e: MouseEvent): void {
+    e.stopPropagation();
+    if (!openWithMenuOpen && openWithCaretEl) {
+      const rect = openWithCaretEl.getBoundingClientRect();
+      openWithMenuTop = rect.bottom + 4;
+      openWithMenuLeft = rect.left + rect.width / 2;
+    }
+    openWithMenuOpen = !openWithMenuOpen;
+  }
+
+  $effect(() => {
+    if (!openWithMenuOpen) return;
+    function onClickOutside(): void { openWithMenuOpen = false; }
+    function onScroll(): void { openWithMenuOpen = false; }
+    function onResize(): void { openWithMenuOpen = false; }
+    const timer = setTimeout(() => {
+      window.addEventListener("click", onClickOutside, { once: true });
+      document.addEventListener("scroll", onScroll, { capture: true, once: true });
+      window.addEventListener("resize", onResize);
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("click", onClickOutside);
+      document.removeEventListener("scroll", onScroll, { capture: true } as EventListenerOptions);
+      window.removeEventListener("resize", onResize);
+    };
+  });
+
   async function toggleWorktreeArchived(branch: string): Promise<void> {
-    const worktree = worktrees.find((candidate) => candidate.branch === branch);
+    const worktree = currentWorktrees.find((candidate) => candidate.branch === branch);
     if (!worktree || worktree.creating) return;
     const nextArchived = !worktree.archived;
     const actionLabel = nextArchived ? "archive" : "restore";
@@ -767,7 +954,7 @@
     archivingBranches = new Set([...archivingBranches, branch]);
     try {
       await api.setWorktreeArchived({
-        params: { name: branch },
+        params: { projectId: currentProjectId!, name: branch },
         body: { archived: nextArchived },
       });
       await refresh();
@@ -781,11 +968,26 @@
   async function closeWorktree(branch: string): Promise<void> {
     selectNeighborOf(branch);
     try {
-      await api.closeWorktree({ params: { name: branch } });
+      await api.closeWorktree({ params: { projectId: currentProjectId!, name: branch } });
       await refresh();
     } catch (err) {
       showToast({ tone: "error", message: `Failed to close worktree: ${errorMessage(err)}` });
     }
+  }
+
+  async function handleSaveEditWorktree(branch: string, yolo: boolean, agent: string): Promise<void> {
+    const projectId = currentProjectId!;
+    await updateWorktree(projectId, branch, { yolo, agent });
+    const worktree = currentWorktrees.find((w) => w.branch === branch);
+    const wasSelected = selectedBranch === branch;
+    if (worktree?.mux === "✓") {
+      await api.closeWorktree({ params: { projectId, name: branch } });
+      if (wasSelected) selectedBranch = null;
+      await openWorktree(projectId, branch);
+      if (wasSelected) selectedBranch = branch;
+    }
+    editWorktreeBranch = null;
+    await refresh();
   }
 
   async function handleArchiveToggle() {
@@ -818,8 +1020,14 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape" && openWithMenuOpen) {
+      e.stopPropagation();
+      openWithMenuOpen = false;
+      return;
+    }
+
     // Ignore shortcuts when a dialog is open (let dialog handle its own keys)
-    if (showCreateDialog || removeBranch || mergeBranch || pullMainConfirm || pullLinkedRepoAlias) return;
+    if (showCreateDialog || showCreateAISessionDialog || removeBranch || mergeBranch || pullMainConfirm || pullLinkedRepoAlias) return;
 
     const mod = e.metaKey || e.ctrlKey;
     if (!mod) return;
@@ -852,6 +1060,96 @@
     terminalRef?.sendSelectPane(pane);
   }
 
+  async function handleCreateScratch(req: import("@webmux/api-contract").CreateScratchSessionRequest) {
+    const session = await createScratchSession(currentProjectId!, req);
+    const existing = scratchByProject.get(currentProjectId!) ?? [];
+    scratchByProject = new Map([...scratchByProject, [currentProjectId!, [...existing, session]]]);
+    selectedExternalSession = null;
+    selectedBranch = null;
+    saveSelectedWorktree(null);
+    selectedScratchSession = { id: session.id, sessionName: session.sessionName };
+  }
+
+  function handleRemoveScratch(id: string, displayName: string) {
+    scratchToRemove = { id, displayName };
+  }
+
+  async function confirmRemoveScratch() {
+    const target = scratchToRemove;
+    if (!target) return;
+    await removeScratchSession(currentProjectId!, target.id);
+    const existing = scratchByProject.get(currentProjectId!) ?? [];
+    scratchByProject = new Map([...scratchByProject, [currentProjectId!, existing.filter((s) => s.id !== target.id)]]);
+    if (selectedScratchSession?.id === target.id) {
+      selectedScratchSession = null;
+    }
+    scratchToRemove = null;
+  }
+
+  async function handleAddProject(req: CreateProjectRequest): Promise<void> {
+    const project = await createProject(req);
+    projects = [...projects, project];
+    worktreesByProject = new Map([...worktreesByProject, [project.id, []]]);
+    scratchByProject = new Map([...scratchByProject, [project.id, []]]);
+    currentProjectId = project.id;
+    selectedBranch = null;
+    selectedScratchSession = null;
+    selectedExternalSession = null;
+    void refreshAll();
+  }
+
+  function handleMenuNewWorktree(projectId: string): void {
+    currentProjectId = projectId;
+    showCreateDialog = true;
+  }
+
+  function handleMenuSettings(projectId: string): void {
+    currentProjectId = projectId;
+    showSettingsDialog = true;
+  }
+
+  function handleMenuRemoveProject(projectId: string): void {
+    const p = projects.find((x) => x.id === projectId);
+    if (!p) return;
+    projectToRemove = { id: p.id, name: p.name };
+  }
+
+  async function handleConfirmRemoveProject(killSessions: boolean): Promise<void> {
+    if (!projectToRemove) return;
+    const target = projectToRemove;
+    try {
+      await removeProject(target.id, killSessions);
+    } catch (err) {
+      console.error("removeProject failed", err);
+    }
+    projects = projects.filter((p) => p.id !== target.id);
+    worktreesByProject = new Map([...worktreesByProject].filter(([id]) => id !== target.id));
+    scratchByProject = new Map([...scratchByProject].filter(([id]) => id !== target.id));
+    if (currentProjectId === target.id) {
+      currentProjectId = projects[0]?.id ?? null;
+      selectedBranch = null;
+      selectedScratchSession = null;
+    }
+    projectToRemove = null;
+  }
+
+  function handleSelectExternal(name: string): void {
+    selectedScratchSession = null;
+    selectedBranch = null;
+    saveSelectedWorktree(null);
+    selectedExternalSession = name;
+    if (isMobile) sidebarOpen = false;
+  }
+
+  function handleSelectScratch(projectId: string, id: string, sessionName: string): void {
+    selectedExternalSession = null;
+    selectedBranch = null;
+    saveSelectedWorktree(null);
+    currentProjectId = projectId;
+    selectedScratchSession = { id, sessionName };
+    if (isMobile) sidebarOpen = false;
+  }
+
   onMount(() => {
     applyTheme(currentTheme);
     api
@@ -860,8 +1158,8 @@
         config = c;
       })
       .catch(() => {});
-    refresh();
-    refreshLinear();
+    void refreshAll();
+    const sessionsPollHandle = setInterval(() => { void refreshAll(); }, 5000);
     let intervalMs = pollIntervalMs;
     let interval: ReturnType<typeof setInterval> | undefined;
     window.addEventListener("keydown", handleKeydown);
@@ -926,6 +1224,7 @@
 
     return () => {
       if (interval) clearInterval(interval);
+      clearInterval(sessionsPollHandle);
       applyPollInterval = null;
       clearTimeout(idleTimer);
       document.removeEventListener("click", resetIdleTimer);
@@ -959,14 +1258,20 @@
     >
       <div class="p-4 border-b border-edge">
         <div class="flex items-center justify-between">
-          <h1 class="text-base font-semibold">{config.name ?? "Dashboard"}</h1>
+          <h1 class="text-base font-semibold">webmux</h1>
           <div class="flex items-center gap-2">
             <button
-              class="h-8 px-2 gap-1.5 rounded-md border border-edge bg-surface text-accent text-xs flex items-center justify-center cursor-pointer hover:bg-hover disabled:opacity-50 disabled:cursor-not-allowed"
-              onclick={() => openCreateDialog()}
-              title="New Worktree (Cmd+K)"
-              ><span class="text-lg leading-none">+</span> New</button
+              type="button"
+              class="h-8 px-2 gap-1.5 rounded-md border border-edge bg-surface text-primary text-xs flex items-center justify-center cursor-pointer hover:bg-hover"
+              onclick={() => { showAddProjectDialog = true; }}
+              title="Add an existing project to webmux"
             >
+              <span class="text-lg leading-none">+</span> Project
+            </button>
+            <NewMenu
+              onNewWorktree={() => openCreateDialog()}
+              onNewAISession={() => { showCreateAISessionDialog = true; }}
+            />
             {#if isMobile}
               <button
                 class="h-8 w-8 rounded-md border border-edge bg-surface text-muted text-sm flex items-center justify-center cursor-pointer hover:bg-hover"
@@ -1019,22 +1324,61 @@
           </div>
         </div>
       </div>
-      <WorktreeList
-        rows={visibleWorktreeRows}
+      <ProjectTree
+        {projects}
+        {rowsByProject}
+        {scratchByProject}
+        {externalSessions}
+        {selection}
         selected={selectedBranch}
         removing={removingBranches}
         initializing={openingBranches}
         archiving={archivingBranches}
         {notifiedBranches}
-        emptyMessage={worktreeListEmptyMessage}
-        onselect={handleSelectWorktree}
+        onSelectWorktree={handleSelectWorktree}
+        onSelectScratch={handleSelectScratch}
+        onSelectExternal={handleSelectExternal}
+        onCreateScratch={(projectId) => { currentProjectId = projectId; showCreateScratchDialog = true; }}
+        onRemoveScratch={(projectId, id, displayName) => { currentProjectId = projectId; scratchToRemove = { id, displayName }; }}
+        onAddProject={() => { showAddProjectDialog = true; }}
+        onMenuNewWorktree={handleMenuNewWorktree}
+        onMenuSettings={handleMenuSettings}
+        onMenuRemoveProject={handleMenuRemoveProject}
         onclose={closeWorktree}
         onarchive={toggleWorktreeArchived}
-        onmerge={(branch) => {
-          mergeBranch = branch;
-        }}
+        onmerge={(branch) => { mergeBranch = branch; }}
         onremove={(b) => (removeBranch = b)}
+        onedit={(branch) => { editWorktreeBranch = branch; }}
       />
+
+      {#if showCreateScratchDialog}
+        <CreateScratchDialog
+          projectName={projects.find((p) => p.id === currentProjectId)?.name ?? "Unknown project"}
+          projects={projects}
+          defaultProjectId={currentProjectId ?? projects[0]?.id ?? ""}
+          onProjectChange={(id) => { currentProjectId = id; }}
+          agentChoices={config.agents.map((a) => ({ id: a.id, label: a.id }))}
+          onClose={() => { showCreateScratchDialog = false; }}
+          onCreate={handleCreateScratch}
+        />
+      {/if}
+
+      {#if showCreateAISessionDialog}
+        <CreateScratchDialog
+          projectName={projects.find((p) => p.id === currentProjectId)?.name ?? "Unknown project"}
+          projects={projects}
+          defaultProjectId={currentProjectId ?? projects[0]?.id ?? ""}
+          onProjectChange={(id) => { currentProjectId = id; }}
+          agentChoices={config.agents.map((a) => ({ id: a.id, label: a.label ?? a.id }))}
+          lockedKind="agent"
+          onClose={() => { showCreateAISessionDialog = false; }}
+          onCreate={async (req) => {
+            await handleCreateScratch(req);
+            showCreateAISessionDialog = false;
+          }}
+        />
+      {/if}
+
       {#if config.projectDir}
         <SidebarRepoRow
           label={config.mainBranch ?? "main"}
@@ -1101,9 +1445,15 @@
       {sshHost}
       linkedRepos={config.linkedRepos ?? []}
       {isMobile}
+      {showMobileChat}
+      {showViewToggle}
       {notificationHistory}
       {unreadCount}
       ontogglesidebar={() => (sidebarOpen = !sidebarOpen)}
+      ontoggleview={() => {
+        mobileViewOverride = showMobileChat ? "terminal" : "chat";
+        localStorage.setItem("webmux.viewOverride", mobileViewOverride);
+      }}
       onclose={handleClose}
       onarchive={handleArchiveToggle}
       onmerge={() => {
@@ -1117,18 +1467,34 @@
       onCiClick={(pr) => (ciDetailsPr = pr)}
       onReviewsClick={(pr) => (commentReviewPr = pr)}
       onbellopen={handleBellOpen}
-      onnotificationselect={handleSelectWorktree}
+      onnotificationselect={handleSelectWorktreeByBranch}
       archiving={isSelectedArchiving}
     />
 
-    {#if showMobileChat}
-      {#key selectedBranch}
-        <MobileChatSurface worktree={selectedWorktree!} />
-      {/key}
-    {:else if canConnect}
-      {#key selectedBranch}
+
+    {#if selection?.kind === "worktree" && supportsSessionChat(selection)}
+      <div class="contents" class:hidden={!showMobileChat}>
+        {#key selectedBranch}
+          <MobileChatSurface projectId={currentProjectId!} worktree={selectedWorktree!} {isMobile} />
+        {/key}
+      </div>
+    {/if}
+    {#if selection?.kind === "scratch" && supportsSessionChat(selection)}
+      <div class="contents" class:hidden={!showMobileChat}>
+        {#key selection.id}
+          <MobileChatSurface
+            projectId={currentProjectId!}
+            target={{ kind: "scratch", projectId: currentProjectId!, scratchId: selection.id }}
+            {isMobile}
+          />
+        {/key}
+      </div>
+    {/if}
+    {#if !showMobileChat}
+    {#if selection && (selection.kind !== "worktree" || canConnect)}
+      {#key selection.kind === "worktree" ? selection.branch : selection.kind === "external" ? selection.sessionName : selection.id}
         <Terminal
-          worktree={selectedBranch!}
+          {selection}
           {isMobile}
           initialPane={isMobile ? activePane : undefined}
           {terminalTheme}
@@ -1158,18 +1524,71 @@
               <span class="text-xs text-muted">This agent runs in the terminal only.</span>
             {/if}
           </div>
-          <button
-            class="mt-2 px-5 py-2 rounded-md bg-accent text-white text-sm font-medium cursor-pointer border-none hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            onclick={openSelectedWorktree}
-            disabled={isSelectedOpening}
-          >
-            {#if isSelectedOpening}
-              <span class="spinner" style="width: 14px; height: 14px; border-width: 1.5px;"></span>
-              Opening...
-            {:else}
-              Open Session
-            {/if}
-          </button>
+          <div class="mt-2 flex items-stretch">
+            <button
+              class="px-5 py-2 rounded-l-md bg-accent text-white text-sm font-medium cursor-pointer border-none hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              onclick={openSelectedWorktree}
+              disabled={isSelectedOpening}
+            >
+              {#if isSelectedOpening}
+                <span class="spinner" style="width: 14px; height: 14px; border-width: 1.5px;"></span>
+                Opening...
+              {:else}
+                Open Session
+              {/if}
+            </button>
+            <button
+              bind:this={openWithCaretEl}
+              type="button"
+              class="px-2 py-2 rounded-r-md bg-accent text-white text-sm cursor-pointer border-none border-l border-white/20 hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+              onclick={toggleOpenWithMenu}
+              disabled={isSelectedOpening}
+              aria-label="Open with options"
+              aria-haspopup="true"
+              aria-expanded={openWithMenuOpen}
+            >
+              ▾
+            </button>
+          </div>
+
+          {#if openWithMenuOpen}
+            <div
+              class="fixed z-50 rounded-md border border-edge bg-sidebar shadow-md min-w-[200px]"
+              style:top="{openWithMenuTop}px"
+              style:left="{openWithMenuLeft}px"
+              style="transform: translateX(-50%);"
+              role="menu"
+              aria-label="Open session with…"
+            >
+              {#if config.agents.length > 0}
+                <div role="group" aria-label="Open with another agent">
+                  <div class="px-3 py-1 text-[11px] uppercase tracking-wider text-muted/70">Open with another agent</div>
+                  {#each config.agents as agent (agent.id)}
+                    {@const isDefault = agent.id === selectedWorktree.agentName}
+                    <button
+                      type="button"
+                      class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-hover disabled:opacity-50 disabled:cursor-not-allowed"
+                      onclick={() => { void openSelectedWorktreeWith({ agentOverride: agent.id }); }}
+                      disabled={isDefault}
+                      role="menuitem"
+                    >
+                      {agent.label}
+                      {#if isDefault}<span class="ml-1 text-muted text-[11px]">(default)</span>{/if}
+                    </button>
+                  {/each}
+                </div>
+                <div class="my-1 border-t border-edge"></div>
+              {/if}
+              <button
+                type="button"
+                class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-hover"
+                onclick={() => { void openSelectedWorktreeWith({ shellOnly: true }); }}
+                role="menuitem"
+              >
+                Shell only
+              </button>
+            </div>
+          {/if}
         </div>
       </div>
     {:else}
@@ -1177,12 +1596,28 @@
         <p>Select a worktree from the sidebar to connect</p>
       </div>
     {/if}
+    {/if}
 
     {#if showPaneBar}
       <PaneBar {activePane} panes={paneBarPanes} onselect={handlePaneSelect} />
     {/if}
   </main>
 </div>
+
+{#if showAddProjectDialog}
+  <AddProjectDialog
+    onClose={() => { showAddProjectDialog = false; }}
+    onCreate={handleAddProject}
+  />
+{/if}
+
+{#if projectToRemove}
+  <ConfirmRemoveProjectDialog
+    projectName={projectToRemove.name}
+    onConfirm={(killSessions) => { void handleConfirmRemoveProject(killSessions); }}
+    onCancel={() => { projectToRemove = null; }}
+  />
+{/if}
 
 {#if showCreateDialog}
   <CreateWorktreeDialog
@@ -1203,6 +1638,9 @@
     startupEnvs={config.startupEnvs ?? {}}
     linearCreateTicketOption={config.linearCreateTicketOption}
     openedFromLinearIssue={assignIssue !== null}
+    {projects}
+    defaultProjectId={currentProjectId ?? projects[0]?.id ?? ""}
+    onProjectChange={(id) => { currentProjectId = id; }}
     oncreate={handleCreate}
     oncancel={() => { showCreateDialog = false; assignIssue = null; }}
   />
@@ -1213,6 +1651,26 @@
     message={`Remove worktree "${removeBranch}"? This action cannot be undone.`}
     onconfirm={handleRemove}
     oncancel={() => (removeBranch = null)}
+  />
+{/if}
+
+{#if editWorktreeBranch}
+  {@const editWorktree = currentWorktrees.find((w) => w.branch === editWorktreeBranch)}
+  {#if editWorktree}
+    <EditWorktreeDialog
+      worktree={editWorktree}
+      agents={config.agents}
+      onsave={(yolo, agent) => handleSaveEditWorktree(editWorktreeBranch!, yolo, agent)}
+      onclose={() => { editWorktreeBranch = null; }}
+    />
+  {/if}
+{/if}
+
+{#if scratchToRemove}
+  <ConfirmDialog
+    message={`Remove scratch session "${scratchToRemove.displayName}"? The tmux session will be killed.`}
+    onconfirm={() => { void confirmRemoveScratch(); }}
+    oncancel={() => (scratchToRemove = null)}
   />
 {/if}
 
@@ -1256,6 +1714,7 @@
 
 {#if showSettingsDialog}
   <SettingsDialog
+    projectId={currentProjectId!}
     {currentTheme}
     linearAutoCreate={config.linearAutoCreateWorktrees ?? false}
     autoRemoveOnMerge={config.autoRemoveOnMerge ?? false}

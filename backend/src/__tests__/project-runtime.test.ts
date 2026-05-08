@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import type { AgentRuntimeState } from "../domain/model";
 import { ProjectRuntime } from "../services/project-runtime";
 
 describe("ProjectRuntime", () => {
@@ -93,6 +94,116 @@ describe("ProjectRuntime", () => {
     expect(state?.prs[0]?.number).toBe(77);
     expect(state?.agent.lifecycle).toBe("error");
     expect(state?.agent.lastError).toBe("agent crashed");
+  });
+
+  it("calls persistRuntimeState when agent events fire", () => {
+    const persisted: Array<{ worktreeId: string; gitDir: string; lifecycle: string }> = [];
+
+    const runtime = new ProjectRuntime({
+      persistRuntimeState: (worktreeId, gitDir, state) => {
+        persisted.push({ worktreeId, gitDir, lifecycle: state.lifecycle });
+      },
+    });
+
+    runtime.upsertWorktree({
+      worktreeId: "wt_persist",
+      branch: "feature/persist",
+      path: "/repo/__worktrees/feature-persist",
+      runtime: "host",
+      gitDir: "/git/dirs/feature-persist",
+    });
+
+    runtime.applyEvent(
+      { worktreeId: "wt_persist", branch: "feature/persist", type: "agent_status_changed", lifecycle: "running" },
+      () => new Date("2026-04-28T10:00:00.000Z"),
+    );
+    runtime.applyEvent(
+      { worktreeId: "wt_persist", branch: "feature/persist", type: "agent_stopped" },
+      () => new Date("2026-04-28T10:01:00.000Z"),
+    );
+
+    expect(persisted).toHaveLength(2);
+    expect(persisted[0]?.gitDir).toBe("/git/dirs/feature-persist");
+    expect(persisted[0]?.lifecycle).toBe("running");
+    expect(persisted[1]?.lifecycle).toBe("stopped");
+  });
+
+  it("does not call persistRuntimeState when no gitDir is registered", () => {
+    const persisted: unknown[] = [];
+
+    const runtime = new ProjectRuntime({
+      persistRuntimeState: () => { persisted.push(true); },
+    });
+
+    runtime.upsertWorktree({
+      worktreeId: "wt_nogitdir",
+      branch: "feature/no-gitdir",
+      path: "/repo/__worktrees/no-gitdir",
+      runtime: "host",
+    });
+
+    runtime.applyEvent(
+      { worktreeId: "wt_nogitdir", branch: "feature/no-gitdir", type: "agent_status_changed", lifecycle: "idle" },
+    );
+
+    expect(persisted).toHaveLength(0);
+  });
+
+  it("seeds agent state from persistedAgent when creating a new worktree", () => {
+    const runtime = new ProjectRuntime();
+    const persistedAgent: AgentRuntimeState = {
+      runtime: "host",
+      lifecycle: "stopped",
+      lastStartedAt: "2026-04-28T09:00:00.000Z",
+      lastEventAt: "2026-04-28T09:30:00.000Z",
+      lastError: null,
+    };
+
+    const state = runtime.upsertWorktree({
+      worktreeId: "wt_seeded",
+      branch: "feature/seeded",
+      path: "/repo/__worktrees/feature-seeded",
+      runtime: "host",
+      persistedAgent,
+    });
+
+    expect(state.agent.lifecycle).toBe("stopped");
+    expect(state.agent.lastStartedAt).toBe("2026-04-28T09:00:00.000Z");
+    expect(state.agent.lastEventAt).toBe("2026-04-28T09:30:00.000Z");
+    expect(state.agent.lastError).toBeNull();
+  });
+
+  it("does not overwrite in-memory agent state on subsequent upsertWorktree calls", () => {
+    const runtime = new ProjectRuntime();
+
+    runtime.upsertWorktree({
+      worktreeId: "wt_existing",
+      branch: "feature/existing",
+      path: "/repo/__worktrees/feature-existing",
+      runtime: "host",
+    });
+
+    runtime.applyEvent(
+      { worktreeId: "wt_existing", branch: "feature/existing", type: "agent_status_changed", lifecycle: "running" },
+    );
+
+    const persistedAgent: AgentRuntimeState = {
+      runtime: "host",
+      lifecycle: "stopped",
+      lastStartedAt: null,
+      lastEventAt: null,
+      lastError: null,
+    };
+
+    runtime.upsertWorktree({
+      worktreeId: "wt_existing",
+      branch: "feature/existing",
+      path: "/repo/__worktrees/feature-existing",
+      runtime: "host",
+      persistedAgent,
+    });
+
+    expect(runtime.getWorktree("wt_existing")?.agent.lifecycle).toBe("running");
   });
 
   it("keeps branch lookups as a secondary index", () => {

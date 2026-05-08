@@ -1,6 +1,8 @@
 import { readWorktreeMeta, writeWorktreeMeta } from "../adapters/fs";
+import { buildWorktreeConversationStorage, type ConversationStorage } from "./conversation-storage";
 import type {
   CodexAppServerAgentMessageItem,
+  CodexAppServerGenericItem,
   CodexAppServerThread,
   CodexAppServerThreadItem,
   CodexAppServerThreadListResponse,
@@ -8,6 +10,7 @@ import type {
   CodexAppServerUserMessageItem,
 } from "../adapters/codex-app-server";
 import type { GitGateway } from "../adapters/git";
+import type { TmuxGateway } from "../adapters/tmux";
 import type {
   AgentsUiConversationMessage,
   AgentsUiConversationState,
@@ -23,6 +26,11 @@ import { log } from "../lib/log";
 import { buildAgentsUiWorktreeSummary } from "./agents-ui-service";
 import { err, ok, type WorktreeConversationResult } from "./worktree-conversation-result";
 
+export interface WorktreeConversationProbeContext {
+  tmux: TmuxGateway;
+  projectRoot: string;
+}
+
 export interface WorktreeConversationServiceDependencies {
   appServer: Pick<import("../adapters/codex-app-server").CodexAppServerGateway, "threadList" | "threadRead" | "threadResume" | "threadStart">;
   git: Pick<GitGateway, "resolveWorktreeGitDir">;
@@ -32,8 +40,6 @@ export interface WorktreeConversationServiceDependencies {
 }
 
 interface ResolvedConversation {
-  gitDir: string;
-  meta: WorktreeMeta;
   thread: CodexAppServerThread;
   conversationMeta: WorktreeConversationMeta;
 }
@@ -83,6 +89,48 @@ function findActiveTurn(thread: CodexAppServerThread): CodexAppServerTurn | null
   return null;
 }
 
+function extractCodexToolSummary(item: CodexAppServerGenericItem): { name: string; summary: string; details: string } | null {
+  if (item.type !== "toolCall" && item.type !== "toolUse") return null;
+  const raw = item as CodexAppServerGenericItem & Record<string, unknown>;
+  const name = typeof raw.name === "string" ? raw.name : typeof raw.tool === "string" ? raw.tool : "Tool";
+  const args = isRecord(raw.args) ? raw.args
+    : isRecord(raw.input) ? raw.input
+    : isRecord(raw.parameters) ? raw.parameters
+    : {};
+  const summary = formatCodexToolSummary(name, args);
+  const details = JSON.stringify(args, null, 2);
+  return { name, summary, details };
+}
+
+function formatCodexToolSummary(name: string, args: Record<string, unknown>): string {
+  const str = (v: unknown): string => (typeof v === "string" ? v : "");
+  switch (name) {
+    case "read_file":
+    case "ReadFile":
+      return str(args.path) || str(args.file) || name;
+    case "write_file":
+    case "WriteFile":
+    case "edit_file":
+    case "EditFile":
+      return str(args.path) || str(args.file) || name;
+    case "run_command":
+    case "RunCommand":
+    case "shell":
+    case "bash": {
+      const cmd = str(args.command) || str(args.cmd);
+      return cmd.slice(0, 80) || name;
+    }
+    default: {
+      const raw = JSON.stringify(args);
+      return raw.slice(0, 80) || name;
+    }
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function buildConversationMessages(thread: CodexAppServerThread): AgentsUiConversationMessage[] {
   const messages: AgentsUiConversationMessage[] = [];
 
@@ -92,9 +140,9 @@ function buildConversationMessages(thread: CodexAppServerThread): AgentsUiConver
         const text = extractUserText(item);
         if (text.length === 0) continue;
         messages.push({
+          kind: "user",
           id: item.id,
           turnId: turn.id,
-          role: "user",
           text,
           status: "completed",
           createdAt: toIsoTimestamp(turn.startedAt),
@@ -102,24 +150,64 @@ function buildConversationMessages(thread: CodexAppServerThread): AgentsUiConver
         continue;
       }
 
-      if (!isAgentMessageItem(item)) continue;
-      if (item.text.length === 0) continue;
+      if (isAgentMessageItem(item)) {
+        if (item.text.length === 0) continue;
+        messages.push({
+          kind: "assistant",
+          id: item.id,
+          turnId: turn.id,
+          text: item.text,
+          status: isActiveTurnStatus(turn.status) ? "inProgress" : "completed",
+          createdAt: toIsoTimestamp(turn.completedAt ?? turn.startedAt),
+        });
+        continue;
+      }
 
-      messages.push({
-        id: item.id,
-        turnId: turn.id,
-        role: "assistant",
-        text: item.text,
-        status: isActiveTurnStatus(turn.status) ? "inProgress" : "completed",
-        createdAt: toIsoTimestamp(turn.completedAt ?? turn.startedAt),
-      });
+      const generic = item as CodexAppServerGenericItem;
+      const toolInfo = extractCodexToolSummary(generic);
+      if (toolInfo) {
+        messages.push({
+          kind: "tool",
+          id: item.id,
+          turnId: turn.id,
+          name: toolInfo.name,
+          summary: toolInfo.summary,
+          status: "ok",
+          createdAt: toIsoTimestamp(turn.startedAt),
+          details: toolInfo.details,
+        });
+        continue;
+      }
+
+      if (generic.type === "reasoning" || generic.type === "thinking") {
+        const raw = generic as CodexAppServerGenericItem & Record<string, unknown>;
+        const thinkingText = typeof raw.text === "string"
+          ? raw.text
+          : typeof raw.content === "string"
+          ? raw.content
+          : "";
+        const firstLine = thinkingText.split("\n")[0] ?? "";
+        const truncated = firstLine.slice(0, 200);
+        if (truncated.length > 0) {
+          messages.push({
+            kind: "thinking",
+            id: item.id,
+            turnId: turn.id,
+            text: truncated,
+            createdAt: toIsoTimestamp(turn.startedAt),
+            details: thinkingText,
+          });
+        }
+      }
     }
   }
 
   return messages;
 }
 
-export function buildConversationState(thread: CodexAppServerThread): AgentsUiConversationState {
+export function buildConversationState(
+  thread: CodexAppServerThread,
+): AgentsUiConversationState {
   const activeTurn = findActiveTurn(thread);
   return {
     provider: "codexAppServer",
@@ -178,23 +266,37 @@ export class WorktreeConversationService {
 
   async attachWorktreeConversation(
     worktree: WorktreeSnapshot,
+    probe?: WorktreeConversationProbeContext,
+    storage?: ConversationStorage,
   ): Promise<WorktreeConversationResult<AgentsUiWorktreeConversationResponse>> {
-    return await this.withResolvedConversation(worktree, true, async ({ conversationMeta, thread }) =>
+    return await this.withResolvedConversation(worktree, true, storage, async ({ conversationMeta, thread }) =>
       ok(toWorktreeConversationResponse(worktree, conversationMeta, thread))
     );
   }
 
   async readWorktreeConversation(
     worktree: WorktreeSnapshot,
+    probe?: WorktreeConversationProbeContext,
+    storage?: ConversationStorage,
   ): Promise<WorktreeConversationResult<AgentsUiWorktreeConversationResponse>> {
-    return await this.withResolvedConversation(worktree, false, async ({ conversationMeta, thread }) =>
+    return await this.withResolvedConversation(worktree, false, storage, async ({ conversationMeta, thread }) =>
       ok(toWorktreeConversationResponse(worktree, conversationMeta, thread))
     );
+  }
+
+  private buildDefaultStorage(worktreePath: string): ConversationStorage {
+    const gitDir = this.deps.git.resolveWorktreeGitDir(worktreePath);
+    return buildWorktreeConversationStorage({
+      gitDir,
+      readMeta: this.readMeta,
+      writeMeta: this.writeMeta,
+    });
   }
 
   private async withResolvedConversation<T>(
     worktree: WorktreeSnapshot,
     allowCreate: boolean,
+    storage: ConversationStorage | undefined,
     fn: (resolved: ResolvedConversation) => Promise<WorktreeConversationResult<T>>,
   ): Promise<WorktreeConversationResult<T>> {
     if (!isCodexWorktree(worktree)) {
@@ -202,7 +304,8 @@ export class WorktreeConversationService {
     }
 
     try {
-      const resolved = await this.resolveConversation(worktree, allowCreate);
+      const effectiveStorage = storage ?? this.buildDefaultStorage(worktree.path);
+      const resolved = await this.resolveConversation(worktree, allowCreate, effectiveStorage);
       if (!resolved.ok) return resolved;
       return await fn(resolved.data);
     } catch (error) {
@@ -214,38 +317,33 @@ export class WorktreeConversationService {
   private async resolveConversation(
     worktree: WorktreeSnapshot,
     allowCreate: boolean,
+    storage: ConversationStorage,
   ): Promise<WorktreeConversationResult<ResolvedConversation>> {
-    const gitDir = this.deps.git.resolveWorktreeGitDir(worktree.path);
-    const meta = await this.readMeta(gitDir);
-    if (!meta) {
-      return err(409, "Worktree metadata is missing");
-    }
+    const saved = await storage.load();
 
     const now = this.now();
-    const thread = await this.resolveThread(meta, worktree.path, allowCreate);
+    const thread = await this.resolveThread(saved, worktree.path, allowCreate);
     if (!thread) {
       return err(404, "No Codex thread could be resolved for this worktree");
     }
 
     const conversationMeta = buildConversationMeta(thread, now);
-    const nextMeta = sameConversationMeta(meta.conversation, conversationMeta)
-      ? { ...meta, conversation: { ...conversationMeta, lastSeenAt: meta.conversation?.lastSeenAt ?? conversationMeta.lastSeenAt } }
-      : { ...meta, conversation: conversationMeta };
+    const effectiveMeta = sameConversationMeta(saved, conversationMeta)
+      ? { ...conversationMeta, lastSeenAt: saved?.lastSeenAt ?? conversationMeta.lastSeenAt }
+      : conversationMeta;
 
-    if (!sameConversationMeta(meta.conversation, conversationMeta)) {
-      await this.writeMeta(gitDir, nextMeta);
+    if (!sameConversationMeta(saved, conversationMeta)) {
+      await storage.save(effectiveMeta);
     }
 
     return ok({
-      gitDir,
-      meta: nextMeta,
       thread,
-      conversationMeta: nextMeta.conversation ?? conversationMeta,
+      conversationMeta: effectiveMeta,
     });
   }
 
   private async resolveThread(
-    meta: WorktreeMeta,
+    saved: WorktreeConversationMeta | null,
     cwd: string,
     allowCreate: boolean,
   ): Promise<CodexAppServerThread | null> {
@@ -258,9 +356,7 @@ export class WorktreeConversationService {
       return await this.ensureThreadLoaded(discoveredThread.id, cwd);
     }
 
-    const savedThreadId = isCodexConversationMeta(meta.conversation)
-      ? meta.conversation.threadId
-      : null;
+    const savedThreadId = isCodexConversationMeta(saved) ? saved.threadId : null;
     if (savedThreadId) {
       const savedThread = await this.tryLoadThread(savedThreadId, cwd);
       if (savedThread) return savedThread;

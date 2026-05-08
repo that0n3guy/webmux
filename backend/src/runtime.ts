@@ -1,99 +1,101 @@
-import { loadConfig, projectRoot, type ProjectConfig } from "./adapters/config";
-import { loadControlToken } from "./adapters/control-token";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { projectRoot } from "./adapters/config";
 import { BunDockerGateway } from "./adapters/docker";
 import { BunGitGateway } from "./adapters/git";
 import { BunLifecycleHookRunner } from "./adapters/hooks";
+import { createUserPreferencesGateway, type UserPreferencesGateway } from "./adapters/preferences";
 import { BunPortProbe } from "./adapters/port-probe";
 import { BunTmuxGateway } from "./adapters/tmux";
 import { AutoNameService } from "./services/auto-name-service";
-import { ArchiveStateService } from "./services/archive-state-service";
-import { LifecycleService, type CreateWorktreeProgress } from "./services/lifecycle-service";
 import { NotificationService as RuntimeNotificationService } from "./services/notification-service";
-import { ProjectRuntime } from "./services/project-runtime";
-import { ReconciliationService } from "./services/reconciliation-service";
-import { WorktreeCreationTracker } from "./services/worktree-creation-service";
+import { createProjectRegistry, type ProjectRegistry } from "./services/project-registry";
+import { log } from "./lib/log";
 
 export interface WebmuxRuntimeOptions {
   projectDir?: string;
   port?: number;
-  onCreateProgress?: (progress: CreateWorktreeProgress) => void | Promise<void>;
 }
 
-export interface WebmuxRuntime {
+export interface MultiProjectRuntime {
   port: number;
-  projectDir: string;
-  config: ProjectConfig;
-  archiveStateService: ArchiveStateService;
   git: BunGitGateway;
-  portProbe: BunPortProbe;
   tmux: BunTmuxGateway;
   docker: BunDockerGateway;
+  portProbe: BunPortProbe;
   hooks: BunLifecycleHookRunner;
   autoName: AutoNameService;
-  projectRuntime: ProjectRuntime;
-  worktreeCreationTracker: WorktreeCreationTracker;
   runtimeNotifications: RuntimeNotificationService;
-  reconciliationService: ReconciliationService;
-  lifecycleService: LifecycleService;
+  projectRegistry: ProjectRegistry;
+  preferencesGateway: UserPreferencesGateway;
 }
 
-export function createWebmuxRuntime(options: WebmuxRuntimeOptions = {}): WebmuxRuntime {
+// Backward-compat alias used by older imports (e.g., `import type { WebmuxRuntime }`).
+export type WebmuxRuntime = MultiProjectRuntime;
+
+export interface WebmuxAdapters {
+  git: BunGitGateway;
+  tmux: BunTmuxGateway;
+  docker: BunDockerGateway;
+  portProbe: BunPortProbe;
+  hooks: BunLifecycleHookRunner;
+  autoName: AutoNameService;
+  runtimeNotifications: RuntimeNotificationService;
+}
+
+/** Construct the global adapter bag shared across the runtime and CLI default-factory. */
+export function createWebmuxAdapters(): WebmuxAdapters {
+  return {
+    git: new BunGitGateway(),
+    tmux: new BunTmuxGateway(),
+    docker: new BunDockerGateway(),
+    portProbe: new BunPortProbe(),
+    hooks: new BunLifecycleHookRunner(),
+    autoName: new AutoNameService(),
+    runtimeNotifications: new RuntimeNotificationService(),
+  };
+}
+
+export async function createWebmuxRuntime(options: WebmuxRuntimeOptions = {}): Promise<MultiProjectRuntime> {
   const port = options.port ?? parseInt(Bun.env.PORT || "5111", 10);
-  const projectDir = projectRoot(options.projectDir ?? Bun.env.WEBMUX_PROJECT_DIR ?? process.cwd());
-  const config = loadConfig(projectDir, { resolvedRoot: true });
-  const git = new BunGitGateway();
-  const archiveStateService = new ArchiveStateService(git.resolveWorktreeGitDir(projectDir));
-  const portProbe = new BunPortProbe();
-  const tmux = new BunTmuxGateway();
-  const docker = new BunDockerGateway();
-  const hooks = new BunLifecycleHookRunner();
-  const autoName = new AutoNameService();
-  const projectRuntime = new ProjectRuntime();
-  const worktreeCreationTracker = new WorktreeCreationTracker();
-  const runtimeNotifications = new RuntimeNotificationService();
-  const reconciliationService = new ReconciliationService({
-    config,
-    git,
-    tmux,
-    portProbe,
-    runtime: projectRuntime,
-  });
-  const lifecycleService = new LifecycleService({
-    projectRoot: projectDir,
-    controlBaseUrl: `http://127.0.0.1:${port}`,
-    getControlToken: loadControlToken,
-    config,
-    archiveState: archiveStateService,
+  const cwdHint = projectRoot(options.projectDir ?? Bun.env.WEBMUX_PROJECT_DIR ?? process.cwd());
+
+  const { git, tmux, docker, portProbe, hooks, autoName, runtimeNotifications } = createWebmuxAdapters();
+
+  const preferencesGateway = createUserPreferencesGateway();
+
+  const projectRegistry = createProjectRegistry({
+    port,
     git,
     tmux,
     docker,
-    reconciliation: reconciliationService,
+    portProbe,
     hooks,
     autoName,
-    onCreateProgress: (progress) => {
-      worktreeCreationTracker.set(progress);
-      options.onCreateProgress?.(progress);
-    },
-    onCreateFinished: (branch) => {
-      worktreeCreationTracker.clear(branch);
-    },
+    runtimeNotifications,
+    preferencesGateway,
   });
+  await projectRegistry.load();
+
+  // First-run hydration: if registry is empty AND cwd has .webmux.yaml, auto-register cwd.
+  if (projectRegistry.list().length === 0 && existsSync(join(cwdHint, ".webmux.yaml"))) {
+    try {
+      await projectRegistry.add({ path: cwdHint });
+    } catch (err) {
+      log.warn(`[runtime] first-run auto-add failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
 
   return {
     port,
-    projectDir,
-    config,
-    archiveStateService,
     git,
-    portProbe,
     tmux,
     docker,
+    portProbe,
     hooks,
     autoName,
-    projectRuntime,
-    worktreeCreationTracker,
     runtimeNotifications,
-    reconciliationService,
-    lifecycleService,
+    projectRegistry,
+    preferencesGateway,
   };
 }

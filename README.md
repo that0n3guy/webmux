@@ -18,7 +18,48 @@ View and interact with your agents directly in the browser. Each worktree gets i
 
 ### Mobile-Friendly Agents Chat
 
-webmux also serves a second, simplified agents UI on a separate port. It is primarily meant to give you a much better mobile UX: a worktree list, a simple chat screen, and quick access to service and PR badges without trying to squeeze a full terminal dashboard onto a phone.
+On a phone (or any viewport ≤768px), webmux automatically swaps the embedded terminal for a chat surface for any worktree running Claude Code or Codex.
+
+The chat surface mirrors what's happening in the terminal:
+
+- **Inline tool calls and thinking** — `▸ Read foo.ts:1-50` ✓, `· thinking…`, etc. Tap any row to expand and see the full input (Bash command, file path + diff, full thinking text).
+- **Markdown rendering** — assistant replies render headings, lists, links, inline code, and code fences. User messages stay plain text.
+- **Stop button** — interrupt a turn mid-thinking without leaving the chat.
+- **Sticky scroll** — auto-scroll only when you're already at the bottom; reading older messages doesn't yank you back.
+- **xterm/chat toggle** — small ⌨ / 💬 button in the topbar lets you flip to the raw terminal on demand.
+
+Chat also works for **scratch AI Sessions** — agent-only tmux sessions you spawn outside any worktree from the **+ New ▾ → AI Session** menu.
+
+### Skip Permissions (yolo) Toggle
+
+Every Create Worktree dialog and AI Session dialog has a **Skip permissions** toggle. When enabled, agents launch with `--dangerously-skip-permissions` (Claude) or `--yolo` (Codex). The flag is persisted on the worktree's meta, so reopening the worktree later keeps the setting. A small `yolo` chip on the sidebar row and the topbar tells you which worktrees were created in that mode.
+
+### Edit Worktree (Agent + Yolo Override)
+
+Right-click a worktree row → **Edit…** to change the agent (Claude / Codex / custom) or toggle the yolo flag on an existing worktree. Save closes and reopens the tmux session so the new settings take effect immediately.
+
+### Open With Override
+
+Default **Open Session** keeps the worktree's persisted agent. The **▾** caret next to it offers:
+
+- **Open with another agent** — launch this session with a different agent for one open. Doesn't change the persisted default.
+- **Shell only** — open the tmux session with no agent pane, just a shell at the worktree path.
+
+Both available on the CLI: `webmux open <branch> --agent codex` or `--shell-only`.
+
+### Status Indicators
+
+Each worktree row in the sidebar shows live agent state:
+
+| Icon | Meaning |
+|---|---|
+| 3 green dots ●●● | Agent is actively running / using tools |
+| Green ✓ | Turn finished; waiting for your next message |
+| Yellow speech bubble | Blocked on a permission prompt |
+| Red X | Crashed / errored |
+| Blue dot | Unread agent_stopped notification |
+
+Status is driven by Claude/Codex lifecycle hooks, persisted to disk per worktree, and survives webmux restarts. Scratch and external tmux sessions use a tmux-pane content probe instead (no hooks available).
 
 ### PR, CI & Comments
 
@@ -90,7 +131,7 @@ name: My Project
 
 workspace:
   mainBranch: main
-  worktreeRoot: __worktrees
+  worktreeRoot: .worktrees
   defaultAgent: claude
   autoPull:
     enabled: true

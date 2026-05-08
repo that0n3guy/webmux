@@ -1,8 +1,12 @@
 import type {
   AgentId,
   BuiltInAgentId,
+  ExternalTmuxSession,
   LinkedLinearIssue,
   PrEntry,
+  ProjectInfo,
+  ScratchSessionKind,
+  ScratchSessionSnapshot,
   ServiceStatus,
   WorktreeCreationPhase,
 } from "@webmux/api-contract";
@@ -11,6 +15,7 @@ export type {
   AgentsUiConversationEvent,
   AgentsUiConversationMessage,
   AgentsUiConversationMessageDeltaEvent,
+  AgentsUiConversationMessageStatus,
   AgentsUiConversationState,
   AgentsUiInterruptResponse,
   AgentsUiSendMessageResponse,
@@ -51,6 +56,7 @@ export type {
   SetWorktreeArchivedRequest,
   SetWorktreeArchivedResponse,
   UnpushedCommit,
+  UpdateWorktreeRequest,
   WorktreeCreationPhase,
   WorktreeCreationState,
   WorktreeCreateMode,
@@ -58,6 +64,19 @@ export type {
   WorktreeListResponse,
 } from "@webmux/api-contract";
 export type { AgentsSendMessageRequest as AgentsUiSendMessageRequest } from "@webmux/api-contract";
+export type { UpdateUserPreferencesRequest, UserPreferences, UserPreferencesAutoName } from "@webmux/api-contract";
+
+export type { ExternalTmuxSession, ProjectInfo, ScratchSessionSnapshot, ScratchSessionKind };
+
+export type Selection =
+  | { kind: "worktree"; projectId: string; branch: string }
+  | { kind: "scratch"; projectId: string; id: string; sessionName: string }
+  | { kind: "external"; sessionName: string };
+
+export type SessionTarget =
+  | { kind: "worktree"; projectId: string; branch: string }
+  | { kind: "scratch"; projectId: string; scratchId: string }
+  | { kind: "external"; sessionName: string };
 
 export interface FileUploadResult {
   files: Array<{ path: string }>;
@@ -90,6 +109,7 @@ export interface WorktreeInfo {
   linearIssue: LinkedLinearIssue | null;
   creating: boolean;
   creationPhase: WorktreeCreationPhase | null;
+  yolo: boolean;
 }
 
 export interface WorktreeListRow {

@@ -8,7 +8,7 @@ function buildOptimisticUserMessage(turnId: string, text: string): AgentsUiConve
   return {
     id: `pending-user:${turnId}`,
     turnId,
-    role: "user",
+    kind: "user",
     text,
     status: "completed",
     createdAt: new Date().toISOString(),
@@ -32,7 +32,7 @@ export function applyConversationMessageDelta(
         {
           id: event.itemId,
           turnId: event.turnId,
-          role: "assistant",
+          kind: "assistant",
           text: event.delta,
           status: "inProgress",
           createdAt: null,
@@ -45,15 +45,15 @@ export function applyConversationMessageDelta(
     ...conversation,
     running: true,
     activeTurnId: event.turnId,
-    messages: conversation.messages.map((message, index) =>
-      index === existingIndex
-        ? {
-            ...message,
-            text: `${message.text}${event.delta}`,
-            status: "inProgress",
-          }
-        : message
-    ),
+    messages: conversation.messages.map((message, index) => {
+      if (index !== existingIndex) return message;
+      if (message.kind !== "user" && message.kind !== "assistant") return message;
+      return {
+        ...message,
+        text: `${message.text}${event.delta}`,
+        status: "inProgress" as const,
+      };
+    }),
   };
 }
 
@@ -64,7 +64,7 @@ export function markConversationTurnStarted(
 ): AgentsUiConversationState | null {
   if (!conversation) return conversation;
 
-  const nextMessages = conversation.messages.some((message) => message.turnId === turnId && message.role === "user")
+  const nextMessages = conversation.messages.some((message) => message.turnId === turnId && message.kind === "user")
     ? conversation.messages
     : [...conversation.messages, buildOptimisticUserMessage(turnId, text)];
 
@@ -76,17 +76,166 @@ export function markConversationTurnStarted(
   };
 }
 
+export function preservePendingUserMessages(
+  prev: AgentsUiConversationState | null,
+  next: AgentsUiConversationState,
+): AgentsUiConversationState {
+  if (!prev || prev.conversationId !== next.conversationId) return next;
+
+  // The send endpoint assigns its own turnId (e.g. "tmux:<uuid>") which never
+  // matches the agent's own turnId in the snapshot, so we dedupe by text. But
+  // first subtract any real user messages already present in `prev` from the
+  // snapshot count — otherwise sending "again" three times in one session
+  // would let the optimistic match against an older "again" message that
+  // predates the queued send, falsely dropping the pending entry.
+  const snapshotTextRemaining = new Map<string, number>();
+  for (const message of next.messages) {
+    if (message.kind !== "user") continue;
+    snapshotTextRemaining.set(message.text, (snapshotTextRemaining.get(message.text) ?? 0) + 1);
+  }
+  for (const message of prev.messages) {
+    if (message.kind !== "user") continue;
+    if (message.id.startsWith("pending-user:")) continue;
+    const remaining = snapshotTextRemaining.get(message.text) ?? 0;
+    if (remaining > 0) snapshotTextRemaining.set(message.text, remaining - 1);
+  }
+
+  const pendingFromPrev: AgentsUiConversationMessage[] = [];
+  for (const message of prev.messages) {
+    if (message.kind !== "user") continue;
+    if (!message.id.startsWith("pending-user:")) continue;
+    const remaining = snapshotTextRemaining.get(message.text) ?? 0;
+    if (remaining > 0) {
+      snapshotTextRemaining.set(message.text, remaining - 1);
+      continue;
+    }
+    pendingFromPrev.push(message);
+  }
+
+  if (pendingFromPrev.length === 0) return next;
+
+  // Splice each pending into the snapshot at the chronologically correct
+  // position based on createdAt. Claude often absorbs queued messages into
+  // the current turn's context without writing a separate user record, so we
+  // keep the optimistic visible in the right place rather than dropping it.
+  let messages = next.messages;
+  for (const pending of pendingFromPrev) {
+    messages = insertPendingByCreatedAt(messages, pending);
+  }
+  return { ...next, messages };
+}
+
+function insertPendingByCreatedAt(
+  messages: AgentsUiConversationMessage[],
+  pending: AgentsUiConversationMessage,
+): AgentsUiConversationMessage[] {
+  const pendingAt = "createdAt" in pending && typeof pending.createdAt === "string" ? pending.createdAt : null;
+  if (!pendingAt) return [...messages, pending];
+
+  let insertIdx = messages.length;
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    const ts = "createdAt" in m && typeof m.createdAt === "string" ? m.createdAt : null;
+    if (ts === null) continue;
+    if (ts > pendingAt) {
+      insertIdx = i;
+      break;
+    }
+  }
+  return [...messages.slice(0, insertIdx), pending, ...messages.slice(insertIdx)];
+}
+
+// ---------------------------------------------------------------------------
+// Pending optimistic messages — sessionStorage persistence
+//
+// Optimistic user messages live only in component state, so component remount
+// (worktree switch, view toggle, page reload) drops them. We persist the
+// pending entries in sessionStorage keyed by a stable surface key so they
+// survive remount until the agent's snapshot includes the real message.
+// ---------------------------------------------------------------------------
+
+function buildPendingStorageKey(surfaceKey: string): string {
+  return `webmux:pendingChat:${surfaceKey}`;
+}
+
+export function loadPendingUserMessages(surfaceKey: string): AgentsUiConversationMessage[] {
+  if (typeof sessionStorage === "undefined") return [];
+  try {
+    const raw = sessionStorage.getItem(buildPendingStorageKey(surfaceKey));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry): entry is AgentsUiConversationMessage =>
+      !!entry
+        && typeof entry === "object"
+        && "id" in entry
+        && typeof (entry as { id: unknown }).id === "string"
+        && (entry as { id: string }).id.startsWith("pending-user:"),
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function savePendingUserMessages(
+  surfaceKey: string,
+  messages: AgentsUiConversationMessage[],
+): void {
+  if (typeof sessionStorage === "undefined") return;
+  const pending = messages.filter((m) =>
+    m.kind === "user" && m.id.startsWith("pending-user:"),
+  );
+  const storageKey = buildPendingStorageKey(surfaceKey);
+  if (pending.length === 0) {
+    sessionStorage.removeItem(storageKey);
+    return;
+  }
+  try {
+    sessionStorage.setItem(storageKey, JSON.stringify(pending));
+  } catch {
+    /* quota exceeded or unavailable — silent */
+  }
+}
+
+export function applyPersistedPendingMessages(
+  conversation: AgentsUiConversationState,
+  persisted: AgentsUiConversationMessage[],
+): AgentsUiConversationState {
+  if (persisted.length === 0) return conversation;
+
+  // Filter out persisted entries whose text already appears as a real user
+  // message in the loaded conversation — those were processed before the
+  // remount. Insert the rest at the correct chronological position.
+  const realUserTexts = new Set(
+    conversation.messages
+      .filter((m) => m.kind === "user" && !m.id.startsWith("pending-user:") && "text" in m)
+      .map((m) => (m as { text: string }).text),
+  );
+
+  let messages = conversation.messages;
+  for (const pending of persisted) {
+    if (!("text" in pending)) continue;
+    if (realUserTexts.has(pending.text)) continue;
+    messages = insertPendingByCreatedAt(messages, pending);
+  }
+
+  if (messages === conversation.messages) return conversation;
+  return { ...conversation, messages };
+}
+
 export function buildConversationProgressSignature(conversation: AgentsUiConversationState | null): string | null {
   if (!conversation) return null;
 
   const lastMessage = conversation.messages[conversation.messages.length - 1] ?? null;
+  const lastMessageStatus = lastMessage && "status" in lastMessage ? lastMessage.status : null;
+  const lastMessageTextLength = lastMessage && "text" in lastMessage ? lastMessage.text.length : 0;
   return JSON.stringify({
     conversationId: conversation.conversationId,
     running: conversation.running,
     activeTurnId: conversation.activeTurnId,
     messageCount: conversation.messages.length,
     lastMessageId: lastMessage?.id ?? null,
-    lastMessageStatus: lastMessage?.status ?? null,
-    lastMessageTextLength: lastMessage?.text.length ?? 0,
+    lastMessageStatus,
+    lastMessageTextLength,
   });
 }

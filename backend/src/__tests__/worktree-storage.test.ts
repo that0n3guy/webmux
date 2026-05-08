@@ -11,10 +11,12 @@ import {
   parseDotenv,
   readWorktreePrs,
   readWorktreeMeta,
+  readWorktreeRuntimeState,
   renderEnvFile,
   writeWorktreePrs,
+  writeWorktreeRuntimeState,
 } from "../adapters/fs";
-import type { WorktreeMeta } from "../domain/model";
+import type { WorktreeMeta, WorktreeRuntimeStatePersisted } from "../domain/model";
 import { createManagedWorktree, initializeManagedWorktree } from "../services/worktree-service";
 
 function run(args: string[], cwd: string): string {
@@ -174,6 +176,18 @@ class FakeTmuxGateway implements TmuxGateway {
   listWindows() {
     return [];
   }
+
+  capturePane(_target: string, _lines: number): string[] {
+    return [];
+  }
+
+  killSession(_sessionName: string): void {}
+  setSessionOption(_sessionName: string, _optionName: string, _value: string): void {}
+  getSessionOption(_sessionName: string, _optionName: string): string | null { return null; }
+  listAllSessions(): ReturnType<TmuxGateway["listAllSessions"]> { return []; }
+  getFirstWindowName(_sessionName: string): string | null { return null; }
+  getPaneCurrentCommand(_target: string): string | null { return null; }
+  getPaneCurrentPath(_target: string): string | null { return null; }
 }
 
 function makeMeta(): WorktreeMeta {
@@ -582,5 +596,76 @@ describe("initializeManagedWorktree", () => {
     expect(calls).toContain("killWindow:wm-project-12345678:wm-feature-tmux-rollback");
     expect(new BunGitGateway().listWorktrees(repoRoot).some((entry) => entry.path === worktreePath)).toBe(false);
     expect(run(["git", "branch", "--list", "feature-tmux-rollback"], repoRoot)).toBe("");
+  });
+});
+
+describe("worktree runtime state storage", () => {
+  let gitDir = "";
+
+  afterEach(async () => {
+    if (gitDir) {
+      await rm(gitDir, { recursive: true, force: true });
+      gitDir = "";
+    }
+  });
+
+  it("round-trips WorktreeRuntimeStatePersisted via the fs adapter", async () => {
+    gitDir = await mkdtemp(join(tmpdir(), "webmux-runtime-state-"));
+
+    const state: WorktreeRuntimeStatePersisted = {
+      schemaVersion: 1,
+      lifecycle: "stopped",
+      lastStartedAt: "2026-04-28T10:00:00.000Z",
+      lastEventAt: "2026-04-28T10:05:00.000Z",
+      lastError: null,
+    };
+
+    await writeWorktreeRuntimeState(gitDir, state);
+    const read = await readWorktreeRuntimeState(gitDir);
+
+    expect(read).toEqual(state);
+  });
+
+  it("returns null when no runtime-state.json exists", async () => {
+    gitDir = await mkdtemp(join(tmpdir(), "webmux-runtime-state-missing-"));
+    const result = await readWorktreeRuntimeState(gitDir);
+    expect(result).toBeNull();
+  });
+
+  it("returns null for a file with wrong schema version", async () => {
+    gitDir = await mkdtemp(join(tmpdir(), "webmux-runtime-state-badver-"));
+    const paths = getWorktreeStoragePaths(gitDir);
+    await mkdir(paths.webmuxDir, { recursive: true });
+    await Bun.write(paths.runtimeStatePath, JSON.stringify({
+      schemaVersion: 999,
+      lifecycle: "idle",
+      lastStartedAt: null,
+      lastEventAt: null,
+      lastError: null,
+    }, null, 2));
+
+    const result = await readWorktreeRuntimeState(gitDir);
+    expect(result).toBeNull();
+  });
+
+  it("returns null for a file with invalid lifecycle value", async () => {
+    gitDir = await mkdtemp(join(tmpdir(), "webmux-runtime-state-badlc-"));
+    const paths = getWorktreeStoragePaths(gitDir);
+    await mkdir(paths.webmuxDir, { recursive: true });
+    await Bun.write(paths.runtimeStatePath, JSON.stringify({
+      schemaVersion: 1,
+      lifecycle: "not_a_lifecycle",
+      lastStartedAt: null,
+      lastEventAt: null,
+      lastError: null,
+    }, null, 2));
+
+    const result = await readWorktreeRuntimeState(gitDir);
+    expect(result).toBeNull();
+  });
+
+  it("runtimeStatePath is populated in getWorktreeStoragePaths", () => {
+    const paths = getWorktreeStoragePaths("/some/gitdir");
+    expect(paths.runtimeStatePath).toBe("/some/gitdir/webmux/runtime-state.json");
   });
 });

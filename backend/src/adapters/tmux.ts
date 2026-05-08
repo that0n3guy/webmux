@@ -6,6 +6,19 @@ export interface TmuxWindowSummary {
   sessionName: string;
   windowName: string;
   paneCount: number;
+  /** Current path of the active pane (resolved). Used to recover from stale window names. */
+  paneCurrentPath?: string | null;
+  /** Value of the `@webmux-worktree-id` window option. Stable identity for windows webmux owns. */
+  webmuxWorktreeId?: string | null;
+}
+
+export const WEBMUX_WORKTREE_ID_OPTION = "@webmux-worktree-id";
+
+export interface TmuxSessionSummary {
+  name: string;
+  windowCount: number;
+  attached: boolean;
+  group: string | null;
 }
 
 export interface TmuxGateway {
@@ -13,6 +26,7 @@ export interface TmuxGateway {
   ensureSession(sessionName: string, cwd: string): void;
   hasWindow(sessionName: string, windowName: string): boolean;
   killWindow(sessionName: string, windowName: string): void;
+  killSession(sessionName: string): void;
   createWindow(opts: {
     sessionName: string;
     windowName: string;
@@ -27,9 +41,17 @@ export interface TmuxGateway {
     command?: string;
   }): void;
   setWindowOption(sessionName: string, windowName: string, option: string, value: string): void;
+  renameWindow(sessionName: string, windowName: string, newName: string): void;
+  setSessionOption(sessionName: string, optionName: string, value: string): void;
+  getSessionOption(sessionName: string, optionName: string): string | null;
   runCommand(target: string, command: string): void;
   selectPane(target: string): void;
   listWindows(): TmuxWindowSummary[];
+  listAllSessions(): TmuxSessionSummary[];
+  getFirstWindowName(sessionName: string): string | null;
+  capturePane(target: string, lines: number): string[];
+  getPaneCurrentCommand(target: string): string | null;
+  getPaneCurrentPath(target: string): string | null;
 }
 
 function runTmux(args: string[]): { stdout: string; stderr: string; exitCode: number } {
@@ -70,11 +92,15 @@ export function sanitizeTmuxNameSegment(value: string, maxLength = 24): string {
   return trimmed || "x";
 }
 
+export function computeProjectId(projectRoot: string): string {
+  const resolved = resolve(projectRoot);
+  return createHash("sha1").update(resolved).digest("hex").slice(0, 8);
+}
+
 export function buildProjectSessionName(projectRoot: string): string {
   const resolved = resolve(projectRoot);
   const base = sanitizeTmuxNameSegment(basename(resolved), 18);
-  const hash = createHash("sha1").update(resolved).digest("hex").slice(0, 8);
-  return `wm-${base}-${hash}`;
+  return `wm-${base}-${computeProjectId(resolved)}`;
 }
 
 export function buildWorktreeWindowName(branch: string): string {
@@ -87,14 +113,42 @@ export function parseWindowSummaries(output: string): TmuxWindowSummary[] {
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
-      const [sessionName = "", windowName = "", paneCountRaw = "0"] = line.split("\t");
+      const [
+        sessionName = "",
+        windowName = "",
+        paneCountRaw = "0",
+        paneCurrentPath = "",
+        webmuxWorktreeId = "",
+      ] = line.split("\t");
       return {
         sessionName,
         windowName,
         paneCount: parseInt(paneCountRaw, 10) || 0,
+        paneCurrentPath: paneCurrentPath.length > 0 ? paneCurrentPath : null,
+        webmuxWorktreeId: webmuxWorktreeId.length > 0 ? webmuxWorktreeId : null,
       };
     })
     .filter((entry) => entry.sessionName.length > 0 && entry.windowName.length > 0);
+}
+
+export const WEBMUX_SESSION_PREFIX = "wm-";
+export const SCRATCH_SESSION_PREFIX = "wm-scratch-";
+
+export function parseSessionSummaries(output: string): TmuxSessionSummary[] {
+  return output
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .map((line) => {
+      const [name = "", windowCountRaw = "0", attachedRaw = "0", group = ""] = line.split("\t");
+      return {
+        name,
+        windowCount: parseInt(windowCountRaw, 10) || 0,
+        attached: attachedRaw === "1",
+        group: group.length > 0 ? group : null,
+      };
+    })
+    .filter((entry) => entry.name.length > 0);
 }
 
 export class BunTmuxGateway implements TmuxGateway {
@@ -131,6 +185,13 @@ export class BunTmuxGateway implements TmuxGateway {
     }
   }
 
+  killSession(sessionName: string): void {
+    const result = runTmux(["kill-session", "-t", sessionName]);
+    if (result.exitCode !== 0 && !result.stderr.includes("can't find session") && !result.stderr.includes("no server running")) {
+      throw new Error(`kill tmux session ${sessionName} failed: ${result.stderr}`);
+    }
+  }
+
   createWindow(opts: {
     sessionName: string;
     windowName: string;
@@ -162,6 +223,28 @@ export class BunTmuxGateway implements TmuxGateway {
     );
   }
 
+  renameWindow(sessionName: string, windowName: string, newName: string): void {
+    if (windowName === newName) return;
+    assertTmuxOk(
+      ["rename-window", "-t", `${sessionName}:${windowName}`, newName],
+      `rename tmux window ${sessionName}:${windowName} -> ${newName}`,
+    );
+  }
+
+  setSessionOption(sessionName: string, optionName: string, value: string): void {
+    assertTmuxOk(
+      ["set-option", "-t", sessionName, optionName, value],
+      `set tmux option ${optionName} on session ${sessionName}`,
+    );
+  }
+
+  getSessionOption(sessionName: string, optionName: string): string | null {
+    const result = runTmux(["show-option", "-t", sessionName, "-v", optionName]);
+    if (result.exitCode !== 0) return null;
+    const trimmed = result.stdout.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
   runCommand(target: string, command: string): void {
     assertTmuxOk(["send-keys", "-t", target, "-l", "--", command], `send tmux command to ${target}`);
     assertTmuxOk(["send-keys", "-t", target, "C-m"], `submit tmux command on ${target}`);
@@ -173,9 +256,59 @@ export class BunTmuxGateway implements TmuxGateway {
 
   listWindows(): TmuxWindowSummary[] {
     const output = assertTmuxOk(
-      ["list-windows", "-a", "-F", "#{session_name}\t#{window_name}\t#{window_panes}"],
+      [
+        "list-windows",
+        "-a",
+        "-F",
+        `#{session_name}\t#{window_name}\t#{window_panes}\t#{pane_current_path}\t#{${WEBMUX_WORKTREE_ID_OPTION}}`,
+      ],
       "list tmux windows",
     );
     return parseWindowSummaries(output);
   }
+
+  listAllSessions(): TmuxSessionSummary[] {
+    const result = runTmux([
+      "list-sessions",
+      "-F",
+      "#{session_name}\t#{session_windows}\t#{session_attached}\t#{session_group}",
+    ]);
+    if (result.exitCode !== 0) {
+      // No tmux server → no sessions, not an error.
+      if (result.stderr.includes("no server running")) return [];
+      throw new Error(`list tmux sessions failed: ${result.stderr}`);
+    }
+    return parseSessionSummaries(result.stdout);
+  }
+
+  getFirstWindowName(sessionName: string): string | null {
+    const result = runTmux(["list-windows", "-t", sessionName, "-F", "#{window_name}"]);
+    if (result.exitCode !== 0) return null;
+    const first = result.stdout.split("\n")[0]?.trim();
+    return first && first.length > 0 ? first : null;
+  }
+
+  capturePane(target: string, lines: number): string[] {
+    const result = runTmux(["capture-pane", "-p", "-t", target, "-S", `-${lines}`]);
+    if (result.exitCode !== 0) return [];
+    return result.stdout
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .filter((line) => line.length > 0);
+  }
+
+  getPaneCurrentCommand(target: string): string | null {
+    const result = runTmux(["display-message", "-t", target, "-p", "-F", "#{pane_current_command}"]);
+    if (result.exitCode !== 0) return null;
+    const trimmed = result.stdout.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  getPaneCurrentPath(target: string): string | null {
+    const result = runTmux(["display-message", "-t", target, "-p", "-F", "#{pane_current_path}"]);
+    if (result.exitCode !== 0) return null;
+    const trimmed = result.stdout.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
 }

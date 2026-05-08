@@ -6,6 +6,7 @@
     BuiltInAgentId,
     CreateWorktreeRequest,
     ProfileConfig,
+    ProjectInfo,
     WorktreeCreateMode,
   } from "./types";
   import BaseDialog from "./BaseDialog.svelte";
@@ -32,6 +33,9 @@
     startupEnvs = {},
     linearCreateTicketOption = false,
     openedFromLinearIssue = false,
+    projects = [],
+    defaultProjectId = "",
+    onProjectChange,
     oncreate,
     oncancel,
   }: {
@@ -52,16 +56,27 @@
     startupEnvs?: Record<string, string | boolean>;
     linearCreateTicketOption?: boolean;
     openedFromLinearIssue?: boolean;
-    oncreate: (request: CreateWorktreeRequest) => void;
+    projects?: ProjectInfo[];
+    defaultProjectId?: string;
+    onProjectChange?: (projectId: string) => void;
+    oncreate: (request: CreateWorktreeRequest) => Promise<void>;
     oncancel: () => void;
   } = $props();
 
-  const STORAGE_KEY = "wt-default-profile";
+  // svelte-ignore state_referenced_locally
+  let selectedProjectId = $state(defaultProjectId);
+  $effect(() => {
+    selectedProjectId = defaultProjectId;
+  });
+
   const AGENT_STORAGE_KEY = "wt-default-agents";
   const MULTI_AGENT_STORAGE_KEY = "wt-default-multi-agents";
   const ENV_STORAGE_KEY = "wt-default-envs";
-  const savedProfile = localStorage.getItem(STORAGE_KEY);
+  const YOLO_STORAGE_KEY = "wm-yolo";
   const savedEnvs = localStorage.getItem(ENV_STORAGE_KEY);
+  const savedYolo = localStorage.getItem(YOLO_STORAGE_KEY);
+  // Drop any profile that an older webmux saved under wt-default-profile.
+  localStorage.removeItem("wt-default-profile");
 
   function sameAgentIds(left: AgentId[], right: AgentId[]): boolean {
     return left.length === right.length && left.every((id, index) => id === right[index]);
@@ -122,16 +137,19 @@
   let selectedBaseBranch = $state("");
   let multiAgentMode = $state(savedMultiAgentMode);
   let selectedAgentIds = $state<AgentId[]>(savedAgentIds);
-  let profile = $state(savedProfile ?? "");
+  let profile = $state("");
   let createLinearTicket = $state(false);
   let linearTitle = $state("");
-  const hasSavedDefaults = savedProfile != null
-    || localStorage.getItem(AGENT_STORAGE_KEY) != null
+  let yolo = $state(savedYolo === null ? true : savedYolo === "true");
+  const hasSavedDefaults = localStorage.getItem(AGENT_STORAGE_KEY) != null
     || localStorage.getItem(MULTI_AGENT_STORAGE_KEY) != null
     || savedEnvs != null;
   let saveDefault = $state(hasSavedDefaults);
   // svelte-ignore state_referenced_locally
   let envValues = $state<Record<string, string | boolean>>(loadSavedEnvs());
+
+  let error = $state<string | null>(null);
+  let busy = $state(false);
 
   let showLinearTicketOption = $derived(
     linearCreateTicketOption && !openedFromLinearIssue && mode === "new",
@@ -225,16 +243,17 @@
 
 <BaseDialog onclose={oncancel} className="md:max-w-[440px]">
   <form
-    onsubmit={(e) => {
+    onsubmit={async (e) => {
       e.preventDefault();
-      if (!canSubmit) return;
+      if (!canSubmit || busy) return;
+      busy = true;
+      error = null;
+      localStorage.setItem(YOLO_STORAGE_KEY, String(yolo));
       if (saveDefault) {
-        localStorage.setItem(STORAGE_KEY, profile);
         localStorage.setItem(AGENT_STORAGE_KEY, JSON.stringify(selectedAgentIds));
         localStorage.setItem(MULTI_AGENT_STORAGE_KEY, String(multiAgentMode));
         localStorage.setItem(ENV_STORAGE_KEY, JSON.stringify(envValues));
       } else {
-        localStorage.removeItem(STORAGE_KEY);
         localStorage.removeItem(AGENT_STORAGE_KEY);
         localStorage.removeItem(MULTI_AGENT_STORAGE_KEY);
         localStorage.removeItem(ENV_STORAGE_KEY);
@@ -249,19 +268,43 @@
       }
       const trimmedPrompt = prompt.trim();
       const branchName = mode === "existing" ? selectedExistingBranch : newBranchName.trim();
-      oncreate({
-        mode,
-        ...(branchName && !(mode === "new" && createLinearTicket) ? { branch: branchName } : {}),
-        ...(mode === "new" && selectedBaseBranch ? { baseBranch: selectedBaseBranch } : {}),
-        profile,
-        agents: [...selectedAgentIds],
-        ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
-        ...(Object.keys(filteredEnvs).length > 0 ? { envOverrides: filteredEnvs } : {}),
-        ...(createLinearTicket ? { createLinearTicket: true } : {}),
-        ...(createLinearTicket && linearTitle.trim() ? { linearTitle: linearTitle.trim() } : {}),
-      });
+      try {
+        await oncreate({
+          mode,
+          ...(branchName && !(mode === "new" && createLinearTicket) ? { branch: branchName } : {}),
+          ...(mode === "new" && selectedBaseBranch ? { baseBranch: selectedBaseBranch } : {}),
+          profile,
+          agents: [...selectedAgentIds],
+          ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
+          ...(Object.keys(filteredEnvs).length > 0 ? { envOverrides: filteredEnvs } : {}),
+          ...(createLinearTicket ? { createLinearTicket: true } : {}),
+          ...(createLinearTicket && linearTitle.trim() ? { linearTitle: linearTitle.trim() } : {}),
+          yolo,
+        });
+      } catch (err: unknown) {
+        error = err instanceof Error ? err.message : String(err);
+      } finally {
+        busy = false;
+      }
     }}
   >
+    {#if projects.length > 1}
+      <div class="mb-4">
+        <label class="block text-xs text-muted mb-1.5" for="wt-project">Project</label>
+        <select
+          id="wt-project"
+          bind:value={selectedProjectId}
+          onchange={() => onProjectChange?.(selectedProjectId)}
+          class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] outline-none focus:border-accent"
+        >
+          {#each projects as p (p.id)}
+            <option value={p.id}>{p.name}</option>
+          {/each}
+        </select>
+      </div>
+    {:else if projects.length === 1}
+      <p class="text-[12px] text-muted mb-4">in <span class="text-primary font-medium">{projects[0].name}</span></p>
+    {/if}
     <h2 class="text-base mb-4">New Worktree</h2>
     <div class="mb-4">
       <label class="block text-xs text-muted mb-1.5" for="wt-prompt"
@@ -418,25 +461,17 @@
       {/if}
     </div>
     {#if profiles.length > 1}
-      <div class="flex flex-col gap-2 mb-6">
-        {#each profiles as p}
-          <label
-            class="flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer text-[13px] transition-colors
-              {profile === p.name
-              ? 'border-accent bg-accent/10'
-              : 'border-edge hover:bg-hover'}"
-          >
-            <input
-              type="radio"
-              name="profile"
-              value={p.name}
-              checked={profile === p.name}
-              onchange={() => (profile = p.name)}
-              class="accent-[var(--accent)]"
-            />
-            {p.name}
-          </label>
-        {/each}
+      <div class="mb-6">
+        <label class="block text-xs text-muted mb-1.5" for="profile-select">Profile</label>
+        <select
+          id="profile-select"
+          class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] outline-none focus:border-accent"
+          bind:value={profile}
+        >
+          {#each profiles as p}
+            <option value={p.name}>{p.name}</option>
+          {/each}
+        </select>
       </div>
     {/if}
     <label
@@ -449,6 +484,15 @@
       />
       Save as default
     </label>
+    <div class="mb-4 flex items-center justify-between gap-3 px-3 py-2 rounded-md border border-edge bg-surface">
+      <div>
+        <span class="text-[13px] text-primary">Skip permissions (yolo)</span>
+        <p class="text-[11px] text-muted mt-0.5">
+          Launch with <code class="text-accent/80">--dangerously-skip-permissions</code> / <code class="text-accent/80">--yolo</code>.
+        </p>
+      </div>
+      <Toggle bind:checked={yolo} aria-label="Skip permissions" />
+    </div>
     {#if showLinearTicketOption}
       <div class="mb-4 rounded-lg border border-edge bg-surface/40 p-3">
         <div class="flex items-start justify-between gap-3">
@@ -476,13 +520,16 @@
         {/if}
       </div>
     {/if}
+    {#if error}
+      <div class="mb-3 text-[12px] text-red-400">{error}</div>
+    {/if}
     <div class="flex justify-end gap-2">
       <Btn type="button" onclick={oncancel}>Cancel</Btn>
       <Btn
         type="submit"
         variant="cta"
-        disabled={!canSubmit}
-        >Create</Btn
+        disabled={!canSubmit || busy}
+        >{busy ? "Creating…" : "Create"}</Btn
       >
     </div>
   </form>

@@ -1,9 +1,9 @@
-import { fireEvent, render, screen, within } from "@testing-library/svelte";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import WorktreeList from "./WorktreeList.svelte";
 import type { WorktreeInfo, WorktreeListRow } from "./types";
 
-function createWorktree(branch: string): WorktreeInfo {
+function createWorktree(branch: string, overrides: Partial<WorktreeInfo> = {}): WorktreeInfo {
   return {
     branch,
     archived: false,
@@ -32,6 +32,8 @@ function createWorktree(branch: string): WorktreeInfo {
     },
     creating: false,
     creationPhase: null,
+    yolo: false,
+    ...overrides,
   };
 }
 
@@ -40,6 +42,10 @@ function createRow(worktree: WorktreeInfo, depth = 0): WorktreeListRow {
 }
 
 describe("WorktreeList", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   it("calls onremove without selecting the row when the remove button is clicked", async () => {
     const onselect = vi.fn();
     const onremove = vi.fn();
@@ -138,5 +144,45 @@ describe("WorktreeList", () => {
     await fireEvent.click(screen.getByRole("button", { name: /actions for feature\/archiving/i }));
 
     expect(screen.getByRole("button", { name: "Archive" })).toBeDisabled();
+  });
+
+  it("shows a yolo chip when the worktree has yolo enabled", () => {
+    render(WorktreeList, {
+      props: {
+        rows: [createRow(createWorktree("feature/yolo-branch", { yolo: true }))],
+        selected: null,
+        removing: new Set<string>(),
+        initializing: new Set<string>(),
+        archiving: new Set<string>(),
+        notifiedBranches: new Set<string>(),
+        onselect: vi.fn(),
+        onclose: vi.fn(),
+        onarchive: vi.fn(),
+        onmerge: vi.fn(),
+        onremove: vi.fn(),
+      },
+    });
+
+    expect(screen.getByText("yolo")).toBeInTheDocument();
+  });
+
+  it("does not show a yolo chip when yolo is false", () => {
+    render(WorktreeList, {
+      props: {
+        rows: [createRow(createWorktree("feature/safe-branch", { yolo: false }))],
+        selected: null,
+        removing: new Set<string>(),
+        initializing: new Set<string>(),
+        archiving: new Set<string>(),
+        notifiedBranches: new Set<string>(),
+        onselect: vi.fn(),
+        onclose: vi.fn(),
+        onarchive: vi.fn(),
+        onmerge: vi.fn(),
+        onremove: vi.fn(),
+      },
+    });
+
+    expect(screen.queryByText("yolo")).not.toBeInTheDocument();
   });
 });

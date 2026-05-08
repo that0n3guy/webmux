@@ -1,9 +1,10 @@
 import { readWorktreeMeta, writeWorktreeMeta } from "../adapters/fs";
 import type {
-  ClaudeCliConversationMessage,
+  ClaudeCliConversationEvent,
   ClaudeCliGateway,
   ClaudeCliSession,
 } from "../adapters/claude-cli";
+import { buildProjectSessionName, buildWorktreeWindowName, type TmuxGateway } from "../adapters/tmux";
 import type {
   AgentsUiConversationMessage,
   AgentsUiConversationState,
@@ -17,10 +18,17 @@ import type {
 } from "../domain/model";
 import { log } from "../lib/log";
 import { buildAgentsUiWorktreeSummary } from "./agents-ui-service";
+import { buildWorktreeConversationStorage, type ConversationStorage } from "./conversation-storage";
+import { probeSessionActivity, extractStatusWord } from "./session-activity-service";
 import { err, ok, type WorktreeConversationResult } from "./worktree-conversation-result";
 
+export interface ClaudeConversationProbeContext {
+  tmux: TmuxGateway;
+  projectRoot: string;
+}
+
 export interface ClaudeConversationServiceDependencies {
-  claude: Pick<ClaudeCliGateway, "listSessions" | "readSession">;
+  claude: Pick<ClaudeCliGateway, "listSessions" | "readSession" | "getSessionMtime">;
   git: {
     resolveWorktreeGitDir(cwd: string): string;
   };
@@ -62,24 +70,58 @@ function sameConversationMeta(left: WorktreeConversationMeta | null | undefined,
     && left.cwd === right.cwd;
 }
 
-function normalizeSessionMessages(messages: ClaudeCliConversationMessage[]): AgentsUiConversationMessage[] {
-  return messages.map((message) => ({
-    ...message,
-    status: "completed",
-  }));
+function normalizeSessionMessages(messages: ClaudeCliConversationEvent[]): AgentsUiConversationMessage[] {
+  return messages.flatMap((event): AgentsUiConversationMessage[] => {
+    if (event.kind === "user" || event.kind === "assistant") {
+      return [{
+        kind: event.kind,
+        id: event.id,
+        turnId: event.turnId,
+        text: event.text,
+        status: "completed",
+        createdAt: event.createdAt,
+      }];
+    }
+    if (event.kind === "tool") {
+      return [{
+        kind: "tool",
+        id: event.id,
+        turnId: event.turnId,
+        name: event.name,
+        summary: event.summary,
+        status: event.status,
+        createdAt: event.createdAt,
+        ...(event.details !== undefined ? { details: event.details } : {}),
+      }];
+    }
+    if (event.kind === "thinking") {
+      return [{
+        kind: "thinking",
+        id: event.id,
+        turnId: event.turnId,
+        text: event.text,
+        createdAt: event.createdAt,
+        ...(event.details !== undefined ? { details: event.details } : {}),
+      }];
+    }
+    return [];
+  });
 }
 
 function buildConversationState(
   worktree: WorktreeSnapshot,
   session: ClaudeCliSession | null,
+  running: boolean,
+  statusWord: string | null,
 ): AgentsUiConversationState {
   return {
     provider: "claudeCode",
     conversationId: session?.sessionId ?? buildPendingConversationId(worktree),
     cwd: worktree.path,
-    running: false,
+    running,
     activeTurnId: null,
     messages: normalizeSessionMessages(session?.messages ?? []),
+    statusWord,
   };
 }
 
@@ -87,10 +129,12 @@ function toWorktreeConversationResponse(
   worktree: WorktreeSnapshot,
   conversationMeta: ClaudeWorktreeConversationMeta | null,
   session: ClaudeCliSession | null,
+  running: boolean,
+  statusWord: string | null,
 ): AgentsUiWorktreeConversationResponse {
   return {
     worktree: buildAgentsUiWorktreeSummary(worktree, conversationMeta),
-    conversation: buildConversationState(worktree, session),
+    conversation: buildConversationState(worktree, session, running, statusWord),
   };
 }
 
@@ -105,24 +149,61 @@ export class ClaudeConversationService {
     this.writeMeta = deps.writeMeta ?? writeWorktreeMeta;
   }
 
+  private probeStatusWord(
+    worktree: WorktreeSnapshot,
+    probe?: ClaudeConversationProbeContext,
+  ): string | null {
+    if (!probe) return null;
+    try {
+      const sessionName = buildProjectSessionName(probe.projectRoot);
+      const windowName = buildWorktreeWindowName(worktree.branch);
+      const paneTarget = `${sessionName}:${windowName}.0`;
+      const activity = probeSessionActivity(probe.tmux, paneTarget, undefined, this.now);
+      return extractStatusWord(activity.recentTailLines);
+    } catch {
+      return null;
+    }
+  }
+
   async attachWorktreeConversation(
     worktree: WorktreeSnapshot,
+    probe?: ClaudeConversationProbeContext,
+    storage?: ConversationStorage,
+    sessionCreatedAfter?: string,
   ): Promise<WorktreeConversationResult<AgentsUiWorktreeConversationResponse>> {
-    return await this.withResolvedConversation(worktree, async (resolved) =>
-      ok(toWorktreeConversationResponse(worktree, resolved.conversationMeta, resolved.session))
-    );
+    return await this.withResolvedConversation(worktree, storage, sessionCreatedAfter, async (resolved) => {
+      const running = worktree.status === "running" || worktree.status === "starting";
+      const statusWord = this.probeStatusWord(worktree, probe);
+      return ok(toWorktreeConversationResponse(worktree, resolved.conversationMeta, resolved.session, running, statusWord));
+    });
   }
 
   async readWorktreeConversation(
     worktree: WorktreeSnapshot,
+    probe?: ClaudeConversationProbeContext,
+    storage?: ConversationStorage,
+    sessionCreatedAfter?: string,
   ): Promise<WorktreeConversationResult<AgentsUiWorktreeConversationResponse>> {
-    return await this.withResolvedConversation(worktree, async (resolved) =>
-      ok(toWorktreeConversationResponse(worktree, resolved.conversationMeta, resolved.session))
-    );
+    return await this.withResolvedConversation(worktree, storage, sessionCreatedAfter, async (resolved) => {
+      const running = worktree.status === "running" || worktree.status === "starting";
+      const statusWord = this.probeStatusWord(worktree, probe);
+      return ok(toWorktreeConversationResponse(worktree, resolved.conversationMeta, resolved.session, running, statusWord));
+    });
+  }
+
+  private buildDefaultStorage(worktreePath: string): ConversationStorage {
+    const gitDir = this.deps.git.resolveWorktreeGitDir(worktreePath);
+    return buildWorktreeConversationStorage({
+      gitDir,
+      readMeta: this.readMeta,
+      writeMeta: this.writeMeta,
+    });
   }
 
   private async withResolvedConversation<T>(
     worktree: WorktreeSnapshot,
+    storage: ConversationStorage | undefined,
+    sessionCreatedAfter: string | undefined,
     fn: (resolved: ResolvedClaudeConversation) => Promise<WorktreeConversationResult<T>>,
   ): Promise<WorktreeConversationResult<T>> {
     if (!isClaudeWorktree(worktree)) {
@@ -130,7 +211,8 @@ export class ClaudeConversationService {
     }
 
     try {
-      const resolved = await this.resolveConversation(worktree);
+      const effectiveStorage = storage ?? this.buildDefaultStorage(worktree.path);
+      const resolved = await this.resolveConversation(worktree, effectiveStorage, sessionCreatedAfter);
       if (!resolved.ok) return resolved;
       return await fn(resolved.data);
     } catch (error) {
@@ -141,16 +223,14 @@ export class ClaudeConversationService {
 
   private async resolveConversation(
     worktree: WorktreeSnapshot,
+    storage: ConversationStorage,
+    sessionCreatedAfter: string | undefined,
   ): Promise<WorktreeConversationResult<ResolvedClaudeConversation>> {
-    const gitDir = this.deps.git.resolveWorktreeGitDir(worktree.path);
-    const meta = await this.readMeta(gitDir);
-    if (!meta) {
-      return err(409, "Worktree metadata is missing");
-    }
+    const saved = await storage.load();
 
-    const session = await this.resolveSession(meta, worktree.path);
+    const session = await this.resolveSession(saved, worktree.path, sessionCreatedAfter);
     const conversationMeta = session
-      ? await this.persistConversationMeta(gitDir, meta, worktree.path, session.sessionId)
+      ? await this.persistConversationMeta(storage, worktree.path, session.sessionId)
       : null;
 
     return ok({
@@ -159,33 +239,41 @@ export class ClaudeConversationService {
     });
   }
 
-  private async resolveSession(meta: WorktreeMeta, cwd: string): Promise<ClaudeCliSession | null> {
-    const savedSessionId = isClaudeConversationMeta(meta.conversation)
-      ? meta.conversation.sessionId
-      : null;
-    if (savedSessionId) {
-      const savedSession = await this.deps.claude.readSession(savedSessionId, cwd);
-      if (savedSession) return savedSession;
-      log.warn(`[agents] saved Claude session missing, rediscovering cwd=${cwd} sessionId=${savedSessionId}`);
+  private async resolveSession(
+    saved: WorktreeConversationMeta | null,
+    cwd: string,
+    sessionCreatedAfter: string | undefined,
+  ): Promise<ClaudeCliSession | null> {
+    const all = await this.deps.claude.listSessions(cwd);
+    const sessions = sessionCreatedAfter
+      ? all.filter((s) => s.lastSeenAt >= sessionCreatedAfter)
+      : all;
+    const newest = sessions[0] ?? null;
+    const savedSessionId = isClaudeConversationMeta(saved) ? saved.sessionId : null;
+
+    if (newest && savedSessionId && savedSessionId !== newest.sessionId) {
+      log.info(`[agents] Claude session rotated cwd=${cwd} saved=${savedSessionId} latest=${newest.sessionId}`);
     }
 
-    const discovered = (await this.deps.claude.listSessions(cwd))[0] ?? null;
-    if (!discovered) return null;
-    return await this.deps.claude.readSession(discovered.sessionId, cwd);
+    if (newest) {
+      return await this.deps.claude.readSession(newest.sessionId, cwd);
+    }
+
+    if (savedSessionId) {
+      log.warn(`[agents] saved Claude session missing and no replacement found cwd=${cwd} sessionId=${savedSessionId}`);
+    }
+    return null;
   }
 
   private async persistConversationMeta(
-    gitDir: string,
-    meta: WorktreeMeta,
+    storage: ConversationStorage,
     cwd: string,
     sessionId: string,
   ): Promise<ClaudeWorktreeConversationMeta> {
     const nextConversation = buildClaudeConversationMeta(sessionId, cwd, this.now());
-    if (!sameConversationMeta(meta.conversation, nextConversation)) {
-      await this.writeMeta(gitDir, {
-        ...meta,
-        conversation: nextConversation,
-      });
+    const existing = await storage.load();
+    if (!sameConversationMeta(existing, nextConversation)) {
+      await storage.save(nextConversation);
     }
     return nextConversation;
   }

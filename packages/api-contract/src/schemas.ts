@@ -102,6 +102,7 @@ export const CreateWorktreeRequestSchema = z.object({
   envOverrides: z.record(z.string()).optional(),
   createLinearTicket: z.literal(true).optional(),
   linearTitle: z.string().optional(),
+  yolo: z.boolean().optional(),
 });
 
 export const CreateWorktreeResponseSchema = z.object({
@@ -240,6 +241,7 @@ export const AppNotificationSchema = z.object({
   type: z.enum(["agent_stopped", "pr_opened", "runtime_error", "worktree_auto_removed"]),
   message: z.string(),
   url: z.string().optional(),
+  projectId: z.string().nullable().optional(),
   timestamp: z.number(),
 });
 
@@ -262,6 +264,7 @@ export const ProjectWorktreeSnapshotSchema = z.object({
   prs: z.array(PrEntrySchema),
   linearIssue: LinkedLinearIssueSchema.nullable(),
   creation: WorktreeCreationStateSchema.nullable(),
+  yolo: z.boolean().default(false),
 });
 
 export const ProjectSnapshotSchema = z.object({
@@ -315,17 +318,52 @@ export const AgentsUiWorktreeSummarySchema = z.object({
   conversation: WorktreeConversationRefSchema.nullable(),
 });
 
-export const AgentsUiConversationMessageRoleSchema = z.enum(["user", "assistant"]);
 export const AgentsUiConversationMessageStatusSchema = z.enum(["completed", "inProgress"]);
 
-export const AgentsUiConversationMessageSchema = z.object({
+const AgentsUiConversationMessageUserSchema = z.object({
+  kind: z.literal("user"),
   id: z.string(),
   turnId: z.string(),
-  role: AgentsUiConversationMessageRoleSchema,
   text: z.string(),
   status: AgentsUiConversationMessageStatusSchema,
   createdAt: z.string().nullable(),
 });
+
+const AgentsUiConversationMessageAssistantSchema = z.object({
+  kind: z.literal("assistant"),
+  id: z.string(),
+  turnId: z.string(),
+  text: z.string(),
+  status: AgentsUiConversationMessageStatusSchema,
+  createdAt: z.string().nullable(),
+});
+
+const AgentsUiConversationMessageToolSchema = z.object({
+  kind: z.literal("tool"),
+  id: z.string(),
+  turnId: z.string(),
+  name: z.string(),
+  summary: z.string(),
+  status: z.enum(["running", "ok", "error"]),
+  createdAt: z.string().nullable(),
+  details: z.string().optional(),
+});
+
+const AgentsUiConversationMessageThinkingSchema = z.object({
+  kind: z.literal("thinking"),
+  id: z.string(),
+  turnId: z.string(),
+  text: z.string(),
+  createdAt: z.string().nullable(),
+  details: z.string().optional(),
+});
+
+export const AgentsUiConversationMessageSchema = z.discriminatedUnion("kind", [
+  AgentsUiConversationMessageUserSchema,
+  AgentsUiConversationMessageAssistantSchema,
+  AgentsUiConversationMessageToolSchema,
+  AgentsUiConversationMessageThinkingSchema,
+]);
 
 export const AgentsUiConversationStateSchema = z.object({
   provider: WorktreeConversationProviderSchema,
@@ -334,6 +372,7 @@ export const AgentsUiConversationStateSchema = z.object({
   running: z.boolean(),
   activeTurnId: z.string().nullable(),
   messages: z.array(AgentsUiConversationMessageSchema),
+  statusWord: z.string().nullable().optional(),
 });
 
 export const AgentsUiWorktreeConversationResponseSchema = z.object({
@@ -445,6 +484,141 @@ export const RunIdParamsSchema = z.object({
   runId: NumberLikePathParamSchema,
 });
 
+// ---------------------------------------------------------------------------
+// Non-worktree sessions: external tmux + scratch
+// ---------------------------------------------------------------------------
+
+export const ExternalTmuxSessionSchema = z.object({
+  name: z.string(),
+  windowCount: z.number().int().nonnegative(),
+  attached: z.boolean(),
+  agentStatus: z.enum(["running", "idle"]).optional(),
+  statusWord: z.string().nullable().optional(),
+});
+
+export const ExternalTmuxSessionListResponseSchema = z.object({
+  sessions: z.array(ExternalTmuxSessionSchema),
+});
+
+export const ScratchSessionKindSchema = z.enum(["shell", "agent"]);
+
+export const ScratchSessionSnapshotSchema = z.object({
+  id: z.string(),
+  displayName: z.string(),
+  sessionName: z.string(),
+  kind: ScratchSessionKindSchema,
+  agentId: z.string().nullable(),
+  cwd: z.string(),
+  createdAt: z.string(),
+  windowCount: z.number().int().nonnegative(),
+  attached: z.boolean(),
+  agentStatus: z.enum(["running", "idle"]).optional(),
+  statusWord: z.string().nullable().optional(),
+});
+
+export const ScratchSessionListResponseSchema = z.object({
+  sessions: z.array(ScratchSessionSnapshotSchema),
+});
+
+export const CreateScratchSessionRequestSchema = z.object({
+  displayName: z.string().min(1).max(80),
+  kind: ScratchSessionKindSchema,
+  agentId: z.string().optional(),
+  yolo: z.boolean().optional(),
+});
+
+export const CreateScratchSessionResponseSchema = z.object({
+  session: ScratchSessionSnapshotSchema,
+});
+
+export const ScratchSessionIdParamsSchema = z.object({ id: z.string().min(1) });
+
+// ---------------------------------------------------------------------------
+// Multi-project: registry types
+// ---------------------------------------------------------------------------
+
+export const ProjectInfoSchema = z.object({
+  id: z.string().min(1),
+  path: z.string().min(1),
+  name: z.string(),
+  addedAt: z.string().datetime(),
+  mainBranch: z.string(),
+  defaultAgent: z.string(),
+});
+
+export const ProjectListResponseSchema = z.object({
+  projects: z.array(ProjectInfoSchema),
+});
+
+export const CreateProjectRequestSchema = z.object({
+  path: z.string().min(1).max(1024),
+  displayName: z.string().min(1).max(128).optional(),
+});
+
+export const CreateProjectResponseSchema = z.object({
+  project: ProjectInfoSchema,
+});
+
+export const RemoveProjectRequestSchema = z.object({
+  killSessions: z.boolean().optional(),
+});
+
+export const ProjectIdParamsSchema = z.object({
+  projectId: z.string().min(1),
+});
+
+export const ProjectScopedWorktreeNameParamsSchema = z.object({
+  projectId: z.string().min(1),
+  name: z.string().min(1),
+});
+
+export const ProjectScopedScratchIdParamsSchema = z.object({
+  projectId: z.string().min(1),
+  id: z.string().min(1),
+});
+
+export const ExternalSessionNameParamsSchema = z.object({
+  name: z.string().min(1),
+});
+
+export const OpenWorktreeRequestSchema = z.object({
+  agentOverride: AgentIdSchema.optional(),
+  shellOnly: z.boolean().optional(),
+});
+
+export const UpdateWorktreeRequestSchema = z.object({
+  yolo: z.boolean().optional(),
+  agent: AgentIdSchema.optional(),
+});
+
+// ---------------------------------------------------------------------------
+// User-global preferences
+// ---------------------------------------------------------------------------
+
+export const UserPreferencesAutoNameSchema = z.object({
+  model: z.string().optional(),
+  systemPrompt: z.string().optional(),
+});
+
+export const UserPreferencesSchema = z.object({
+  schemaVersion: z.number(),
+  defaultAgent: AgentIdSchema.optional(),
+  defaultProfile: z.string().optional(),
+  agents: z.record(AgentIdSchema, z.object({
+    label: z.string(),
+    startCommand: z.string(),
+    resumeCommand: z.string().optional(),
+  })).optional(),
+  autoName: UserPreferencesAutoNameSchema.optional(),
+});
+
+export const UpdateUserPreferencesRequestSchema = UserPreferencesSchema.omit({ schemaVersion: true });
+
+export const UserPreferencesResponseSchema = z.object({
+  preferences: UserPreferencesSchema,
+  knownProfiles: z.array(z.string()),
+});
+
 export type BuiltInAgentId = z.infer<typeof BuiltInAgentIdSchema>;
 export type AgentId = z.infer<typeof AgentIdSchema>;
 export type AgentKind = z.infer<typeof AgentKindSchema>;
@@ -489,7 +663,6 @@ export type CodexWorktreeConversationRef = z.infer<typeof CodexWorktreeConversat
 export type ClaudeWorktreeConversationRef = z.infer<typeof ClaudeWorktreeConversationRefSchema>;
 export type WorktreeConversationRef = z.infer<typeof WorktreeConversationRefSchema>;
 export type AgentsUiWorktreeSummary = z.infer<typeof AgentsUiWorktreeSummarySchema>;
-export type AgentsUiConversationMessageRole = z.infer<typeof AgentsUiConversationMessageRoleSchema>;
 export type AgentsUiConversationMessageStatus = z.infer<typeof AgentsUiConversationMessageStatusSchema>;
 export type AgentsUiConversationMessage = z.infer<typeof AgentsUiConversationMessageSchema>;
 export type AgentsUiConversationState = z.infer<typeof AgentsUiConversationStateSchema>;
@@ -511,3 +684,22 @@ export type CiLogsResponse = z.infer<typeof CiLogsResponseSchema>;
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 export type OkResponse = z.infer<typeof OkResponseSchema>;
 export type EnabledResponse = z.infer<typeof EnabledResponseSchema>;
+export type ExternalTmuxSession = z.infer<typeof ExternalTmuxSessionSchema>;
+export type ExternalTmuxSessionListResponse = z.infer<typeof ExternalTmuxSessionListResponseSchema>;
+export type ScratchSessionKind = z.infer<typeof ScratchSessionKindSchema>;
+export type ScratchSessionSnapshot = z.infer<typeof ScratchSessionSnapshotSchema>;
+export type ScratchSessionListResponse = z.infer<typeof ScratchSessionListResponseSchema>;
+export type CreateScratchSessionRequest = z.infer<typeof CreateScratchSessionRequestSchema>;
+export type CreateScratchSessionResponse = z.infer<typeof CreateScratchSessionResponseSchema>;
+export type ProjectInfo = z.infer<typeof ProjectInfoSchema>;
+export type ProjectListResponse = z.infer<typeof ProjectListResponseSchema>;
+export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;
+export type CreateProjectResponse = z.infer<typeof CreateProjectResponseSchema>;
+export type RemoveProjectRequest = z.infer<typeof RemoveProjectRequestSchema>;
+export type OpenWorktreeRequest = z.infer<typeof OpenWorktreeRequestSchema>;
+export type UpdateWorktreeRequest = z.infer<typeof UpdateWorktreeRequestSchema>;
+export type ExternalSessionNameParams = z.infer<typeof ExternalSessionNameParamsSchema>;
+export type UserPreferencesAutoName = z.infer<typeof UserPreferencesAutoNameSchema>;
+export type UserPreferences = z.infer<typeof UserPreferencesSchema>;
+export type UpdateUserPreferencesRequest = z.infer<typeof UpdateUserPreferencesRequestSchema>;
+export type UserPreferencesResponse = z.infer<typeof UserPreferencesResponseSchema>;
