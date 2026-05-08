@@ -532,14 +532,29 @@ export class LifecycleService {
   }
 
   private async resolveExistingWorktree(branch: string): Promise<ResolvedLifecycleWorktree> {
-    const entry = this.listProjectWorktrees().find((candidate) => candidate.branch === branch);
-    if (!entry) {
-      throw new LifecycleError(`Worktree not found: ${branch}`, 404);
+    const entries = this.listProjectWorktrees();
+
+    const direct = entries.find((candidate) => candidate.branch === branch);
+    if (direct) {
+      const gitDir = this.deps.git.resolveWorktreeGitDir(direct.path);
+      const meta = await readWorktreeMeta(gitDir);
+      return { entry: direct, gitDir, meta };
     }
 
-    const gitDir = this.deps.git.resolveWorktreeGitDir(entry.path);
-    const meta = await readWorktreeMeta(gitDir);
-    return { entry, gitDir, meta };
+    // Fallback: a worktree may be in detached HEAD (or otherwise lose its
+    // branch association) while still being tracked under its meta-stamped
+    // branch by the runtime/UI. Match those via the persisted meta so the UI
+    // remove/merge/archive paths line up with what the user sees.
+    for (const candidate of entries) {
+      if (candidate.branch !== null) continue;
+      const candidateGitDir = this.deps.git.resolveWorktreeGitDir(candidate.path);
+      const candidateMeta = await readWorktreeMeta(candidateGitDir);
+      if (candidateMeta?.branch === branch) {
+        return { entry: candidate, gitDir: candidateGitDir, meta: candidateMeta };
+      }
+    }
+
+    throw new LifecycleError(`Worktree not found: ${branch}`, 404);
   }
 
   private async resolveAllWorktrees(): Promise<ResolvedLifecycleWorktree[]> {
@@ -829,7 +844,7 @@ export class LifecycleService {
       worktreePath: resolved.entry.path,
     });
 
-    const branch = resolved.entry.branch ?? resolved.entry.path;
+    const branch = resolved.entry.branch ?? resolved.meta?.branch ?? resolved.entry.path;
     if (resolved.meta?.runtime === "docker") {
       await this.deps.docker.removeContainer(branch);
     }
@@ -838,14 +853,18 @@ export class LifecycleService {
       buildProjectSessionName(this.deps.projectRoot),
       buildWorktreeWindowName(branch),
     );
+    // Skip branch deletion when no real branch is associated — happens for
+    // unmanaged worktrees in detached HEAD with no meta. Otherwise `branch`
+    // is the worktree path and `git branch -D <path>` would fail.
+    const deleteBranch = resolved.entry.branch !== null || resolved.meta !== null;
     removeManagedWorktree(
       {
         repoRoot: this.deps.projectRoot,
         worktreePath: resolved.entry.path,
         branch,
         force: true,
-        deleteBranch: true,
-        deleteBranchForce: true,
+        deleteBranch,
+        deleteBranchForce: deleteBranch,
       },
       this.deps.git,
     );
