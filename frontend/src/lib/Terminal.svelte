@@ -391,6 +391,16 @@
 
       if (e.type !== "keydown") return true;
 
+      // Ctrl+Backspace: delete previous word. Browsers send \x08 (BS) which
+      // bash/readline binds to backward-delete-char (one char) — same as plain
+      // Backspace. Send \x17 (Ctrl+W = backward-kill-word) instead.
+      if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.key === "Backspace") {
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "input", data: "\x17" }));
+        }
+        return false;
+      }
+
       const mod = e.metaKey || e.ctrlKey;
       if (mod && (e.key === "c" || e.key === "C")) {
         if (term.hasSelection()) {
