@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { ProjectConfig } from "../domain/config";
 import { BunGitGateway, type GitGateway } from "../adapters/git";
 import type { LifecycleHookRunner, RunLifecycleHookInput } from "../adapters/hooks";
@@ -58,6 +58,15 @@ class FakeTmuxGateway implements TmuxGateway {
       sessionName: opts.sessionName,
       windowName: opts.windowName,
       paneCount: 1,
+    });
+  }
+
+  registerOrphanWindow(opts: { sessionName: string; windowName: string; worktreeId: string }): void {
+    this.windows.set(this.key(opts.sessionName, opts.windowName), {
+      sessionName: opts.sessionName,
+      windowName: opts.windowName,
+      paneCount: 1,
+      webmuxWorktreeId: opts.worktreeId,
     });
   }
 
@@ -281,6 +290,7 @@ function makeLifecycleService(
     tmux,
     docker,
     reconciliation,
+    runtime,
     hooks,
     autoName,
     onCreateProgress: createCallbacks.onProgress,
@@ -1437,6 +1447,66 @@ describe("LifecycleService", () => {
     expect(hooks.calls.filter((call) => call.name === "preRemove")).toHaveLength(1);
     expect(new BunGitGateway().listWorktrees(repoRoot).some((entry) => entry.path === worktreePath)).toBe(false);
     expect(run(["git", "branch", "--list", "issues/183-bulk-create-docs"], repoRoot)).toBe("");
+  });
+
+  it("removes an orphaned worktree by killing its tmux window without touching git", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const hooks = new FakeHookRunner();
+    const git = new BunGitGateway();
+    const lifecycle = makeLifecycleService(repoRoot, tmux, runtime, new FakeDockerGateway(), hooks);
+
+    // Set up orphan in runtime + a stamped tmux window with the same id.
+    run(["git", "branch", "plan/continued-1"], repoRoot);
+    const sessionName = `wm-${basename(repoRoot)}`;
+    runtime.upsertOrphan({
+      worktreeId: "wt_orphan_test",
+      branch: "plan/continued-1",
+      path: "/tmp/missing/plan/continued-1 (deleted)",
+      sessionName,
+      windowName: "wm-plan/continued-1",
+      paneCount: 1,
+    });
+    tmux.registerOrphanWindow({
+      sessionName,
+      windowName: "wm-plan/continued-1",
+      worktreeId: "wt_orphan_test",
+    });
+
+    await lifecycle.removeWorktree("plan/continued-1");
+
+    // No preRemove hook (orphan path skips hooks).
+    expect(hooks.calls.filter((call) => call.name === "preRemove")).toHaveLength(0);
+    // Tmux window gone.
+    expect(tmux.listWindows().some((w) => w.webmuxWorktreeId === "wt_orphan_test")).toBe(false);
+    // Runtime cleared.
+    expect(runtime.getWorktree("wt_orphan_test")).toBeNull();
+    // Branch still exists — we don't touch it.
+    expect(run(["git", "branch", "--list", "plan/continued-1"], repoRoot)).toContain("plan/continued-1");
+    // git worktree list also untouched.
+    expect(git.listWorktrees(repoRoot).filter((e) => e.path !== repoRoot)).toEqual([]);
+  });
+
+  it("rejects merge/archive/open against an orphan with a 409 LifecycleError", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const lifecycle = makeLifecycleService(repoRoot, tmux, runtime);
+
+    runtime.upsertOrphan({
+      worktreeId: "wt_orphan_guard",
+      branch: "plan/continued-1",
+      path: "/tmp/missing (deleted)",
+      sessionName: `wm-${basename(repoRoot)}`,
+      windowName: "wm-plan/continued-1",
+      paneCount: 1,
+    });
+
+    await expect(lifecycle.mergeWorktree("plan/continued-1")).rejects.toMatchObject({ status: 409 });
+    await expect(lifecycle.setWorktreeArchived("plan/continued-1", true)).rejects.toMatchObject({ status: 409 });
+    await expect(lifecycle.openWorktree("plan/continued-1")).rejects.toMatchObject({ status: 409 });
+    await expect(lifecycle.closeWorktree("plan/continued-1")).rejects.toMatchObject({ status: 409 });
   });
 
   it("falls back to the first configured profile when no default profile exists", async () => {

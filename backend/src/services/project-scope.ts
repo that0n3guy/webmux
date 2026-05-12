@@ -86,6 +86,7 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
     tmux: deps.tmux,
     docker: deps.docker,
     reconciliation: reconciliationService,
+    runtime: projectRuntime,
     hooks: deps.hooks,
     autoName: deps.autoName,
     onCreateProgress: (progress) => {

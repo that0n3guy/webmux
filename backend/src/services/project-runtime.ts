@@ -33,6 +33,7 @@ function makeDefaultState(input: {
     profile: input.profile ?? null,
     agentName: input.agentName ?? null,
     yolo: input.yolo ?? false,
+    orphaned: false,
     git: {
       exists: true,
       branch: input.branch,
@@ -108,6 +109,7 @@ export class ProjectRuntime {
       if (input.runtime) existing.agent.runtime = input.runtime;
       existing.git.exists = true;
       existing.git.branch = input.branch;
+      existing.orphaned = false;
       existing.session.windowName = buildWorktreeWindowName(input.branch);
       return existing;
     }
@@ -176,6 +178,48 @@ export class ProjectRuntime {
     const state = this.requireWorktree(worktreeId);
     state.prs = prs.map((pr) => clonePrEntry(pr));
     return state;
+  }
+
+  setOrphaned(worktreeId: string, orphaned: boolean): ManagedWorktreeRuntimeState {
+    const state = this.requireWorktree(worktreeId);
+    state.orphaned = orphaned;
+    return state;
+  }
+
+  upsertOrphan(input: {
+    worktreeId: string;
+    branch: string;
+    path: string;
+    sessionName: string;
+    windowName: string;
+    paneCount: number;
+  }): ManagedWorktreeRuntimeState {
+    const existing = this.worktrees.get(input.worktreeId);
+    if (existing) {
+      existing.orphaned = true;
+      existing.session = {
+        exists: true,
+        sessionName: input.sessionName,
+        windowName: input.windowName,
+        paneCount: input.paneCount,
+      };
+      return existing;
+    }
+    const created = makeDefaultState({
+      worktreeId: input.worktreeId,
+      branch: input.branch,
+      path: input.path,
+    });
+    created.orphaned = true;
+    created.session = {
+      exists: true,
+      sessionName: input.sessionName,
+      windowName: input.windowName,
+      paneCount: input.paneCount,
+    };
+    this.worktrees.set(input.worktreeId, created);
+    this.worktreeIdsByBranch.set(input.branch, input.worktreeId);
+    return created;
   }
 
   applyEvent(event: RuntimeEvent, now?: () => Date): ManagedWorktreeRuntimeState {

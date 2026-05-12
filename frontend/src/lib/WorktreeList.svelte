@@ -119,12 +119,21 @@
               <span class="shrink-0 text-muted/60">↳</span>
             {/if}
             <span class="font-medium truncate">{wt.branch}</span>
-            {#if isArchived}
+            {#if wt.orphaned}
+              <span
+                class="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-warning/50 text-warning tracking-wider uppercase"
+                title="Git worktree no longer exists, but its tmux window is still alive. Attach to the agent, or remove to kill the window."
+              >
+                orphaned
+              </span>
+            {:else if isArchived}
               <span class="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-edge text-muted">
                 archived
               </span>
             {/if}
-            {#if isCreating}
+            {#if wt.orphaned}
+              <!-- Skip agent-status dot for orphans: lifecycle is unreliable without hooks. -->
+            {:else if isCreating}
               <span class="shrink-0 inline-flex items-center gap-1 text-[10px] text-muted">
                 <span class="spinner"></span>
                 {worktreeCreationPhaseLabel(wt.creationPhase)}...
@@ -206,7 +215,8 @@
         >
           <button
             type="button"
-            disabled={isClosed || isCreating}
+            disabled={isClosed || isCreating || wt.orphaned}
+            title={wt.orphaned ? "Worktree's git registration is missing" : undefined}
             class="w-full px-2 py-1.5 rounded text-left text-xs text-primary hover:bg-hover disabled:opacity-50 disabled:cursor-not-allowed"
             onclick={(event) => {
               event.stopPropagation();
@@ -217,7 +227,8 @@
           </button>
           <button
             type="button"
-            disabled={isCreating}
+            disabled={isCreating || wt.orphaned}
+            title={wt.orphaned ? "Worktree's git registration is missing" : undefined}
             class="w-full px-2 py-1.5 rounded text-left text-xs text-primary hover:bg-hover disabled:opacity-50 disabled:cursor-not-allowed"
             onclick={(event) => {
               event.stopPropagation();
@@ -228,7 +239,8 @@
           </button>
           <button
             type="button"
-            disabled={isCreating || isArchiving}
+            disabled={isCreating || isArchiving || wt.orphaned}
+            title={wt.orphaned ? "Worktree's git registration is missing" : undefined}
             class="w-full px-2 py-1.5 rounded text-left text-xs text-primary hover:bg-hover disabled:opacity-50 disabled:cursor-not-allowed"
             onclick={(event) => {
               event.stopPropagation();
@@ -239,7 +251,9 @@
           </button>
           <button
             type="button"
-            class="w-full px-2 py-1.5 rounded text-left text-xs text-primary hover:bg-hover"
+            disabled={wt.orphaned}
+            title={wt.orphaned ? "Worktree's git registration is missing" : undefined}
+            class="w-full px-2 py-1.5 rounded text-left text-xs text-primary hover:bg-hover disabled:opacity-50 disabled:cursor-not-allowed"
             onclick={(event) => {
               event.stopPropagation();
               runMenuAction(wt.branch, onmerge);

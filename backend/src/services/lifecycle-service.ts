@@ -14,7 +14,7 @@ import {
 } from "../adapters/fs";
 import { expandTemplate, getDefaultProfileName, isDockerProfile, type DockerProfileConfig } from "../adapters/config";
 import { type DockerGateway } from "../adapters/docker";
-import { buildProjectSessionName, buildWorktreeWindowName, type TmuxGateway } from "../adapters/tmux";
+import { buildProjectSessionName, buildWorktreeWindowName, WEBMUX_WORKTREE_ID_OPTION, type TmuxGateway } from "../adapters/tmux";
 import type { AgentId, PaneTemplate, ProfileConfig, ProjectConfig, RuntimeKind } from "../domain/config";
 import type { WorktreeCreationPhase, WorktreeMeta } from "../domain/model";
 import { allocateServicePorts, isValidBranchName, isValidEnvKey } from "../domain/policies";
@@ -28,6 +28,7 @@ import {
 } from "./agent-service";
 import { getAgentDefinition, type AgentDefinition } from "./agent-registry";
 import type { ReconciliationService } from "./reconciliation-service";
+import type { ProjectRuntime } from "./project-runtime";
 import { ensureSessionLayout, planSessionLayout } from "./session-service";
 import { ArchiveStateService } from "./archive-state-service";
 import {
@@ -126,6 +127,7 @@ export interface LifecycleServiceDependencies {
   tmux: TmuxGateway;
   docker: DockerGateway;
   reconciliation: ReconciliationService;
+  runtime: ProjectRuntime;
   hooks: LifecycleHookRunner;
   autoName: AutoNameGenerator;
   onCreateProgress?: (progress: CreateWorktreeProgress) => void | Promise<void>;
@@ -242,6 +244,7 @@ export class LifecycleService {
       if (opts?.agentOverride && opts?.shellOnly === true) {
         throw new LifecycleError("Cannot combine agentOverride with shellOnly", 400);
       }
+      this.ensureNotOrphaned(branch, "open");
       const resolved = await this.resolveExistingWorktree(branch);
       const initialized = resolved.meta
         ? await this.refreshManagedArtifacts(resolved)
@@ -288,6 +291,7 @@ export class LifecycleService {
 
   async closeWorktree(branch: string): Promise<void> {
     try {
+      this.ensureNotOrphaned(branch, "close");
       await this.resolveExistingWorktree(branch);
       await this.closeBranchWindow(branch);
     } catch (error) {
@@ -297,10 +301,49 @@ export class LifecycleService {
 
   async removeWorktree(branch: string): Promise<void> {
     try {
+      const orphan = this.findOrphanedRuntime(branch);
+      if (orphan) {
+        await this.removeOrphanedRuntime(orphan);
+        return;
+      }
       const resolved = await this.resolveExistingWorktree(branch);
       await this.removeResolvedWorktree(resolved);
     } catch (error) {
       throw this.wrapOperationError(error);
+    }
+  }
+
+  private findOrphanedRuntime(branch: string): { worktreeId: string; sessionName: string | null } | null {
+    const state = this.deps.runtime.getWorktreeByBranch(branch);
+    if (!state || !state.orphaned) return null;
+    return { worktreeId: state.worktreeId, sessionName: state.session.sessionName };
+  }
+
+  private async removeOrphanedRuntime(orphan: { worktreeId: string; sessionName: string | null }): Promise<void> {
+    const projectSession = buildProjectSessionName(this.deps.projectRoot);
+    const sessionName = orphan.sessionName ?? projectSession;
+    try {
+      const windows = this.deps.tmux.listWindows();
+      const match = windows.find((w) =>
+        w.sessionName === sessionName && w.webmuxWorktreeId === orphan.worktreeId
+      );
+      if (match) {
+        this.deps.tmux.killWindow(match.sessionName, match.windowName);
+      }
+    } catch {
+      // Tmux query/kill is best-effort: if it failed we still want to drop
+      // the orphan from runtime so the sidebar reflects reality.
+    }
+    this.deps.runtime.removeWorktree(orphan.worktreeId);
+    await this.deps.reconciliation.reconcile(this.deps.projectRoot, { force: true });
+  }
+
+  private ensureNotOrphaned(branch: string, action: string): void {
+    if (this.findOrphanedRuntime(branch)) {
+      throw new LifecycleError(
+        `Cannot ${action} ${branch}: worktree's git registration is missing. Use Remove to kill the tmux window.`,
+        409,
+      );
     }
   }
 
@@ -323,6 +366,7 @@ export class LifecycleService {
 
   async mergeWorktree(branch: string): Promise<void> {
     try {
+      this.ensureNotOrphaned(branch, "merge");
       const resolved = await this.resolveExistingWorktree(branch);
       this.ensureNoUncommittedChanges(resolved.entry);
 
@@ -350,6 +394,7 @@ export class LifecycleService {
 
   async setWorktreeArchived(branch: string, archived: boolean): Promise<void> {
     try {
+      this.ensureNotOrphaned(branch, "archive");
       const resolved = await this.resolveExistingWorktree(branch);
       if (archived) {
         await this.closeBranchWindow(branch);

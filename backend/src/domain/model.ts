@@ -179,6 +179,7 @@ export interface ManagedWorktreeRuntimeState {
   profile: string | null;
   agentName: AgentId | null;
   yolo: boolean;
+  orphaned: boolean;
   git: GitWorktreeRuntimeState;
   session: SessionRuntimeState;
   agent: AgentRuntimeState;
@@ -215,6 +216,7 @@ export interface WorktreeSnapshot {
   linearIssue: LinkedLinearIssue | null;
   creation: WorktreeCreationSnapshot | null;
   yolo: boolean;
+  orphaned: boolean;
 }
 
 export interface ProjectSnapshot {

@@ -110,6 +110,7 @@ export interface WorktreeInfo {
   creating: boolean;
   creationPhase: WorktreeCreationPhase | null;
   yolo: boolean;
+  orphaned: boolean;
 }
 
 export interface WorktreeListRow {

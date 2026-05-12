@@ -54,16 +54,17 @@ function mapWorktreeSnapshot(
     agentName: state.agentName,
     agentLabel: findAgentLabel ? findAgentLabel(state.agentName) : state.agentName,
     mux: state.session.exists,
-    dirty: state.git.dirty,
-    unpushed: state.git.aheadCount > 0,
+    dirty: state.orphaned ? false : state.git.dirty,
+    unpushed: state.orphaned ? false : state.git.aheadCount > 0,
     paneCount: state.session.paneCount,
     status: creating ? "creating" : state.agent.lifecycle,
     elapsed: formatElapsedSince(state.agent.lastStartedAt, now),
-    services: state.services.map((service) => ({ ...service })),
-    prs: state.prs.map((pr) => clonePrEntry(pr)),
+    services: state.orphaned ? [] : state.services.map((service) => ({ ...service })),
+    prs: state.orphaned ? [] : state.prs.map((pr) => clonePrEntry(pr)),
     linearIssue: findLinearIssue ? findLinearIssue(state.branch) : null,
     creation: mapCreationSnapshot(creating),
     yolo: state.yolo,
+    orphaned: state.orphaned,
   };
 }
 
@@ -93,6 +94,7 @@ function mapCreatingWorktreeSnapshot(
     linearIssue: findLinearIssue ? findLinearIssue(creating.branch) : null,
     creation: mapCreationSnapshot(creating),
     yolo: creating.yolo,
+    orphaned: false,
   };
 }
 

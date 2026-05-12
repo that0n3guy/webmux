@@ -560,6 +560,95 @@ describe("ReconciliationService", () => {
     expect(state?.services).toEqual([]);
   });
 
+  it("marks an existing runtime entry as orphaned when git drops it but the stamped tmux window survives", async () => {
+    const repoRoot = "/repo/project";
+    const orphanPath = "/repo/project/__worktrees/plan/continued-1";
+
+    const runtime = new ProjectRuntime();
+    runtime.upsertWorktree({
+      worktreeId: "wt_orphan",
+      branch: "plan/continued-1",
+      path: orphanPath,
+      profile: "default",
+      agentName: "claude",
+      runtime: "host",
+    });
+
+    const git = new FakeGitGateway(
+      [
+        { path: repoRoot, branch: "main", head: "aaa111", detached: false, bare: false },
+      ],
+      new Map(),
+      new Map(),
+    );
+    const tmux = new FakeTmuxGateway([
+      {
+        sessionName: buildProjectSessionName(repoRoot),
+        windowName: buildWorktreeWindowName("plan/continued-1"),
+        paneCount: 1,
+        paneCurrentPath: `${orphanPath} (deleted)`,
+        webmuxWorktreeId: "wt_orphan",
+      },
+    ]);
+
+    const service = new ReconciliationService({
+      config: TEST_CONFIG,
+      git,
+      tmux,
+      portProbe: new FakePortProbe(),
+      runtime,
+    });
+
+    await service.reconcile(repoRoot);
+
+    const state = runtime.getWorktree("wt_orphan");
+    expect(state).not.toBeNull();
+    expect(state?.orphaned).toBe(true);
+    expect(state?.branch).toBe("plan/continued-1");
+    expect(state?.profile).toBe("default");
+  });
+
+  it("reconstructs a runtime entry from a stamped tmux window with no prior state (cold start)", async () => {
+    const repoRoot = "/repo/project";
+    const orphanPath = "/repo/project/__worktrees/plan/continued-1";
+
+    const runtime = new ProjectRuntime();
+
+    const git = new FakeGitGateway(
+      [
+        { path: repoRoot, branch: "main", head: "aaa111", detached: false, bare: false },
+      ],
+      new Map(),
+      new Map(),
+    );
+    const tmux = new FakeTmuxGateway([
+      {
+        sessionName: buildProjectSessionName(repoRoot),
+        windowName: "wm-plan/continued-1",
+        paneCount: 1,
+        paneCurrentPath: `${orphanPath} (deleted)`,
+        webmuxWorktreeId: "wt_cold_orphan",
+      },
+    ]);
+
+    const service = new ReconciliationService({
+      config: TEST_CONFIG,
+      git,
+      tmux,
+      portProbe: new FakePortProbe(),
+      runtime,
+    });
+
+    await service.reconcile(repoRoot);
+
+    const state = runtime.getWorktree("wt_cold_orphan");
+    expect(state).not.toBeNull();
+    expect(state?.orphaned).toBe(true);
+    expect(state?.branch).toBe("plan/continued-1");
+    expect(state?.agent.lifecycle).toBe("closed");
+    expect(state?.session.windowName).toBe("wm-plan/continued-1");
+  });
+
   it("coalesces concurrent reconcile calls and skips fresh repeats", async () => {
     const repoRoot = "/repo/project";
     const managedPath = "/repo/project/__worktrees/feature-fresh";
