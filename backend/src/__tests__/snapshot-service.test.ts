@@ -157,6 +157,7 @@ describe("buildProjectSnapshot", () => {
           phase: "starting_session",
         },
         yolo: true,
+        orphaned: false,
       },
     ]);
     expect(snapshot.notifications).toHaveLength(1);
@@ -252,6 +253,7 @@ describe("buildProjectSnapshot", () => {
           phase: "creating_worktree",
         },
         yolo: false,
+        orphaned: false,
       },
     ]);
   });

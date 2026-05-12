@@ -177,6 +177,8 @@ function makeWorktree(): WorktreeSnapshot {
     services: [],
     prs: [],
     linearIssue: null,
+    yolo: false,
+    orphaned: false,
     creation: null,
   };
 }

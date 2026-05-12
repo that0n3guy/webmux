@@ -584,6 +584,16 @@ async function resolveAgentsWorktree(scope: ProjectScope, branch: string): Promi
     };
   }
 
+  if (worktree.orphaned) {
+    return {
+      ok: false,
+      response: errorResponse(
+        `Chat unavailable for ${branch}: worktree's git registration is missing. Use Remove to kill the tmux window.`,
+        409,
+      ),
+    };
+  }
+
   return {
     ok: true,
     worktree,
@@ -778,6 +788,8 @@ function resolveScratchChatTarget(scope: ProjectScope, id: string): {
     prs: [],
     linearIssue: null,
     creation: null,
+    yolo: false,
+    orphaned: false,
   };
   return {
     ok: true,
@@ -920,6 +932,8 @@ function resolveExternalChatTarget(sessionName: string): {
     prs: [],
     linearIssue: null,
     creation: null,
+    yolo: false,
+    orphaned: false,
   };
   const submitDelayMs = 200;
   return {

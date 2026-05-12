@@ -32,6 +32,8 @@ function makeState(overrides: Partial<ManagedWorktreeRuntimeState> = {}): Manage
     },
     services: [],
     prs: [],
+    yolo: false,
+    orphaned: false,
     ...overrides,
   };
 }

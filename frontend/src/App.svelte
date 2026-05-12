@@ -1647,8 +1647,11 @@
 {/if}
 
 {#if removeBranch}
+  {@const removingWt = currentWorktrees.find((w) => w.branch === removeBranch)}
   <ConfirmDialog
-    message={`Remove worktree "${removeBranch}"? This action cannot be undone.`}
+    message={removingWt?.orphaned
+      ? `Worktree "${removeBranch}" has no git registration left. Removing it will kill the tmux window (the branch and any commits stay). Continue?`
+      : `Remove worktree "${removeBranch}"? This action cannot be undone.`}
     onconfirm={handleRemove}
     oncancel={() => (removeBranch = null)}
   />

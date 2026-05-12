@@ -265,6 +265,7 @@ export const ProjectWorktreeSnapshotSchema = z.object({
   linearIssue: LinkedLinearIssueSchema.nullable(),
   creation: WorktreeCreationStateSchema.nullable(),
   yolo: z.boolean().default(false),
+  orphaned: z.boolean().default(false),
 });
 
 export const ProjectSnapshotSchema = z.object({

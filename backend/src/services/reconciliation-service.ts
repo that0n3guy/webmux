@@ -312,6 +312,38 @@ export class ReconciliationService {
       this.deps.runtime.setPrs(state.worktreeId, state.prs);
     }
 
+    // Orphan detection: a tmux window stamped with @webmux-worktree-id whose
+    // id isn't in seenWorktreeIds means the git worktree is gone but the
+    // agent's pane is still alive (e.g., the agent self-removed its own
+    // worktree). Keep it surfaced in the sidebar so the user can attach or
+    // kill it from the UI rather than losing it entirely.
+    for (const window of windows) {
+      if (window.sessionName !== sessionName) continue;
+      const stampedId = window.webmuxWorktreeId;
+      if (!stampedId || seenWorktreeIds.has(stampedId)) continue;
+
+      const existing = this.deps.runtime.getWorktree(stampedId);
+      if (existing) {
+        // Warm orphan: keep last-known branch/agent/path; just flip the flag.
+        // setSessionState would rewrite windowName from the branch, which
+        // could drift from the actual tmux window if it was renamed.
+        this.deps.runtime.setOrphaned(stampedId, true);
+      } else {
+        const inferredBranch = window.windowName.startsWith("wm-")
+          ? window.windowName.slice("wm-".length)
+          : window.windowName;
+        this.deps.runtime.upsertOrphan({
+          worktreeId: stampedId,
+          branch: inferredBranch,
+          path: window.paneCurrentPath ?? "",
+          sessionName: window.sessionName,
+          windowName: window.windowName,
+          paneCount: window.paneCount,
+        });
+      }
+      seenWorktreeIds.add(stampedId);
+    }
+
     for (const state of this.deps.runtime.listWorktrees()) {
       if (!seenWorktreeIds.has(state.worktreeId)) {
         this.deps.runtime.removeWorktree(state.worktreeId);
