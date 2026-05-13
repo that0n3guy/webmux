@@ -1,6 +1,10 @@
-import type { CreatingWorktreeState, PrEntry, ProjectSnapshot, WorktreeSnapshot } from "../domain/model";
+import type { AgentLifecycle, CreatingWorktreeState, PrEntry, ProjectSnapshot, WorktreeSnapshot } from "../domain/model";
 import type { RuntimeNotification } from "./notification-service";
 import { ProjectRuntime } from "./project-runtime";
+
+export type AgentActivityProbe = (
+  state: ReturnType<ProjectRuntime["listWorktrees"]>[number],
+) => { running: boolean } | null;
 
 function formatElapsedSince(startedAt: string | null, now: () => Date): string {
   if (!startedAt) return "";
@@ -36,6 +40,23 @@ function mapCreationSnapshot(creating: CreatingWorktreeState | null): WorktreeSn
     : null;
 }
 
+function resolveStatus(
+  state: ReturnType<ProjectRuntime["listWorktrees"]>[number],
+  creating: CreatingWorktreeState | null,
+  probeAgentActivity?: AgentActivityProbe,
+): AgentLifecycle | "creating" {
+  if (creating) return "creating";
+  if (state.orphaned || !state.session.exists || state.agentName === "claude") {
+    return state.agent.lifecycle;
+  }
+  // Claude is the only agent wired into the lifecycle hook pipeline
+  // (backend/src/adapters/agent-runtime.ts). For codex and custom agents we
+  // fall back to the same activity probe used for scratch + external sessions.
+  const probe = probeAgentActivity?.(state) ?? null;
+  if (!probe) return state.agent.lifecycle;
+  return probe.running ? "running" : "idle";
+}
+
 function mapWorktreeSnapshot(
   state: ReturnType<ProjectRuntime["listWorktrees"]>[number],
   now: () => Date,
@@ -43,6 +64,7 @@ function mapWorktreeSnapshot(
   isArchived: (path: string) => boolean,
   findLinearIssue?: (branch: string) => WorktreeSnapshot["linearIssue"],
   findAgentLabel?: (agentId: string | null) => string | null,
+  probeAgentActivity?: AgentActivityProbe,
 ): WorktreeSnapshot {
   return {
     branch: state.branch,
@@ -57,7 +79,7 @@ function mapWorktreeSnapshot(
     dirty: state.orphaned ? false : state.git.dirty,
     unpushed: state.orphaned ? false : state.git.aheadCount > 0,
     paneCount: state.session.paneCount,
-    status: creating ? "creating" : state.agent.lifecycle,
+    status: resolveStatus(state, creating, probeAgentActivity),
     elapsed: formatElapsedSince(state.agent.lastStartedAt, now),
     services: state.orphaned ? [] : state.services.map((service) => ({ ...service })),
     prs: state.orphaned ? [] : state.prs.map((pr) => clonePrEntry(pr)),
@@ -104,6 +126,7 @@ interface BuildWorktreeSnapshotsInput {
   isArchived?: (path: string) => boolean;
   findLinearIssue?: (branch: string) => WorktreeSnapshot["linearIssue"];
   findAgentLabel?: (agentId: string | null) => string | null;
+  probeAgentActivity?: AgentActivityProbe;
   now?: () => Date;
 }
 
@@ -122,6 +145,7 @@ export function buildWorktreeSnapshots(input: BuildWorktreeSnapshotsInput): Work
       isArchived,
       input.findLinearIssue,
       input.findAgentLabel,
+      input.probeAgentActivity,
     ),
   );
 

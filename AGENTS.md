@@ -58,9 +58,11 @@ Do not ship a feature that only works from one surface.
 
 Frontend must call `api.fetchConfig({ query: { projectId: currentProjectId } })`. The legacy unscoped form returns the *first* project's config and causes "Unknown profile: default" errors when the user switches projects. The App.svelte effect refetches on `currentProjectId` change.
 
-### Worktree status comes from control-channel events, not the activity probe
+### Worktree status: Claude uses lifecycle hooks, codex/custom use the activity probe
 
-For **worktrees**, `state.agent.lifecycle` is updated by `agent_status_changed` and `agent_stopped` events that the agent CLI hooks POST to `/api/runtime/events`. Hook commands are wired in `backend/src/adapters/agent-runtime.ts`. The activity probe is **only** for scratch + external sessions (no hooks available there). Don't replace the lifecycle pipeline with the probe.
+For **Claude** worktrees, `state.agent.lifecycle` is updated by `agent_status_changed` and `agent_stopped` events that the Claude CLI hooks POST to `/api/runtime/events`. Hook commands are wired in `backend/src/adapters/agent-runtime.ts` (Claude-only). Don't replace Claude's lifecycle pipeline with the probe.
+
+For **codex and custom-agent** worktrees, no hooks are wired, so `state.agent.lifecycle` never transitions. `snapshot-service.ts` falls back to the `probeSessionActivity` content-diff probe (same one used for scratch + external sessions): probe.running → `"running"`, probe.quiet → `"idle"`. The probe runs only when `agentName !== "claude"` and `session.exists === true`; otherwise the persisted lifecycle wins. Wired through `BuildWorktreeSnapshotsInput.probeAgentActivity` in `backend/src/server.ts:readProjectSnapshot`.
 
 ### External tmux sessions are never chat-eligible
 
