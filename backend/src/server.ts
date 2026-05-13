@@ -513,6 +513,16 @@ async function readProjectSnapshot(scope: ProjectScope): Promise<ProjectSnapshot
       if (!agentId) return null;
       return getAgentDefinition(scope.config, agentId)?.label ?? agentId;
     },
+    probeAgentActivity: (state) => {
+      if (!state.session.exists || !state.session.sessionName) return null;
+      const target = `${state.session.sessionName}:${state.session.windowName}.0`;
+      try {
+        const probe = probeSessionActivity(tmux, target);
+        return summarizeSessionActivity(probe, () => new Date());
+      } catch {
+        return null;
+      }
+    },
   });
 }
 

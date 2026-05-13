@@ -340,4 +340,106 @@ describe("buildProjectSnapshot", () => {
       "feature/zebra",
     ]);
   });
+
+  it("overrides status from probe for non-Claude agents with a live session", () => {
+    const runtime = new ProjectRuntime();
+    runtime.upsertWorktree({
+      worktreeId: "wt_codex_active",
+      branch: "feature/codex-active",
+      path: "/repo/__worktrees/feature-codex-active",
+      runtime: "host",
+      agentName: "codex",
+    });
+    runtime.setSessionState("wt_codex_active", {
+      exists: true,
+      sessionName: "wm-project-deadbeef",
+      paneCount: 1,
+    });
+    runtime.upsertWorktree({
+      worktreeId: "wt_codex_quiet",
+      branch: "feature/codex-quiet",
+      path: "/repo/__worktrees/feature-codex-quiet",
+      runtime: "host",
+      agentName: "codex",
+    });
+    runtime.setSessionState("wt_codex_quiet", {
+      exists: true,
+      sessionName: "wm-project-deadbeef",
+      paneCount: 1,
+    });
+
+    const snapshot = buildProjectSnapshot({
+      projectName: "Project",
+      mainBranch: "main",
+      runtime,
+      notifications: [],
+      probeAgentActivity: (state) =>
+        state.branch === "feature/codex-active" ? { running: true } : { running: false },
+    });
+
+    const active = snapshot.worktrees.find((w) => w.branch === "feature/codex-active");
+    const quiet = snapshot.worktrees.find((w) => w.branch === "feature/codex-quiet");
+    expect(active?.status).toBe("running");
+    expect(quiet?.status).toBe("idle");
+  });
+
+  it("does not probe Claude agents — lifecycle pipeline wins", () => {
+    const runtime = new ProjectRuntime();
+    runtime.upsertWorktree({
+      worktreeId: "wt_claude",
+      branch: "feature/claude",
+      path: "/repo/__worktrees/feature-claude",
+      runtime: "host",
+      agentName: "claude",
+    });
+    runtime.setSessionState("wt_claude", {
+      exists: true,
+      sessionName: "wm-project-deadbeef",
+      paneCount: 1,
+    });
+    runtime.applyEvent(
+      { worktreeId: "wt_claude", branch: "feature/claude", type: "agent_status_changed", lifecycle: "stopped" },
+      () => new Date("2026-05-13T10:00:00.000Z"),
+    );
+
+    let probed = false;
+    const snapshot = buildProjectSnapshot({
+      projectName: "Project",
+      mainBranch: "main",
+      runtime,
+      notifications: [],
+      probeAgentActivity: () => {
+        probed = true;
+        return { running: true };
+      },
+    });
+
+    expect(probed).toBe(false);
+    expect(snapshot.worktrees[0]?.status).toBe("stopped");
+  });
+
+  it("falls back to lifecycle when the non-Claude session is gone", () => {
+    const runtime = new ProjectRuntime();
+    runtime.upsertWorktree({
+      worktreeId: "wt_codex_dead",
+      branch: "feature/codex-dead",
+      path: "/repo/__worktrees/feature-codex-dead",
+      runtime: "host",
+      agentName: "codex",
+    });
+    runtime.applyEvent(
+      { worktreeId: "wt_codex_dead", branch: "feature/codex-dead", type: "agent_stopped" },
+      () => new Date("2026-05-13T10:00:00.000Z"),
+    );
+
+    const snapshot = buildProjectSnapshot({
+      projectName: "Project",
+      mainBranch: "main",
+      runtime,
+      notifications: [],
+      probeAgentActivity: () => { throw new Error("should not probe when session is closed"); },
+    });
+
+    expect(snapshot.worktrees[0]?.status).toBe("stopped");
+  });
 });
