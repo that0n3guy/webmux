@@ -1366,6 +1366,28 @@ describe("LifecycleService", () => {
     expect(run(["git", "branch", "--list", "feature-ahead"], repoRoot)).toBe("");
   });
 
+  it("removes the worktree but preserves the configured main branch when it is checked out there", async () => {
+    const repoRoot = await initRepo();
+    const runtime = new ProjectRuntime();
+    const tmux = new FakeTmuxGateway();
+    const hooks = new FakeHookRunner();
+    const lifecycle = makeLifecycleService(repoRoot, tmux, runtime, new FakeDockerGateway(), hooks);
+
+    // Mirror an agent that abandoned its own branch and left the linked
+    // worktree sitting on main: move the primary checkout off main so a linked
+    // worktree can hold it, then register that worktree on main.
+    run(["git", "checkout", "-b", "feature-primary"], repoRoot);
+    const worktreePath = join(repoRoot, "__worktrees", "stray-main");
+    run(["git", "worktree", "add", worktreePath, "main"], repoRoot);
+
+    await lifecycle.removeWorktree("main");
+
+    // The stray worktree directory is removed...
+    expect(new BunGitGateway().listWorktrees(repoRoot).some((entry) => entry.path === worktreePath)).toBe(false);
+    // ...but the protected main branch must survive.
+    expect(run(["git", "branch", "--list", "main"], repoRoot)).not.toBe("");
+  });
+
   it("prunes all project worktrees", async () => {
     const repoRoot = await initRepo();
     const runtime = new ProjectRuntime();

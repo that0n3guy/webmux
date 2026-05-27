@@ -910,6 +910,7 @@ export class LifecycleService {
         force: true,
         deleteBranch,
         deleteBranchForce: deleteBranch,
+        protectedBranch: this.deps.config.workspace.mainBranch,
       },
       this.deps.git,
     );

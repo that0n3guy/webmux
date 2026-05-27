@@ -79,6 +79,7 @@ export interface RemoveManagedWorktreeOptions {
   force?: boolean;
   deleteBranch?: boolean;
   deleteBranchForce?: boolean;
+  protectedBranch?: string;
 }
 
 export interface MergeManagedWorktreeOptions {
@@ -254,7 +255,9 @@ export function removeManagedWorktree(
     force: opts.force,
   });
 
-  if (opts.deleteBranch && opts.branch) {
+  // Never delete the protected (main) branch, even when a worktree was left
+  // checked out on it — the worktree directory is still removed.
+  if (opts.deleteBranch && opts.branch && opts.branch !== opts.protectedBranch) {
     git.deleteBranch(opts.repoRoot, opts.branch, opts.deleteBranchForce);
   }
 }
