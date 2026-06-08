@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   createUserPreferencesGateway,
   emptyUserPreferences,
+  applyPreferencesUpdate,
   type UserPreferences,
 } from "../adapters/preferences";
 
@@ -213,5 +214,116 @@ agents:
     const gw = createUserPreferencesGateway({ path: prefsPath });
     const prefs = await gw.load();
     expect(prefs).toEqual({ schemaVersion: 1 });
+  });
+
+  test("load() parses a valid sidebar block round-trip", async () => {
+    const yaml = `
+schemaVersion: 1
+sidebar:
+  mode: active
+  itemOrder:
+    - worktree:proj1:main
+    - scratch:proj1:abc
+`.trim();
+    writeFileSync(prefsPath, yaml);
+    const gw = createUserPreferencesGateway({ path: prefsPath });
+    const prefs = await gw.load();
+
+    expect(prefs.sidebar).toEqual({
+      mode: "active",
+      itemOrder: ["worktree:proj1:main", "scratch:proj1:abc"],
+    });
+  });
+
+  test("load() drops unknown sidebar.mode but keeps valid itemOrder", async () => {
+    const yaml = `
+schemaVersion: 1
+sidebar:
+  mode: weird
+  itemOrder:
+    - external:my-session
+`.trim();
+    writeFileSync(prefsPath, yaml);
+    const gw = createUserPreferencesGateway({ path: prefsPath });
+    const prefs = await gw.load();
+
+    expect(prefs.sidebar).toBeDefined();
+    expect(prefs.sidebar!.mode).toBeUndefined();
+    expect(prefs.sidebar!.itemOrder).toEqual(["external:my-session"]);
+  });
+
+  test("load() drops non-array sidebar.itemOrder but keeps valid mode", async () => {
+    const yaml = `
+schemaVersion: 1
+sidebar:
+  mode: projects
+  itemOrder: not-an-array
+`.trim();
+    writeFileSync(prefsPath, yaml);
+    const gw = createUserPreferencesGateway({ path: prefsPath });
+    const prefs = await gw.load();
+
+    expect(prefs.sidebar).toBeDefined();
+    expect(prefs.sidebar!.mode).toBe("projects");
+    expect(prefs.sidebar!.itemOrder).toBeUndefined();
+  });
+
+  test("load() omits sidebar entirely when sidebar value is not a record", async () => {
+    const yaml = `
+schemaVersion: 1
+sidebar: wrong
+`.trim();
+    writeFileSync(prefsPath, yaml);
+    const gw = createUserPreferencesGateway({ path: prefsPath });
+    const prefs = await gw.load();
+
+    expect(prefs.sidebar).toBeUndefined();
+  });
+
+  test("save() then load() round-trips preferences with sidebar set", async () => {
+    const gw = createUserPreferencesGateway({ path: prefsPath });
+    const input: UserPreferences = {
+      schemaVersion: 1,
+      defaultAgent: "claude",
+      sidebar: {
+        mode: "active",
+        itemOrder: ["worktree:p1:feat", "external:tmux1"],
+      },
+    };
+
+    await gw.save(input);
+    const loaded = await gw.load();
+
+    expect(loaded).toEqual(input);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyPreferencesUpdate — sidebar field
+// ---------------------------------------------------------------------------
+
+describe("applyPreferencesUpdate sidebar semantics", () => {
+  test("setting only sidebar preserves existing defaultAgent and autoName", () => {
+    const current: UserPreferences = {
+      schemaVersion: 1,
+      defaultAgent: "codex",
+      autoName: { model: "claude-opus-4" },
+    };
+    const result = applyPreferencesUpdate(current, {
+      sidebar: { mode: "active", itemOrder: ["worktree:p1:main"] },
+    });
+    expect(result.defaultAgent).toBe("codex");
+    expect(result.autoName).toEqual({ model: "claude-opus-4" });
+    expect(result.sidebar).toEqual({ mode: "active", itemOrder: ["worktree:p1:main"] });
+  });
+
+  test("setting only defaultAgent after sidebar was set preserves sidebar", () => {
+    const current: UserPreferences = {
+      schemaVersion: 1,
+      sidebar: { mode: "active", itemOrder: ["worktree:p1:main"] },
+    };
+    const result = applyPreferencesUpdate(current, { defaultAgent: "claude" });
+    expect(result.defaultAgent).toBe("claude");
+    expect(result.sidebar).toEqual({ mode: "active", itemOrder: ["worktree:p1:main"] });
   });
 });
