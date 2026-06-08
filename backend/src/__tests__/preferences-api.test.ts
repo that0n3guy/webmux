@@ -13,6 +13,7 @@ import { BunLifecycleHookRunner } from "../adapters/hooks";
 import { AutoNameService } from "../services/auto-name-service";
 import { NotificationService } from "../services/notification-service";
 import type { UserPreferences } from "../adapters/preferences";
+import { applyPreferencesUpdate } from "../adapters/preferences";
 import { UpdateUserPreferencesRequestSchema } from "@webmux/api-contract";
 
 // ---------------------------------------------------------------------------
@@ -294,6 +295,116 @@ describe("UpdateUserPreferencesRequestSchema validation", () => {
   test("rejects autoName as a string instead of object", () => {
     const result = UpdateUserPreferencesRequestSchema.safeParse({
       autoName: "not-an-object",
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyPreferencesUpdate — top-level merge semantics
+// ---------------------------------------------------------------------------
+
+describe("applyPreferencesUpdate merge semantics", () => {
+  test("PUT with only defaultAgent preserves existing defaultProfile", () => {
+    const current: UserPreferences = {
+      schemaVersion: 1,
+      defaultProfile: "work",
+    };
+    const result = applyPreferencesUpdate(current, { defaultAgent: "codex" });
+    expect(result.defaultAgent).toBe("codex");
+    expect(result.defaultProfile).toBe("work");
+  });
+
+  test("PUT with only agents does not wipe defaultAgent, defaultProfile, or autoName", () => {
+    const current: UserPreferences = {
+      schemaVersion: 1,
+      defaultAgent: "codex",
+      defaultProfile: "work",
+      autoName: { model: "claude-opus-4" },
+    };
+    const result = applyPreferencesUpdate(current, {
+      agents: { "gemini": { label: "Gemini CLI", startCommand: "gemini start" } },
+    });
+    expect(result.defaultAgent).toBe("codex");
+    expect(result.defaultProfile).toBe("work");
+    expect(result.autoName).toEqual({ model: "claude-opus-4" });
+    expect(result.agents?.["gemini"]).toBeDefined();
+  });
+
+  test("first-ever PUT (empty starting prefs) sets only the fields in the body", () => {
+    const current: UserPreferences = { schemaVersion: 1 };
+    const result = applyPreferencesUpdate(current, { defaultAgent: "claude" });
+    expect(result.defaultAgent).toBe("claude");
+    expect(result.defaultProfile).toBeUndefined();
+    expect(result.agents).toBeUndefined();
+    expect(result.autoName).toBeUndefined();
+    expect(result.schemaVersion).toBe(1);
+  });
+
+  test("omitting defaultAgent from the body preserves the existing defaultAgent", () => {
+    const current: UserPreferences = {
+      schemaVersion: 1,
+      defaultAgent: "codex",
+    };
+    const parsed = UpdateUserPreferencesRequestSchema.safeParse({ defaultProfile: "personal" });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    const result = applyPreferencesUpdate(current, parsed.data);
+    expect(result.defaultAgent).toBe("codex");
+    expect(result.defaultProfile).toBe("personal");
+  });
+
+  test("PUT sidebar is reflected in the merged result", () => {
+    const current: UserPreferences = { schemaVersion: 1 };
+    const parsed = UpdateUserPreferencesRequestSchema.safeParse({
+      sidebar: { mode: "active", itemOrder: ["x:1"] },
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    const result = applyPreferencesUpdate(current, parsed.data);
+    expect(result.sidebar).toEqual({ mode: "active", itemOrder: ["x:1"] });
+  });
+
+  test("PUT sidebar on top of existing defaultAgent preserves the agent", () => {
+    const current: UserPreferences = {
+      schemaVersion: 1,
+      defaultAgent: "claude",
+      autoName: { model: "claude-opus-4" },
+    };
+    const parsed = UpdateUserPreferencesRequestSchema.safeParse({
+      sidebar: { mode: "active", itemOrder: ["worktree:p1:main"] },
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    const result = applyPreferencesUpdate(current, parsed.data);
+    expect(result.defaultAgent).toBe("claude");
+    expect(result.autoName).toEqual({ model: "claude-opus-4" });
+    expect(result.sidebar).toEqual({ mode: "active", itemOrder: ["worktree:p1:main"] });
+  });
+
+  test("PUT defaultAgent after sidebar was set preserves the sidebar", () => {
+    const current: UserPreferences = {
+      schemaVersion: 1,
+      sidebar: { mode: "active", itemOrder: ["external:tmux1"] },
+    };
+    const parsed = UpdateUserPreferencesRequestSchema.safeParse({ defaultAgent: "claude" });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    const result = applyPreferencesUpdate(current, parsed.data);
+    expect(result.defaultAgent).toBe("claude");
+    expect(result.sidebar).toEqual({ mode: "active", itemOrder: ["external:tmux1"] });
+  });
+
+  test("UpdateUserPreferencesRequestSchema accepts sidebar with mode and itemOrder", () => {
+    const result = UpdateUserPreferencesRequestSchema.safeParse({
+      sidebar: { mode: "projects", itemOrder: ["worktree:p1:feat"] },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test("UpdateUserPreferencesRequestSchema rejects sidebar with invalid mode", () => {
+    const result = UpdateUserPreferencesRequestSchema.safeParse({
+      sidebar: { mode: "unknown" },
     });
     expect(result.success).toBe(false);
   });

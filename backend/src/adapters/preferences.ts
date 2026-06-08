@@ -13,12 +13,18 @@ export interface UserPreferencesAutoName {
   systemPrompt?: string;
 }
 
+export interface UserPreferencesSidebar {
+  mode?: "projects" | "active";
+  itemOrder?: string[];
+}
+
 export interface UserPreferences {
   schemaVersion: number;
   defaultAgent?: AgentId;
   defaultProfile?: string;
   agents?: Record<AgentId, CustomAgentConfig>;
   autoName?: UserPreferencesAutoName;
+  sidebar?: UserPreferencesSidebar;
 }
 
 export interface UserPreferencesGateway {
@@ -37,6 +43,21 @@ export function emptyUserPreferences(): UserPreferences {
   return { schemaVersion: PREFERENCES_SCHEMA_VERSION };
 }
 
+export function applyPreferencesUpdate(
+  current: UserPreferences,
+  update: Omit<UserPreferences, "schemaVersion">,
+): UserPreferences {
+  return {
+    ...current,
+    schemaVersion: PREFERENCES_SCHEMA_VERSION,
+    ...(update.defaultAgent !== undefined ? { defaultAgent: update.defaultAgent } : {}),
+    ...(update.defaultProfile !== undefined ? { defaultProfile: update.defaultProfile } : {}),
+    ...(update.agents !== undefined ? { agents: update.agents } : {}),
+    ...(update.autoName !== undefined ? { autoName: update.autoName } : {}),
+    ...(update.sidebar !== undefined ? { sidebar: update.sidebar } : {}),
+  };
+}
+
 function parsePreferencesAutoName(raw: unknown): UserPreferencesAutoName | undefined {
   if (!isRecord(raw)) return undefined;
 
@@ -50,6 +71,34 @@ function parsePreferencesAutoName(raw: unknown): UserPreferencesAutoName | undef
   return {
     ...(model !== undefined ? { model } : {}),
     ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+  };
+}
+
+function parsePreferencesSidebar(raw: unknown): UserPreferencesSidebar | undefined {
+  if (!isRecord(raw)) return undefined;
+
+  let mode: "projects" | "active" | undefined;
+  if (raw.mode === "projects" || raw.mode === "active") {
+    mode = raw.mode;
+  } else if (raw.mode !== undefined) {
+    log.warn(`[preferences] dropping unknown sidebar.mode: ${String(raw.mode)}`);
+  }
+
+  let itemOrder: string[] | undefined;
+  if (Array.isArray(raw.itemOrder) && raw.itemOrder.every((v) => typeof v === "string")) {
+    const trimmed = (raw.itemOrder as string[]).map((v) => v.trim()).filter((v) => v.length > 0);
+    if (trimmed.length > 0) {
+      itemOrder = trimmed;
+    }
+  } else if (raw.itemOrder !== undefined) {
+    log.warn("[preferences] dropping malformed sidebar.itemOrder (expected string array)");
+  }
+
+  if (mode === undefined && itemOrder === undefined) return undefined;
+
+  return {
+    ...(mode !== undefined ? { mode } : {}),
+    ...(itemOrder !== undefined ? { itemOrder } : {}),
   };
 }
 
@@ -87,6 +136,7 @@ function parsePreferences(raw: unknown): UserPreferences {
 
   const agents = parsePreferencesAgents(raw.agents);
   const autoName = parsePreferencesAutoName(raw.autoName);
+  const sidebar = parsePreferencesSidebar(raw.sidebar);
 
   return {
     schemaVersion,
@@ -94,6 +144,7 @@ function parsePreferences(raw: unknown): UserPreferences {
     ...(defaultProfile !== undefined ? { defaultProfile } : {}),
     ...(agents !== undefined ? { agents } : {}),
     ...(autoName !== undefined ? { autoName } : {}),
+    ...(sidebar !== undefined ? { sidebar } : {}),
   };
 }
 
@@ -118,6 +169,16 @@ function buildSavePayload(prefs: UserPreferences): Record<string, unknown> {
       payload.autoName = {
         ...(model !== undefined ? { model } : {}),
         ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+      };
+    }
+  }
+
+  if (prefs.sidebar !== undefined) {
+    const { mode, itemOrder } = prefs.sidebar;
+    if (mode !== undefined || itemOrder !== undefined) {
+      payload.sidebar = {
+        ...(mode !== undefined ? { mode } : {}),
+        ...(itemOrder !== undefined ? { itemOrder } : {}),
       };
     }
   }

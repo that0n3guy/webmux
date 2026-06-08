@@ -64,7 +64,9 @@ export type {
   WorktreeListResponse,
 } from "@webmux/api-contract";
 export type { AgentsSendMessageRequest as AgentsUiSendMessageRequest } from "@webmux/api-contract";
-export type { UpdateUserPreferencesRequest, UserPreferences, UserPreferencesAutoName } from "@webmux/api-contract";
+export type { UpdateUserPreferencesRequest, UserPreferences, UserPreferencesAutoName, UserPreferencesSidebar } from "@webmux/api-contract";
+
+export type SidebarMode = "projects" | "active";
 
 export type { ExternalTmuxSession, ProjectInfo, ScratchSessionSnapshot, ScratchSessionKind };
 

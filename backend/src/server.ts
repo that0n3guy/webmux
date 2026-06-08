@@ -89,6 +89,7 @@ import type { ProjectSnapshot, WorktreeSnapshot } from "./domain/model";
 import { isValidBranchName, isValidWorktreeName } from "./domain/policies";
 import { createWebmuxRuntime } from "./runtime";
 import type { ProjectScope } from "./services/project-scope";
+import { applyPreferencesUpdate } from "./adapters/preferences";
 import type { UserPreferences } from "./adapters/preferences";
 
 const PORT = parseInt(Bun.env.PORT || "5111", 10);
@@ -1521,13 +1522,8 @@ async function apiUpdatePreferences(req: Request): Promise<Response> {
   const parsed = await parseJsonBody(req, UpdateUserPreferencesRequestSchema);
   if (!parsed.ok) return parsed.response;
 
-  const next: UserPreferences = {
-    schemaVersion: 1,
-    ...(parsed.data.defaultAgent !== undefined ? { defaultAgent: parsed.data.defaultAgent } : {}),
-    ...(parsed.data.defaultProfile !== undefined ? { defaultProfile: parsed.data.defaultProfile } : {}),
-    ...(parsed.data.agents !== undefined ? { agents: parsed.data.agents } : {}),
-    ...(parsed.data.autoName !== undefined ? { autoName: parsed.data.autoName } : {}),
-  };
+  const current = await runtime.preferencesGateway.load();
+  const next = applyPreferencesUpdate(current, parsed.data);
 
   await runtime.preferencesGateway.save(next);
 

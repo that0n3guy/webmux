@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, type Component } from "svelte";
   import ProjectTree from "./lib/ProjectTree.svelte";
+  import SidebarModeToggle from "./lib/SidebarModeToggle.svelte";
+  import ActiveSidebar from "./lib/ActiveSidebar.svelte";
   import TopBar from "./lib/TopBar.svelte";
   import Terminal from "./lib/Terminal.svelte";
   import ConfirmDialog from "./lib/ConfirmDialog.svelte";
@@ -33,6 +35,7 @@
     ProjectInfo,
     ScratchSessionSnapshot,
     Selection,
+    SidebarMode,
     ToastInput,
     ToastItem,
     UiToastItem,
@@ -64,6 +67,8 @@
     api,
     fetchWorktrees,
     fetchProjects,
+    fetchPreferences,
+    updatePreferences,
     subscribeNotifications,
     fetchExternalSessions,
     fetchScratchSessions,
@@ -196,6 +201,14 @@
   let nextToastId = 0;
 
   let notifiedBranches = $state<Set<string>>(new Set());
+
+  // Sidebar preferences
+  let sidebarMode = $state<SidebarMode>("projects");
+  let sidebarItemOrder = $state<string[]>([]);
+  let sidebarLastSavedMode = $state<SidebarMode>("projects");
+  let sidebarLastSavedItemOrder = $state<string[]>([]);
+  let pendingSidebarSave: ReturnType<typeof setTimeout> | null = null;
+  let sidebarSaveToken = 0;
   let toasts = $derived([
     ...notifications.map((notification): ToastItem => ({
       id: `notification:${notification.id}`,
@@ -288,6 +301,38 @@
     setTimeout(() => {
       uiToasts = uiToasts.filter((item) => item.id !== id);
     }, AUTO_DISMISS_MS);
+  }
+
+  function saveSidebarPreference(): void {
+    if (pendingSidebarSave !== null) clearTimeout(pendingSidebarSave);
+    const token = ++sidebarSaveToken;
+    pendingSidebarSave = setTimeout(() => {
+      pendingSidebarSave = null;
+      const mode = sidebarMode;
+      const itemOrder = sidebarItemOrder;
+      updatePreferences({ sidebar: { mode, itemOrder } })
+        .then(() => {
+          if (token !== sidebarSaveToken) return;
+          sidebarLastSavedMode = mode;
+          sidebarLastSavedItemOrder = itemOrder;
+        })
+        .catch(() => {
+          if (token !== sidebarSaveToken) return;
+          sidebarMode = sidebarLastSavedMode;
+          sidebarItemOrder = sidebarLastSavedItemOrder;
+          showToast({ tone: "error", message: "Failed to save sidebar preferences." });
+        });
+    }, 250);
+  }
+
+  function setSidebarMode(next: SidebarMode): void {
+    sidebarMode = next;
+    saveSidebarPreference();
+  }
+
+  function setSidebarItemOrder(next: string[]): void {
+    sidebarItemOrder = next;
+    saveSidebarPreference();
   }
 
   function ensureDiffDialogLoaded(): Promise<void> {
@@ -1150,8 +1195,52 @@
     if (isMobile) sidebarOpen = false;
   }
 
+  function activeCloseWorktree(projectId: string, branch: string): void {
+    currentProjectId = projectId;
+    void closeWorktree(branch);
+  }
+
+  function activeToggleArchived(projectId: string, branch: string): void {
+    currentProjectId = projectId;
+    void toggleWorktreeArchived(branch);
+  }
+
+  function activeMergeWorktree(projectId: string, branch: string): void {
+    currentProjectId = projectId;
+    mergeBranch = branch;
+  }
+
+  function activeRemoveWorktree(projectId: string, branch: string): void {
+    currentProjectId = projectId;
+    removeBranch = branch;
+  }
+
+  function activeEditWorktree(projectId: string, branch: string): void {
+    currentProjectId = projectId;
+    editWorktreeBranch = branch;
+  }
+
+  function activeRemoveScratch(projectId: string, id: string, displayName: string): void {
+    currentProjectId = projectId;
+    scratchToRemove = { id, displayName };
+  }
+
   onMount(() => {
     applyTheme(currentTheme);
+    fetchPreferences()
+      .then(({ preferences }) => {
+        const mode = preferences.sidebar?.mode;
+        const itemOrder = preferences.sidebar?.itemOrder;
+        if (mode === "projects" || mode === "active") {
+          sidebarMode = mode;
+          sidebarLastSavedMode = mode;
+        }
+        if (Array.isArray(itemOrder)) {
+          sidebarItemOrder = itemOrder;
+          sidebarLastSavedItemOrder = itemOrder;
+        }
+      })
+      .catch(() => {});
     api
       .fetchConfig()
       .then((c) => {
@@ -1288,6 +1377,7 @@
           </div>
         {/if}
         <div class="mt-3 flex flex-col gap-2">
+          <SidebarModeToggle mode={sidebarMode} onchange={(next) => setSidebarMode(next)} />
           <div class="relative">
             <input
               type="search"
@@ -1324,32 +1414,60 @@
           </div>
         </div>
       </div>
-      <ProjectTree
-        {projects}
-        {rowsByProject}
-        {scratchByProject}
-        {externalSessions}
-        {selection}
-        selected={selectedBranch}
-        removing={removingBranches}
-        initializing={openingBranches}
-        archiving={archivingBranches}
-        {notifiedBranches}
-        onSelectWorktree={handleSelectWorktree}
-        onSelectScratch={handleSelectScratch}
-        onSelectExternal={handleSelectExternal}
-        onCreateScratch={(projectId) => { currentProjectId = projectId; showCreateScratchDialog = true; }}
-        onRemoveScratch={(projectId, id, displayName) => { currentProjectId = projectId; scratchToRemove = { id, displayName }; }}
-        onAddProject={() => { showAddProjectDialog = true; }}
-        onMenuNewWorktree={handleMenuNewWorktree}
-        onMenuSettings={handleMenuSettings}
-        onMenuRemoveProject={handleMenuRemoveProject}
-        onclose={closeWorktree}
-        onarchive={toggleWorktreeArchived}
-        onmerge={(branch) => { mergeBranch = branch; }}
-        onremove={(b) => (removeBranch = b)}
-        onedit={(branch) => { editWorktreeBranch = branch; }}
-      />
+      {#if sidebarMode === "projects"}
+        <ProjectTree
+          {projects}
+          {rowsByProject}
+          {scratchByProject}
+          {externalSessions}
+          {selection}
+          selected={selectedBranch}
+          removing={removingBranches}
+          initializing={openingBranches}
+          archiving={archivingBranches}
+          {notifiedBranches}
+          onSelectWorktree={handleSelectWorktree}
+          onSelectScratch={handleSelectScratch}
+          onSelectExternal={handleSelectExternal}
+          onCreateScratch={(projectId) => { currentProjectId = projectId; showCreateScratchDialog = true; }}
+          onRemoveScratch={(projectId, id, displayName) => { currentProjectId = projectId; scratchToRemove = { id, displayName }; }}
+          onAddProject={() => { showAddProjectDialog = true; }}
+          onMenuNewWorktree={handleMenuNewWorktree}
+          onMenuSettings={handleMenuSettings}
+          onMenuRemoveProject={handleMenuRemoveProject}
+          onclose={closeWorktree}
+          onarchive={toggleWorktreeArchived}
+          onmerge={(branch) => { mergeBranch = branch; }}
+          onremove={(b) => (removeBranch = b)}
+          onedit={(branch) => { editWorktreeBranch = branch; }}
+        />
+      {:else if sidebarMode === "active"}
+        <ActiveSidebar
+          {projects}
+          {rowsByProject}
+          {scratchByProject}
+          {externalSessions}
+          {selection}
+          selected={selectedBranch}
+          removing={removingBranches}
+          initializing={openingBranches}
+          archiving={archivingBranches}
+          {notifiedBranches}
+          itemOrder={sidebarItemOrder}
+          searchQuery={trimmedWorktreeSearch}
+          showArchived={showArchivedWorktrees}
+          onSelectWorktree={handleSelectWorktree}
+          onSelectScratch={handleSelectScratch}
+          onSelectExternal={handleSelectExternal}
+          onRemoveScratch={activeRemoveScratch}
+          onclose={activeCloseWorktree}
+          onarchive={activeToggleArchived}
+          onmerge={activeMergeWorktree}
+          onremove={activeRemoveWorktree}
+          onedit={activeEditWorktree}
+          onReorder={(next) => setSidebarItemOrder(next)}
+        />
+      {/if}
 
       {#if showCreateScratchDialog}
         <CreateScratchDialog

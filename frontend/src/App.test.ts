@@ -31,6 +31,8 @@ vi.mock("./lib/api", () => ({
   createProject: vi.fn(),
   removeProject: vi.fn(),
   updateWorktree: vi.fn(),
+  fetchPreferences: vi.fn(),
+  updatePreferences: vi.fn(),
   attachScratchConversation: vi.fn(),
   fetchScratchConversationHistory: vi.fn(),
   sendScratchConversationMessage: vi.fn(),
@@ -39,7 +41,7 @@ vi.mock("./lib/api", () => ({
 }));
 
 import App from "./App.svelte";
-import { api, fetchAgents, fetchWorktrees, fetchProjects, fetchExternalSessions, fetchScratchSessions, subscribeNotifications, openWorktree, updateWorktree, attachScratchConversation, connectScratchConversationStream } from "./lib/api";
+import { api, fetchAgents, fetchWorktrees, fetchProjects, fetchExternalSessions, fetchScratchSessions, fetchPreferences, subscribeNotifications, openWorktree, updateWorktree, attachScratchConversation, connectScratchConversationStream } from "./lib/api";
 import type { ProjectInfo, ScratchSessionSnapshot } from "./lib/types";
 
 interface Deferred<T> {
@@ -291,6 +293,7 @@ describe("App create selection", () => {
     vi.mocked(fetchWorktrees).mockResolvedValue([]);
     vi.mocked(fetchExternalSessions).mockResolvedValue([]);
     vi.mocked(fetchScratchSessions).mockResolvedValue([]);
+    vi.mocked(fetchPreferences).mockResolvedValue({ preferences: { schemaVersion: 1 }, knownProfiles: [] });
     vi.mocked(api.fetchAvailableBranches).mockResolvedValue({ branches: [] });
     vi.mocked(api.fetchBaseBranches).mockResolvedValue({ branches: [] });
     vi.mocked(api.fetchLinearIssues).mockResolvedValue(createLinearIssuesResponse());

@@ -601,6 +601,11 @@ export const UserPreferencesAutoNameSchema = z.object({
   systemPrompt: z.string().optional(),
 });
 
+export const UserPreferencesSidebarSchema = z.object({
+  mode: z.enum(["projects", "active"]).optional(),
+  itemOrder: z.array(z.string()).optional(),
+});
+
 export const UserPreferencesSchema = z.object({
   schemaVersion: z.number(),
   defaultAgent: AgentIdSchema.optional(),
@@ -611,6 +616,7 @@ export const UserPreferencesSchema = z.object({
     resumeCommand: z.string().optional(),
   })).optional(),
   autoName: UserPreferencesAutoNameSchema.optional(),
+  sidebar: UserPreferencesSidebarSchema.optional(),
 });
 
 export const UpdateUserPreferencesRequestSchema = UserPreferencesSchema.omit({ schemaVersion: true });
@@ -701,6 +707,7 @@ export type OpenWorktreeRequest = z.infer<typeof OpenWorktreeRequestSchema>;
 export type UpdateWorktreeRequest = z.infer<typeof UpdateWorktreeRequestSchema>;
 export type ExternalSessionNameParams = z.infer<typeof ExternalSessionNameParamsSchema>;
 export type UserPreferencesAutoName = z.infer<typeof UserPreferencesAutoNameSchema>;
+export type UserPreferencesSidebar = z.infer<typeof UserPreferencesSidebarSchema>;
 export type UserPreferences = z.infer<typeof UserPreferencesSchema>;
 export type UpdateUserPreferencesRequest = z.infer<typeof UpdateUserPreferencesRequestSchema>;
 export type UserPreferencesResponse = z.infer<typeof UserPreferencesResponseSchema>;
