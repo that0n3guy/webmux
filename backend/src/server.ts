@@ -13,6 +13,7 @@ import {
   OpenWorktreeRequestSchema,
   PullMainRequestSchema,
   RemoveProjectRequestSchema,
+  UpdateProjectRequestSchema,
   UpdateUserPreferencesRequestSchema,
   RunIdParamsSchema,
   SendWorktreePromptRequestSchema,
@@ -1784,6 +1785,13 @@ async function apiCreateProject(req: Request): Promise<Response> {
   return jsonResponse({ project }, 201);
 }
 
+async function apiUpdateProject(id: string, req: Request): Promise<Response> {
+  const parsed = await parseJsonBody(req, UpdateProjectRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const project = runtime.projectRegistry.setAccount(id, parsed.data.account);
+  return jsonResponse({ project });
+}
+
 async function apiRemoveProject(id: string, req: Request): Promise<Response> {
   const body = RemoveProjectRequestSchema.parse(await req.json());
   await runtime.projectRegistry.remove(id, { killSessions: body.killSessions ?? false });
@@ -1879,6 +1887,11 @@ Bun.serve({
     },
 
     [apiPaths.removeProject]: {
+      PATCH: (req) => {
+        const id = req.params.projectId;
+        if (!id || id.length === 0) return errorResponse("Missing projectId", 400);
+        return catching("PATCH /api/projects/:projectId", () => apiUpdateProject(id, req));
+      },
       DELETE: (req) => {
         const id = req.params.projectId;
         if (!id || id.length === 0) return errorResponse("Missing projectId", 400);
