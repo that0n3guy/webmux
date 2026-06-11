@@ -136,8 +136,8 @@
     if (agents && Object.keys(agents).length > 0) {
       body.agents = agents;
     }
-    const accounts = accountsOverride ?? prefs?.accounts;
-    if (accounts && Object.keys(accounts).length > 0) {
+    const accounts = accountsOverride !== undefined ? accountsOverride : prefs?.accounts;
+    if (accounts !== undefined) {
       body.accounts = accounts;
     }
     const trimmedModel = autoNameModel.trim();
