@@ -1,3 +1,4 @@
+import { CommandUsageError, readOptionValue } from "./cli-args";
 import * as p from "@clack/prompts";
 import { createApi } from "@webmux/api-contract";
 import { basename, resolve } from "node:path";
@@ -71,8 +72,6 @@ interface WorktreeCommandDependencies {
   confirmPrune?: (worktreeCount: number) => Promise<boolean>;
 }
 
-class CommandUsageError extends Error {}
-
 export function getWorktreeCommandUsage(command: WorktreeSubcommand): string {
   switch (command) {
     case "add":
@@ -136,34 +135,6 @@ export function getWorktreeCommandUsage(command: WorktreeSubcommand): string {
     case "prune":
       return "Usage:\n  webmux prune";
   }
-}
-
-function readOptionValue(args: string[], index: number, flag: string): {
-  value: string;
-  nextIndex: number;
-} {
-  const arg = args[index];
-  if (!arg) {
-    throw new CommandUsageError(`${flag} requires a value`);
-  }
-
-  const prefix = `${flag}=`;
-  if (arg.startsWith(prefix)) {
-    return {
-      value: arg.slice(prefix.length),
-      nextIndex: index,
-    };
-  }
-
-  const value = args[index + 1];
-  if (value === undefined) {
-    throw new CommandUsageError(`${flag} requires a value`);
-  }
-
-  return {
-    value,
-    nextIndex: index + 1,
-  };
 }
 
 function parseAgent(value: string): AgentId {

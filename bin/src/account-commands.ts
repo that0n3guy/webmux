@@ -1,36 +1,7 @@
 import { createApi } from "@webmux/api-contract";
 import { resolve } from "node:path";
 import { computeProjectId } from "../../backend/src/adapters/tmux";
-
-class CommandUsageError extends Error {}
-
-function readOptionValue(args: string[], index: number, flag: string): {
-  value: string;
-  nextIndex: number;
-} {
-  const arg = args[index];
-  if (!arg) {
-    throw new CommandUsageError(`${flag} requires a value`);
-  }
-
-  const prefix = `${flag}=`;
-  if (arg.startsWith(prefix)) {
-    return {
-      value: arg.slice(prefix.length),
-      nextIndex: index,
-    };
-  }
-
-  const value = args[index + 1];
-  if (value === undefined) {
-    throw new CommandUsageError(`${flag} requires a value`);
-  }
-
-  return {
-    value,
-    nextIndex: index + 1,
-  };
-}
+import { CommandUsageError, readOptionValue, withConnectionError } from "./cli-args";
 
 export function parseAccountsAddArgs(args: string[]): { name: string; dir: string } | null {
   let name: string | null = null;
@@ -139,20 +110,6 @@ export async function runAccountCommand(context: AccountCommandContext): Promise
   const stderr = (message: string) => console.error(message);
   const api = createApi(`http://localhost:${context.port}`);
 
-  async function withConnectionError<T>(fn: () => Promise<T>): Promise<T> {
-    try {
-      return await fn();
-    } catch (error) {
-      if (error instanceof Error && error.message.startsWith("HTTP")) {
-        throw error;
-      }
-      if (error instanceof Error && !error.message.includes("fetch")) {
-        throw error;
-      }
-      throw new Error(`Could not connect to webmux server on port ${context.port}. Is it running?`);
-    }
-  }
-
   try {
     if (context.command === "accounts") {
       const subcommand = context.args[0];
@@ -163,7 +120,7 @@ export async function runAccountCommand(context: AccountCommandContext): Promise
       }
 
       if (subcommand === "list") {
-        const { preferences } = await withConnectionError(() => api.fetchPreferences());
+        const { preferences } = await withConnectionError(() => api.fetchPreferences(), context.port);
         const accounts = preferences.accounts ?? {};
         const entries = Object.entries(accounts);
         if (entries.length === 0) {
@@ -190,11 +147,11 @@ export async function runAccountCommand(context: AccountCommandContext): Promise
           return 0;
         }
 
-        const { preferences } = await withConnectionError(() => api.fetchPreferences());
+        const { preferences } = await withConnectionError(() => api.fetchPreferences(), context.port);
         const { schemaVersion, ...rest } = preferences;
         void schemaVersion;
         const accounts = { ...rest.accounts, [parsed.name]: { configDir: parsed.dir } };
-        await withConnectionError(() => api.updatePreferences({ body: { ...rest, accounts } }));
+        await withConnectionError(() => api.updatePreferences({ body: { ...rest, accounts } }), context.port);
         stdout(`Added account "${parsed.name}" (${parsed.dir})`);
         return 0;
       }
@@ -206,7 +163,7 @@ export async function runAccountCommand(context: AccountCommandContext): Promise
           return 0;
         }
 
-        const { preferences } = await withConnectionError(() => api.fetchPreferences());
+        const { preferences } = await withConnectionError(() => api.fetchPreferences(), context.port);
         const { schemaVersion, ...rest } = preferences;
         void schemaVersion;
         const accounts = { ...(rest.accounts ?? {}) };
@@ -215,7 +172,7 @@ export async function runAccountCommand(context: AccountCommandContext): Promise
           return 1;
         }
         delete accounts[name];
-        await withConnectionError(() => api.updatePreferences({ body: { ...rest, accounts } }));
+        await withConnectionError(() => api.updatePreferences({ body: { ...rest, accounts } }), context.port);
         stdout(`Removed account "${name}"`);
         return 0;
       }
@@ -242,6 +199,7 @@ export async function runAccountCommand(context: AccountCommandContext): Promise
           params: { projectId },
           body: { account: parsed.account },
         }),
+        context.port,
       );
 
       if (parsed.account === null) {
