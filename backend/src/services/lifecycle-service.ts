@@ -636,7 +636,7 @@ export class LifecycleService {
       runtime: profile.runtime,
       startupEnvValues: await this.buildStartupEnvValues(undefined),
       allocatedPorts: await this.allocatePorts(),
-      runtimeEnvExtras: { WEBMUX_WORKTREE_PATH: resolved.entry.path },
+      runtimeEnvExtras: withClaudeConfigDir({ WEBMUX_WORKTREE_PATH: resolved.entry.path }, this.deps.getClaudeConfigDir?.()),
       dotenvValues,
       controlUrl: this.controlUrl(profile.runtime),
       controlToken: await this.deps.getControlToken(),
