@@ -205,4 +205,24 @@ describe("ProjectRegistry", () => {
     await reg.load();
     expect(reg.list()[0].name).toBe("Custom Name");
   });
+
+  test("setAccount persists account and surfaces it on ProjectInfo", async () => {
+    const reg = createProjectRegistry(buildDeps());
+    await reg.load();
+    const dir = makeProjectDir("alpha");
+    const info = await reg.add({ path: dir });
+
+    const updated = reg.setAccount(info.id, "work");
+    expect(updated.account).toBe("work");
+    expect(reg.list()[0]?.account).toBe("work");
+    expect(readFileSync(registryPath, "utf-8")).toContain("account: work");
+
+    const reg2 = createProjectRegistry(buildDeps());
+    await reg2.load();
+    expect(reg2.list()[0]?.account).toBe("work");
+
+    const cleared = reg.setAccount(info.id, null);
+    expect(cleared.account).toBeUndefined();
+    expect(readFileSync(registryPath, "utf-8")).not.toContain("account:");
+  });
 });
