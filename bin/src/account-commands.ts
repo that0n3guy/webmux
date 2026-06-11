@@ -45,7 +45,8 @@ export function parseAccountsAddArgs(args: string[]): { name: string; dir: strin
 }
 
 export function parseAccountSetArgs(args: string[]): { account: string | null } | null {
-  let account: string | null | undefined = undefined;
+  let name: string | undefined = undefined;
+  let hasClear = false;
 
   for (const arg of args) {
     if (arg === "--help" || arg === "-h") {
@@ -53,7 +54,7 @@ export function parseAccountSetArgs(args: string[]): { account: string | null } 
     }
 
     if (arg === "--clear") {
-      account = null;
+      hasClear = true;
       continue;
     }
 
@@ -61,18 +62,22 @@ export function parseAccountSetArgs(args: string[]): { account: string | null } 
       throw new CommandUsageError(`Unknown option: ${arg}`);
     }
 
-    if (account !== undefined) {
+    if (name !== undefined) {
       throw new CommandUsageError(`Unexpected argument: ${arg}`);
     }
 
-    account = arg;
+    name = arg;
   }
 
-  if (account === undefined) {
+  if (hasClear && name !== undefined) {
+    throw new CommandUsageError("Cannot specify both a name and --clear");
+  }
+
+  if (!hasClear && name === undefined) {
     throw new CommandUsageError("Missing required argument: <name> or --clear");
   }
 
-  return { account };
+  return { account: hasClear ? null : name! };
 }
 
 function getAccountsUsage(): string {

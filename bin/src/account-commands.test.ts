@@ -41,4 +41,10 @@ describe("parseAccountSetArgs", () => {
   test("throws on extra positional", () => {
     expect(() => parseAccountSetArgs(["work", "extra"])).toThrow();
   });
+  test("throws when both name and --clear are provided", () => {
+    expect(() => parseAccountSetArgs(["work", "--clear"])).toThrow();
+  });
+  test("throws when --clear and name are provided in reverse order", () => {
+    expect(() => parseAccountSetArgs(["--clear", "work"])).toThrow();
+  });
 });
