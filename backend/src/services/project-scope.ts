@@ -1,4 +1,5 @@
 import { loadConfig, type ProjectConfig } from "../adapters/config";
+import { resolveAccountConfigDir } from "../lib/account-config";
 import { loadControlToken } from "../adapters/control-token";
 import type { BunDockerGateway } from "../adapters/docker";
 import type { BunGitGateway } from "../adapters/git";
@@ -31,6 +32,7 @@ export interface ProjectScopeDeps {
   autoName: AutoNameService;
   runtimeNotifications: NotificationService;
   preferences?: UserPreferences;
+  account?: string;
   onCreateProgress?: (progress: CreateWorktreeProgress) => void | Promise<void>;
 }
 
@@ -47,6 +49,8 @@ export interface ProjectScope {
   scratchSessionService: ScratchSessionService;
   removingBranches: Set<string>;
   refreshConfig(preferences: UserPreferences): void;
+  setAccount(account: string | null): void;
+  getClaudeConfigDir(): string | undefined;
   dispose(): void;
 }
 
@@ -56,6 +60,10 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
   const initialPreferences = deps.preferences ?? { schemaVersion: 1 };
   const config = loadConfig(projectDir, { resolvedRoot: true, preferences: initialPreferences });
   const preferencesHolder: { current: UserPreferences } = { current: initialPreferences };
+  const accountHolder: { current: string | undefined } = { current: deps.account };
+  function getClaudeConfigDir(): string | undefined {
+    return resolveAccountConfigDir(preferencesHolder.current, accountHolder.current);
+  }
 
   const archiveStateService = new ArchiveStateService(deps.git.resolveWorktreeGitDir(projectDir));
   const runtimeStatePersistence = createRuntimeStatePersistence({
@@ -89,6 +97,7 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
     runtime: projectRuntime,
     hooks: deps.hooks,
     autoName: deps.autoName,
+    getClaudeConfigDir,
     onCreateProgress: (progress) => {
       worktreeCreationTracker.set(progress);
       deps.onCreateProgress?.(progress);
@@ -139,6 +148,10 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
       config.lifecycleHooks = next.lifecycleHooks;
       config.autoName = next.autoName;
     },
+    setAccount(account: string | null): void {
+      accountHolder.current = account ?? undefined;
+    },
+    getClaudeConfigDir,
     dispose() {
       // Per spec MP-2: dispose is a placeholder until per-service shutdowns are added.
       // Today's services don't expose stop methods. Scope becoming unreachable suffices.

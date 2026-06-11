@@ -43,6 +43,13 @@ import { generateFallbackBranchName } from "../lib/branch-name";
 
 const DOCKER_CONTROL_HOST = "host.docker.internal";
 
+export function withClaudeConfigDir(
+  env: Record<string, string>,
+  configDir: string | undefined,
+): Record<string, string> {
+  return configDir ? { ...env, CLAUDE_CONFIG_DIR: configDir } : env;
+}
+
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -132,6 +139,7 @@ export interface LifecycleServiceDependencies {
   autoName: AutoNameGenerator;
   onCreateProgress?: (progress: CreateWorktreeProgress) => void | Promise<void>;
   onCreateFinished?: (branch: string) => void | Promise<void>;
+  getClaudeConfigDir?: () => string | undefined;
 }
 
 export interface CreateLifecycleWorktreeInput {
@@ -655,9 +663,9 @@ export class LifecycleService {
     worktreePath: string;
   }): Promise<InitializeManagedWorktreeResult> {
     const dotenvValues = await loadDotenvLocal(input.worktreePath);
-    const runtimeEnv = buildRuntimeEnvMap(input.meta, {
+    const runtimeEnv = buildRuntimeEnvMap(input.meta, withClaudeConfigDir({
       WEBMUX_WORKTREE_PATH: input.worktreePath,
-    }, dotenvValues);
+    }, this.deps.getClaudeConfigDir?.()), dotenvValues);
     await writeRuntimeEnv(input.gitDir, runtimeEnv);
 
     const controlEnv = buildControlEnvMap({
@@ -937,9 +945,9 @@ export class LifecycleService {
       name: input.name,
       command: input.command,
       cwd: input.worktreePath,
-      env: buildRuntimeEnvMap(input.meta, {
+      env: buildRuntimeEnvMap(input.meta, withClaudeConfigDir({
         WEBMUX_WORKTREE_PATH: input.worktreePath,
-      }, dotenvValues),
+      }, this.deps.getClaudeConfigDir?.()), dotenvValues),
     });
     log.debug(`[lifecycle-hook] COMPLETED ${input.name}`);
   }
