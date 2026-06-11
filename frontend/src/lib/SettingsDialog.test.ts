@@ -11,6 +11,7 @@ vi.mock("./api", () => ({
   },
   fetchPreferences: vi.fn(),
   updatePreferences: vi.fn(),
+  updateProject: vi.fn(),
 }));
 
 import { api, fetchPreferences, updatePreferences } from "./api";
@@ -71,10 +72,12 @@ function renderDialog() {
     currentTheme: "github-dark",
     linearAutoCreate: false,
     autoRemoveOnMerge: false,
+    currentAccount: undefined,
     onthemechange: vi.fn(),
     onlinearautocreatechange: vi.fn(),
     onautoremovechange: vi.fn(),
     onagentschange: vi.fn(),
+    onaccountchange: vi.fn(),
     onsave: vi.fn(),
     onclose: vi.fn(),
   });
@@ -154,10 +157,12 @@ describe("SettingsDialog", () => {
       currentTheme: "github-dark",
       linearAutoCreate: false,
       autoRemoveOnMerge: false,
+      currentAccount: undefined,
       onthemechange: vi.fn(),
       onlinearautocreatechange: vi.fn(),
       onautoremovechange: vi.fn(),
       onagentschange,
+      onaccountchange: vi.fn(),
       onsave: vi.fn(),
       onclose: vi.fn(),
     });
@@ -218,10 +223,12 @@ describe("SettingsDialog", () => {
       currentTheme: "github-dark",
       linearAutoCreate: false,
       autoRemoveOnMerge: false,
+      currentAccount: undefined,
       onthemechange: vi.fn(),
       onlinearautocreatechange: vi.fn(),
       onautoremovechange: vi.fn(),
       onagentschange: vi.fn(),
+      onaccountchange: vi.fn(),
       onsave: vi.fn(),
       onclose: vi.fn(),
     });
