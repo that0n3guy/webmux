@@ -161,12 +161,13 @@ function buildDockerExecCommand(
   return `docker exec -it -w ${quoteShell(worktreePath)} ${quoteShell(containerName)} /bin/sh -c ${quoteShell(command)}`;
 }
 
-export function buildBareAgentInvocation(agent: AgentDefinition, opts: { cwd: string; yolo?: boolean }): string {
+export function buildBareAgentInvocation(agent: AgentDefinition, opts: { cwd: string; yolo?: boolean; configDir?: string }): string {
+  const configDirPrefix = opts.configDir ? `CLAUDE_CONFIG_DIR=${quoteShell(opts.configDir)} ` : "";
   if (agent.kind === "builtin") {
-    return buildBuiltInAgentInvocation({ agent: agent.implementation.agent, yolo: opts.yolo });
+    return configDirPrefix + buildBuiltInAgentInvocation({ agent: agent.implementation.agent, yolo: opts.yolo });
   }
   const rendered = renderCustomCommandTemplate(agent.implementation.config.startCommand);
-  return `WEBMUX_AGENT_PROMPT='' WEBMUX_AGENT_SYSTEM_PROMPT='' WEBMUX_AGENT_WORKTREE_PATH=${quoteShell(opts.cwd)} WEBMUX_AGENT_REPO_PATH=${quoteShell(opts.cwd)} WEBMUX_AGENT_BRANCH='' WEBMUX_AGENT_PROFILE='' ${rendered}`;
+  return `${configDirPrefix}WEBMUX_AGENT_PROMPT='' WEBMUX_AGENT_SYSTEM_PROMPT='' WEBMUX_AGENT_WORKTREE_PATH=${quoteShell(opts.cwd)} WEBMUX_AGENT_REPO_PATH=${quoteShell(opts.cwd)} WEBMUX_AGENT_BRANCH='' WEBMUX_AGENT_PROFILE='' ${rendered}`;
 }
 
 export function buildManagedShellCommand(
