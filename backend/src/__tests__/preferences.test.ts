@@ -299,6 +299,55 @@ sidebar: wrong
 });
 
 // ---------------------------------------------------------------------------
+// accounts field
+// ---------------------------------------------------------------------------
+
+describe("UserPreferencesGateway accounts", () => {
+  test("load() parses accounts and round-trips through save()", async () => {
+    const yaml = `
+schemaVersion: 1
+accounts:
+  personal:
+    configDir: ~/.claude-personal
+  work:
+    configDir: /home/u/.claude-work
+`.trim();
+    writeFileSync(prefsPath, yaml);
+    const gw = createUserPreferencesGateway({ path: prefsPath });
+    const prefs = await gw.load();
+    expect(prefs.accounts).toEqual({
+      personal: { configDir: "~/.claude-personal" },
+      work: { configDir: "/home/u/.claude-work" },
+    });
+
+    await gw.save(prefs);
+    const reread = await createUserPreferencesGateway({ path: prefsPath }).load();
+    expect(reread.accounts).toEqual(prefs.accounts);
+  });
+
+  test("load() drops malformed account entries", async () => {
+    const yaml = `
+schemaVersion: 1
+accounts:
+  good:
+    configDir: ~/.claude-good
+  bad:
+    configDir: ""
+  alsobad: "not-an-object"
+`.trim();
+    writeFileSync(prefsPath, yaml);
+    const prefs = await createUserPreferencesGateway({ path: prefsPath }).load();
+    expect(prefs.accounts).toEqual({ good: { configDir: "~/.claude-good" } });
+  });
+
+  test("applyPreferencesUpdate replaces accounts when provided", () => {
+    const base = { schemaVersion: 1, accounts: { a: { configDir: "~/a" } } };
+    const next = applyPreferencesUpdate(base, { accounts: { b: { configDir: "~/b" } } });
+    expect(next.accounts).toEqual({ b: { configDir: "~/b" } });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // applyPreferencesUpdate — sidebar field
 // ---------------------------------------------------------------------------
 
