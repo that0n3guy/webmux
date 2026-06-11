@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { AgentDefinition } from "../services/agent-registry";
 import {
   buildAgentPaneCommand,
+  buildBareAgentInvocation,
   buildDockerAgentPaneCommand,
   buildDockerShellCommand,
   buildManagedShellCommand,
@@ -270,5 +271,21 @@ describe("agent-service command builders", () => {
 
     expect(command).toContain('gemini resume --branch "$WEBMUX_AGENT_BRANCH"');
     expect(command).not.toContain('gemini start --prompt "$WEBMUX_AGENT_PROMPT"');
+  });
+});
+
+describe("buildBareAgentInvocation account config dir (scratch sessions)", () => {
+  it("prepends CLAUDE_CONFIG_DIR for a builtin agent when a configDir is given", () => {
+    const cmd = buildBareAgentInvocation(builtInAgent("claude"), {
+      cwd: "/repo",
+      configDir: "/home/u/.claude-work",
+    });
+    expect(cmd.startsWith("CLAUDE_CONFIG_DIR='/home/u/.claude-work' ")).toBe(true);
+    expect(cmd).toContain("claude");
+  });
+
+  it("omits CLAUDE_CONFIG_DIR when no configDir is given", () => {
+    const cmd = buildBareAgentInvocation(builtInAgent("claude"), { cwd: "/repo" });
+    expect(cmd).not.toContain("CLAUDE_CONFIG_DIR");
   });
 });

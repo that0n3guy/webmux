@@ -114,7 +114,7 @@ export function createProjectScope(deps: ProjectScopeDeps): ProjectScope {
     getAgentLaunchCommand: (agentId, opts) => {
       const agent = getAgentDefinition(config, agentId);
       if (!agent) return null;
-      return buildBareAgentInvocation(agent, { cwd: projectDir, yolo: opts.yolo });
+      return buildBareAgentInvocation(agent, { cwd: projectDir, yolo: opts.yolo, configDir: getClaudeConfigDir() });
     },
   });
   scratchSessionService.scan();
