@@ -18,11 +18,16 @@ export interface UserPreferencesSidebar {
   itemOrder?: string[];
 }
 
+export interface UserPreferencesAccount {
+  configDir: string;
+}
+
 export interface UserPreferences {
   schemaVersion: number;
   defaultAgent?: AgentId;
   defaultProfile?: string;
   agents?: Record<AgentId, CustomAgentConfig>;
+  accounts?: Record<string, UserPreferencesAccount>;
   autoName?: UserPreferencesAutoName;
   sidebar?: UserPreferencesSidebar;
 }
@@ -53,6 +58,7 @@ export function applyPreferencesUpdate(
     ...(update.defaultAgent !== undefined ? { defaultAgent: update.defaultAgent } : {}),
     ...(update.defaultProfile !== undefined ? { defaultProfile: update.defaultProfile } : {}),
     ...(update.agents !== undefined ? { agents: update.agents } : {}),
+    ...(update.accounts !== undefined ? { accounts: update.accounts } : {}),
     ...(update.autoName !== undefined ? { autoName: update.autoName } : {}),
     ...(update.sidebar !== undefined ? { sidebar: update.sidebar } : {}),
   };
@@ -119,6 +125,22 @@ function parsePreferencesAgents(raw: unknown): Record<AgentId, CustomAgentConfig
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+function parsePreferencesAccounts(raw: unknown): Record<string, UserPreferencesAccount> | undefined {
+  if (!isRecord(raw)) return undefined;
+
+  const result: Record<string, UserPreferencesAccount> = {};
+  for (const [name, value] of Object.entries(raw)) {
+    if (!name.trim()) continue;
+    if (!isRecord(value) || typeof value.configDir !== "string" || !value.configDir.trim()) {
+      log.warn(`[preferences] skipping malformed account entry: ${name}`);
+      continue;
+    }
+    result[name.trim()] = { configDir: value.configDir.trim() };
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 function parsePreferences(raw: unknown): UserPreferences {
   if (!isRecord(raw)) return emptyUserPreferences();
 
@@ -135,6 +157,7 @@ function parsePreferences(raw: unknown): UserPreferences {
     : undefined;
 
   const agents = parsePreferencesAgents(raw.agents);
+  const accounts = parsePreferencesAccounts(raw.accounts);
   const autoName = parsePreferencesAutoName(raw.autoName);
   const sidebar = parsePreferencesSidebar(raw.sidebar);
 
@@ -143,6 +166,7 @@ function parsePreferences(raw: unknown): UserPreferences {
     ...(defaultAgent !== undefined ? { defaultAgent } : {}),
     ...(defaultProfile !== undefined ? { defaultProfile } : {}),
     ...(agents !== undefined ? { agents } : {}),
+    ...(accounts !== undefined ? { accounts } : {}),
     ...(autoName !== undefined ? { autoName } : {}),
     ...(sidebar !== undefined ? { sidebar } : {}),
   };
@@ -161,6 +185,10 @@ function buildSavePayload(prefs: UserPreferences): Record<string, unknown> {
 
   if (prefs.agents !== undefined && Object.keys(prefs.agents).length > 0) {
     payload.agents = prefs.agents;
+  }
+
+  if (prefs.accounts !== undefined && Object.keys(prefs.accounts).length > 0) {
+    payload.accounts = prefs.accounts;
   }
 
   if (prefs.autoName !== undefined) {

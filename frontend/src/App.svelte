@@ -1839,10 +1839,14 @@
     {currentTheme}
     linearAutoCreate={config.linearAutoCreateWorktrees ?? false}
     autoRemoveOnMerge={config.autoRemoveOnMerge ?? false}
+    currentAccount={projects.find((p) => p.id === currentProjectId)?.account}
     onthemechange={(key) => (currentTheme = key)}
     onlinearautocreatechange={(enabled) => { config.linearAutoCreateWorktrees = enabled; }}
     onautoremovechange={(enabled) => { config.autoRemoveOnMerge = enabled; }}
     onagentschange={(agents) => { config.agents = agents; }}
+    onaccountchange={(account) => {
+      projects = projects.map((p) => p.id === currentProjectId ? { ...p, account: account ?? undefined } : p);
+    }}
     onsave={(host) => {
       sshHost = host;
       showSettingsDialog = false;

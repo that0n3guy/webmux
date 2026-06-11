@@ -21,6 +21,7 @@ interface RegistryFileEntry {
   path: string;
   addedAt: string;
   name?: string;
+  account?: string;
 }
 
 interface RegistryFile {
@@ -52,6 +53,7 @@ export interface ProjectRegistry {
   remove(id: string, opts: { killSessions: boolean }): Promise<void>;
   list(): ProjectInfo[];
   get(id: string): ProjectScope | null;
+  setAccount(id: string, account: string | null): ProjectInfo;
 }
 
 const DEFAULT_REGISTRY_PATH = join(Bun.env.HOME ?? "/tmp", ".config", "webmux", "projects.yaml");
@@ -59,7 +61,7 @@ const DEFAULT_REGISTRY_PATH = join(Bun.env.HOME ?? "/tmp", ".config", "webmux", 
 export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistry {
   const registryPath = deps.registryPath ?? DEFAULT_REGISTRY_PATH;
   const scopes = new Map<string, ProjectScope>();
-  const meta = new Map<string, { addedAt: string; name?: string }>();
+  const meta = new Map<string, { addedAt: string; name?: string; account?: string }>();
 
   function buildInfo(scope: ProjectScope): ProjectInfo {
     const m = meta.get(scope.projectId);
@@ -72,6 +74,7 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
       addedAt: m?.addedAt ?? new Date().toISOString(),
       mainBranch: scope.config.workspace?.mainBranch ?? "main",
       defaultAgent: scope.config.workspace?.defaultAgent ?? "claude",
+      ...(m?.account !== undefined ? { account: m.account } : {}),
     };
   }
 
@@ -86,6 +89,7 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
           addedAt: m?.addedAt ?? new Date().toISOString(),
         };
         if (m?.name !== undefined) entry.name = m.name;
+        if (m?.account !== undefined) entry.account = m.account;
         return entry;
       }),
     };
@@ -93,7 +97,7 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
     writeFileSync(registryPath, stringifyYaml(file));
   }
 
-  function constructScope(projectDir: string, preferences: UserPreferences): ProjectScope {
+  function constructScope(projectDir: string, preferences: UserPreferences, account?: string): ProjectScope {
     return createProjectScope({
       projectDir,
       port: deps.port,
@@ -105,6 +109,7 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
       autoName: deps.autoName,
       runtimeNotifications: deps.runtimeNotifications,
       preferences,
+      account,
     });
   }
 
@@ -164,7 +169,7 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
           log.warn(`[project-registry] skipping malformed entry: ${JSON.stringify(raw)}`);
           continue;
         }
-        const entry = raw as { id?: unknown; path?: unknown; addedAt?: unknown; name?: unknown };
+        const entry = raw as { id?: unknown; path?: unknown; addedAt?: unknown; name?: unknown; account?: unknown };
         if (typeof entry.id !== "string" || typeof entry.path !== "string" || typeof entry.addedAt !== "string") {
           log.warn(`[project-registry] skipping malformed entry: missing string fields`);
           continue;
@@ -174,10 +179,11 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
           continue;
         }
         const registryName = typeof entry.name === "string" ? entry.name : undefined;
+        const registryAccount = typeof entry.account === "string" ? entry.account : undefined;
         try {
-          const scope = constructScope(entry.path, preferences);
+          const scope = constructScope(entry.path, preferences, registryAccount);
           scopes.set(scope.projectId, scope);
-          meta.set(scope.projectId, { addedAt: entry.addedAt, name: registryName });
+          meta.set(scope.projectId, { addedAt: entry.addedAt, name: registryName, account: registryAccount });
         } catch (err) {
           log.warn(`[project-registry] failed to construct scope for ${entry.path}: ${err instanceof Error ? err.message : err}`);
         }
@@ -235,6 +241,16 @@ export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistr
 
     get(id: string): ProjectScope | null {
       return scopes.get(id) ?? null;
+    },
+
+    setAccount(id: string, account: string | null): ProjectInfo {
+      const scope = scopes.get(id);
+      if (!scope) throw new Error(`Unknown project: ${id}`);
+      const m = meta.get(id) ?? { addedAt: new Date().toISOString() };
+      meta.set(id, { ...m, account: account ?? undefined });
+      scope.setAccount(account);
+      persist();
+      return buildInfo(scope);
     },
   };
 }

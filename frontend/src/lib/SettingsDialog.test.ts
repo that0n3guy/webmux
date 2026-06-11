@@ -11,6 +11,7 @@ vi.mock("./api", () => ({
   },
   fetchPreferences: vi.fn(),
   updatePreferences: vi.fn(),
+  updateProject: vi.fn(),
 }));
 
 import { api, fetchPreferences, updatePreferences } from "./api";
@@ -71,10 +72,12 @@ function renderDialog() {
     currentTheme: "github-dark",
     linearAutoCreate: false,
     autoRemoveOnMerge: false,
+    currentAccount: undefined,
     onthemechange: vi.fn(),
     onlinearautocreatechange: vi.fn(),
     onautoremovechange: vi.fn(),
     onagentschange: vi.fn(),
+    onaccountchange: vi.fn(),
     onsave: vi.fn(),
     onclose: vi.fn(),
   });
@@ -154,10 +157,12 @@ describe("SettingsDialog", () => {
       currentTheme: "github-dark",
       linearAutoCreate: false,
       autoRemoveOnMerge: false,
+      currentAccount: undefined,
       onthemechange: vi.fn(),
       onlinearautocreatechange: vi.fn(),
       onautoremovechange: vi.fn(),
       onagentschange,
+      onaccountchange: vi.fn(),
       onsave: vi.fn(),
       onclose: vi.fn(),
     });
@@ -218,10 +223,12 @@ describe("SettingsDialog", () => {
       currentTheme: "github-dark",
       linearAutoCreate: false,
       autoRemoveOnMerge: false,
+      currentAccount: undefined,
       onthemechange: vi.fn(),
       onlinearautocreatechange: vi.fn(),
       onautoremovechange: vi.fn(),
       onagentschange: vi.fn(),
+      onaccountchange: vi.fn(),
       onsave: vi.fn(),
       onclose: vi.fn(),
     });
@@ -307,5 +314,35 @@ describe("SettingsDialog", () => {
     // agents should be empty or undefined — the deleted agent must not be present
     const agentIds = Object.keys(callArg.agents ?? {});
     expect(agentIds).not.toContain("gemini-cli");
+  });
+
+  // -------------------------------------------------------------------------
+  // Delete last account — empty map must be sent, not dropped
+  // -------------------------------------------------------------------------
+
+  it("sends accounts: {} when the last account is deleted", async () => {
+    vi.mocked(fetchPreferences).mockResolvedValue(payload(createPreferences({
+      accounts: {
+        work: { configDir: "~/.claude-work" },
+      },
+    })));
+    const afterDeletePrefs = createPreferences({ accounts: {} });
+    vi.mocked(updatePreferences).mockResolvedValue(payload(afterDeletePrefs));
+
+    renderDialog();
+    // Wait for the account row to appear
+    await screen.findByText("work");
+
+    // Click the Delete button next to the account row
+    await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(updatePreferences).toHaveBeenCalled();
+    });
+
+    const callArg = vi.mocked(updatePreferences).mock.calls[0][0];
+    // The empty map must be present in the body so the backend clears the last account
+    expect(callArg).toHaveProperty("accounts");
+    expect(callArg.accounts).toEqual({});
   });
 });

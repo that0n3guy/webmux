@@ -13,6 +13,7 @@ import {
   OpenWorktreeRequestSchema,
   PullMainRequestSchema,
   RemoveProjectRequestSchema,
+  UpdateProjectRequestSchema,
   UpdateUserPreferencesRequestSchema,
   RunIdParamsSchema,
   SendWorktreePromptRequestSchema,
@@ -631,7 +632,7 @@ async function apiAttachAgentsWorktree(scope: ProjectScope, branch: string): Pro
   }
 
   const result = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.attachWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope))
+    ? await claudeConversationService.attachWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope), undefined, undefined, scope.getClaudeConfigDir())
     : await worktreeConversationService.attachWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope));
   return result.ok
     ? jsonResponse(result.data)
@@ -649,7 +650,7 @@ async function apiGetAgentsWorktreeHistory(scope: ProjectScope, branch: string):
   }
 
   const result = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope))
+    ? await claudeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope), undefined, undefined, scope.getClaudeConfigDir())
     : await worktreeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope));
   return result.ok
     ? jsonResponse(result.data)
@@ -673,7 +674,7 @@ async function apiSendAgentsWorktreeMessage(scope: ProjectScope, branch: string,
   }
 
   const conversationResult = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope))
+    ? await claudeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope), undefined, undefined, scope.getClaudeConfigDir())
     : await worktreeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope));
   if (!conversationResult.ok) {
     return errorResponse(conversationResult.error, conversationResult.status);
@@ -715,7 +716,7 @@ async function apiInterruptAgentsWorktree(scope: ProjectScope, branch: string): 
   }
 
   const conversationResult = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope))
+    ? await claudeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope), undefined, undefined, scope.getClaudeConfigDir())
     : await worktreeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope));
   if (!conversationResult.ok) {
     return errorResponse(conversationResult.error, conversationResult.status);
@@ -818,7 +819,7 @@ async function apiAttachAgentsScratchConversation(scope: ProjectScope, id: strin
   const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.facade, "chat");
   if (!chatSupport.ok) return errorResponse(chatSupport.error, chatSupport.status);
   const result = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.attachWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage, resolved.scratchCreatedAt)
+    ? await claudeConversationService.attachWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage, resolved.scratchCreatedAt, scope.getClaudeConfigDir())
     : await worktreeConversationService.attachWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage);
   return result.ok ? jsonResponse(result.data) : errorResponse(result.error, result.status);
 }
@@ -831,7 +832,7 @@ async function apiGetAgentsScratchConversationHistory(scope: ProjectScope, id: s
   const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.facade, "chat");
   if (!chatSupport.ok) return errorResponse(chatSupport.error, chatSupport.status);
   const result = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage, resolved.scratchCreatedAt)
+    ? await claudeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage, resolved.scratchCreatedAt, scope.getClaudeConfigDir())
     : await worktreeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage);
   return result.ok ? jsonResponse(result.data) : errorResponse(result.error, result.status);
 }
@@ -846,7 +847,7 @@ async function apiSendAgentsScratchConversationMessage(scope: ProjectScope, id: 
   const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.facade, "chat");
   if (!chatSupport.ok) return errorResponse(chatSupport.error, chatSupport.status);
   const conversationResult = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage, resolved.scratchCreatedAt)
+    ? await claudeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage, resolved.scratchCreatedAt, scope.getClaudeConfigDir())
     : await worktreeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage);
   if (!conversationResult.ok) return errorResponse(conversationResult.error, conversationResult.status);
   const attachTarget: import("./adapters/terminal").TerminalAttachTarget = {
@@ -877,7 +878,7 @@ async function apiInterruptAgentsScratchConversation(scope: ProjectScope, id: st
   const chatSupport = resolveWorktreeAgentChatSupport(scope, resolved.facade, "interrupt");
   if (!chatSupport.ok) return errorResponse(chatSupport.error, chatSupport.status);
   const conversationResult = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage, resolved.scratchCreatedAt)
+    ? await claudeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage, resolved.scratchCreatedAt, scope.getClaudeConfigDir())
     : await worktreeConversationService.readWorktreeConversation(resolved.facade, buildConversationProbeContext(scope), storage);
   if (!conversationResult.ok) return errorResponse(conversationResult.error, conversationResult.status);
   const attachTarget: import("./adapters/terminal").TerminalAttachTarget = {
@@ -1058,7 +1059,7 @@ async function loadAgentsConversationSnapshot(
   }
 
   const result = chatSupport.data.provider === "claude"
-    ? await claudeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope))
+    ? await claudeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope), undefined, undefined, scope.getClaudeConfigDir())
     : await worktreeConversationService.readWorktreeConversation(resolved.worktree, buildConversationProbeContext(scope));
   return result.ok
     ? { ok: true, data: result.data }
@@ -1784,6 +1785,13 @@ async function apiCreateProject(req: Request): Promise<Response> {
   return jsonResponse({ project }, 201);
 }
 
+async function apiUpdateProject(id: string, req: Request): Promise<Response> {
+  const parsed = await parseJsonBody(req, UpdateProjectRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const project = runtime.projectRegistry.setAccount(id, parsed.data.account);
+  return jsonResponse({ project });
+}
+
 async function apiRemoveProject(id: string, req: Request): Promise<Response> {
   const body = RemoveProjectRequestSchema.parse(await req.json());
   await runtime.projectRegistry.remove(id, { killSessions: body.killSessions ?? false });
@@ -1879,6 +1887,11 @@ Bun.serve({
     },
 
     [apiPaths.removeProject]: {
+      PATCH: (req) => {
+        const id = req.params.projectId;
+        if (!id || id.length === 0) return errorResponse("Missing projectId", 400);
+        return catching("PATCH /api/projects/:projectId", () => apiUpdateProject(id, req));
+      },
       DELETE: (req) => {
         const id = req.params.projectId;
         if (!id || id.length === 0) return errorResponse("Missing projectId", 400);

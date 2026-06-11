@@ -170,8 +170,9 @@ export class ClaudeConversationService {
     probe?: ClaudeConversationProbeContext,
     storage?: ConversationStorage,
     sessionCreatedAfter?: string,
+    configDir?: string,
   ): Promise<WorktreeConversationResult<AgentsUiWorktreeConversationResponse>> {
-    return await this.withResolvedConversation(worktree, storage, sessionCreatedAfter, async (resolved) => {
+    return await this.withResolvedConversation(worktree, storage, sessionCreatedAfter, configDir, async (resolved) => {
       const running = worktree.status === "running" || worktree.status === "starting";
       const statusWord = this.probeStatusWord(worktree, probe);
       return ok(toWorktreeConversationResponse(worktree, resolved.conversationMeta, resolved.session, running, statusWord));
@@ -183,8 +184,9 @@ export class ClaudeConversationService {
     probe?: ClaudeConversationProbeContext,
     storage?: ConversationStorage,
     sessionCreatedAfter?: string,
+    configDir?: string,
   ): Promise<WorktreeConversationResult<AgentsUiWorktreeConversationResponse>> {
-    return await this.withResolvedConversation(worktree, storage, sessionCreatedAfter, async (resolved) => {
+    return await this.withResolvedConversation(worktree, storage, sessionCreatedAfter, configDir, async (resolved) => {
       const running = worktree.status === "running" || worktree.status === "starting";
       const statusWord = this.probeStatusWord(worktree, probe);
       return ok(toWorktreeConversationResponse(worktree, resolved.conversationMeta, resolved.session, running, statusWord));
@@ -204,6 +206,7 @@ export class ClaudeConversationService {
     worktree: WorktreeSnapshot,
     storage: ConversationStorage | undefined,
     sessionCreatedAfter: string | undefined,
+    configDir: string | undefined,
     fn: (resolved: ResolvedClaudeConversation) => Promise<WorktreeConversationResult<T>>,
   ): Promise<WorktreeConversationResult<T>> {
     if (!isClaudeWorktree(worktree)) {
@@ -212,7 +215,7 @@ export class ClaudeConversationService {
 
     try {
       const effectiveStorage = storage ?? this.buildDefaultStorage(worktree.path);
-      const resolved = await this.resolveConversation(worktree, effectiveStorage, sessionCreatedAfter);
+      const resolved = await this.resolveConversation(worktree, effectiveStorage, sessionCreatedAfter, configDir);
       if (!resolved.ok) return resolved;
       return await fn(resolved.data);
     } catch (error) {
@@ -225,10 +228,11 @@ export class ClaudeConversationService {
     worktree: WorktreeSnapshot,
     storage: ConversationStorage,
     sessionCreatedAfter: string | undefined,
+    configDir: string | undefined,
   ): Promise<WorktreeConversationResult<ResolvedClaudeConversation>> {
     const saved = await storage.load();
 
-    const session = await this.resolveSession(saved, worktree.path, sessionCreatedAfter);
+    const session = await this.resolveSession(saved, worktree.path, sessionCreatedAfter, configDir);
     const conversationMeta = session
       ? await this.persistConversationMeta(storage, worktree.path, session.sessionId)
       : null;
@@ -243,8 +247,9 @@ export class ClaudeConversationService {
     saved: WorktreeConversationMeta | null,
     cwd: string,
     sessionCreatedAfter: string | undefined,
+    configDir: string | undefined,
   ): Promise<ClaudeCliSession | null> {
-    const all = await this.deps.claude.listSessions(cwd);
+    const all = await this.deps.claude.listSessions(cwd, configDir);
     const sessions = sessionCreatedAfter
       ? all.filter((s) => s.lastSeenAt >= sessionCreatedAfter)
       : all;
@@ -256,7 +261,7 @@ export class ClaudeConversationService {
     }
 
     if (newest) {
-      return await this.deps.claude.readSession(newest.sessionId, cwd);
+      return await this.deps.claude.readSession(newest.sessionId, cwd, configDir);
     }
 
     if (savedSessionId) {

@@ -7,7 +7,7 @@
   import Toggle from "./Toggle.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import AgentEditorDialog from "./AgentEditorDialog.svelte";
-  import { api, fetchPreferences, updatePreferences } from "./api";
+  import { api, fetchPreferences, updatePreferences, updateProject } from "./api";
   import type { AgentSummary, UpdateUserPreferencesRequest, UserPreferences } from "./types";
 
   interface AgentEditorState {
@@ -26,10 +26,12 @@
     currentTheme,
     linearAutoCreate,
     autoRemoveOnMerge,
+    currentAccount,
     onthemechange,
     onlinearautocreatechange,
     onautoremovechange,
     onagentschange,
+    onaccountchange,
     onsave,
     onclose,
   }: {
@@ -37,10 +39,12 @@
     currentTheme: ThemeKey;
     linearAutoCreate: boolean;
     autoRemoveOnMerge: boolean;
+    currentAccount: string | undefined;
     onthemechange: (key: ThemeKey) => void;
     onlinearautocreatechange: (enabled: boolean) => void;
     onautoremovechange: (enabled: boolean) => void;
     onagentschange: (agents: AgentSummary[]) => void;
+    onaccountchange: (account: string | null) => void;
     onsave: (sshHost: string) => void;
     onclose: () => void;
   } = $props();
@@ -79,6 +83,20 @@
     prefs?.agents ? Object.entries(prefs.agents) : [],
   );
 
+  let accountEntries = $derived(
+    prefs?.accounts ? Object.entries(prefs.accounts) : [],
+  );
+
+  // Global tab — new account form
+  let newAccountName = $state("");
+  let newAccountConfigDir = $state("");
+  let accountAddError = $state<string | null>(null);
+
+  // Project tab — account select
+  let pendingAccount = $state<string | null>(null);
+  let selectedAccount = $derived<string>(pendingAccount ?? currentAccount ?? "");
+  let accountSaving = $state(false);
+
   let prefsLoaded = false;
 
   $effect(() => {
@@ -105,7 +123,10 @@
     }
   }
 
-  function buildUpdateBody(agentsOverride?: Record<string, { label: string; startCommand: string; resumeCommand?: string }>): UpdateUserPreferencesRequest {
+  function buildUpdateBody(
+    agentsOverride?: Record<string, { label: string; startCommand: string; resumeCommand?: string }>,
+    accountsOverride?: Record<string, { configDir: string }>,
+  ): UpdateUserPreferencesRequest {
     const body: UpdateUserPreferencesRequest = {};
     const trimmedDefault = defaultAgent.trim();
     if (trimmedDefault) body.defaultAgent = trimmedDefault;
@@ -114,6 +135,10 @@
     const agents = agentsOverride ?? prefs?.agents;
     if (agents && Object.keys(agents).length > 0) {
       body.agents = agents;
+    }
+    const accounts = accountsOverride !== undefined ? accountsOverride : prefs?.accounts;
+    if (accounts !== undefined) {
+      body.accounts = accounts;
     }
     const trimmedModel = autoNameModel.trim();
     const trimmedPrompt = autoNameSystemPrompt.trim();
@@ -171,6 +196,56 @@
       .finally(() => {
         pendingAutoRemove = null;
         autoRemoveSaving = false;
+      });
+  }
+
+  async function handleAddAccount(): Promise<void> {
+    const name = newAccountName.trim();
+    const configDir = newAccountConfigDir.trim();
+    if (!name || !configDir) {
+      accountAddError = "Both account name and config dir are required.";
+      return;
+    }
+    if (!prefs) return;
+    accountAddError = null;
+    const updatedAccounts = {
+      ...(prefs.accounts ?? {}),
+      [name]: { configDir },
+    };
+    try {
+      const payload = await updatePreferences(buildUpdateBody(undefined, updatedAccounts));
+      prefs = payload.preferences;
+      knownProfiles = payload.knownProfiles;
+      newAccountName = "";
+      newAccountConfigDir = "";
+    } catch (err) {
+      accountAddError = errorMessage(err);
+    }
+  }
+
+  async function handleDeleteAccount(name: string): Promise<void> {
+    if (!prefs) return;
+    const updatedAccounts = { ...(prefs.accounts ?? {}) };
+    delete updatedAccounts[name];
+    try {
+      const payload = await updatePreferences(buildUpdateBody(undefined, updatedAccounts));
+      prefs = payload.preferences;
+      knownProfiles = payload.knownProfiles;
+    } catch (err) {
+      prefsError = errorMessage(err);
+    }
+  }
+
+  function handleAccountChange(value: string): void {
+    pendingAccount = value;
+    accountSaving = true;
+    updateProject(projectId, { account: value || null })
+      .then((result) => {
+        onaccountchange(result.account ?? null);
+      })
+      .finally(() => {
+        pendingAccount = null;
+        accountSaving = false;
       });
   }
 
@@ -323,7 +398,7 @@
               onclick={() => selectTheme(theme.key)}
             >
               <span class="shrink-0 flex gap-0.5">
-                {#each [theme.colors.surface, theme.colors.accent, theme.colors.success, theme.colors.warning] as color}
+                {#each [theme.colors.surface, theme.colors.accent, theme.colors.success, theme.colors.warning] as color (color)}
                   <span class="w-3 h-3 rounded-full border border-edge" style="background:{color}"></span>
                 {/each}
               </span>
@@ -469,6 +544,62 @@
             {/if}
           </div>
         </div>
+
+        <!-- Claude accounts -->
+        <div class="mb-5">
+          <span class="block text-xs text-muted mb-2">Claude accounts</span>
+          <div class="rounded-lg border border-edge bg-surface/40 p-3">
+            <div class="mb-3">
+              <p class="text-[13px] text-primary">Accounts</p>
+              <p class="mt-0.5 text-[11px] text-muted">
+                Named Claude config directories (e.g. <code class="text-accent/80">~/.claude-work</code>). Assign one per project in the Project tab.
+              </p>
+            </div>
+
+            {#if accountEntries.length === 0}
+              <p class="text-[12px] text-muted mb-3">No accounts configured</p>
+            {:else}
+              <div class="space-y-2 mb-3">
+                {#each accountEntries as [name, acct] (name)}
+                  <div class="rounded-lg border border-edge bg-surface px-3 py-2.5">
+                    <div class="flex items-start justify-between gap-3">
+                      <div class="min-w-0 flex-1">
+                        <span class="text-[13px] text-primary">{name}</span>
+                        <p class="mt-1 text-[11px] text-muted font-mono break-all">{acct.configDir}</p>
+                      </div>
+                      <button
+                        type="button"
+                        class="shrink-0 text-[11px] text-danger hover:underline"
+                        onclick={() => { void handleDeleteAccount(name); }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+
+            <div class="space-y-2">
+              <input
+                type="text"
+                class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] placeholder:text-muted/50 outline-none focus:border-accent"
+                placeholder="Account name (e.g. work)"
+                bind:value={newAccountName}
+              />
+              <input
+                type="text"
+                class="w-full px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] placeholder:text-muted/50 outline-none focus:border-accent"
+                placeholder="Config dir (e.g. ~/.claude-work)"
+                bind:value={newAccountConfigDir}
+              />
+              {#if accountAddError}
+                <p class="text-[11px] text-danger">{accountAddError}</p>
+              {/if}
+              <Btn type="button" variant="cta" onclick={() => { void handleAddAccount(); }}>Add account</Btn>
+            </div>
+          </div>
+        </div>
       {/if}
 
       <!-- SSH host -->
@@ -533,8 +664,34 @@
         </div>
       </div>
 
+      <div class="mb-5">
+        <span class="block text-xs text-muted mb-2">Claude account</span>
+        <div class="flex items-center justify-between gap-3 px-3 py-2 rounded-md border border-edge bg-surface">
+          <div class="min-w-0 flex-1">
+            <span class="text-[13px] text-primary">Account</span>
+            <p class="text-[11px] text-muted mt-0.5">
+              Which Claude config directory to use for this project.
+            </p>
+          </div>
+          <select
+            class="px-2.5 py-1.5 rounded-md border border-edge bg-surface text-primary text-[13px] outline-none focus:border-accent disabled:opacity-60"
+            value={selectedAccount}
+            disabled={accountSaving}
+            onchange={(e) => handleAccountChange((e.currentTarget as HTMLSelectElement).value)}
+          >
+            <option value="">(default ~/.claude)</option>
+            {#each accountEntries as [name] (name)}
+              <option value={name}>{name}</option>
+            {/each}
+            {#if selectedAccount && !accountEntries.some(([n]) => n === selectedAccount)}
+              <option value={selectedAccount} disabled>(unknown) {selectedAccount}</option>
+            {/if}
+          </select>
+        </div>
+      </div>
+
       <p class="text-[11px] text-muted">
-        Linear and GitHub toggles save automatically. There's nothing else to save here.
+        Linear, GitHub, and account selects save automatically. There's nothing else to save here.
       </p>
 
       <div class="flex justify-end gap-2 mt-5">

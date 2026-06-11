@@ -30,6 +30,8 @@ Usage:
   webmux send         Send a prompt to a running worktree agent
   webmux prune        Remove all worktrees in the current project
   webmux completion   Generate shell completion script (bash, zsh)
+  webmux accounts     Manage Claude accounts (list, add, rm)
+  webmux account      Set or clear the Claude account for the current project
 
 Options:
   --port N            Set port (default: 5111)
@@ -43,7 +45,7 @@ Environment:
 `);
 }
 
-type RootCommand = "serve" | "init" | "service" | "update" | "add" | "list" | "open" | "close" | "archive" | "unarchive" | "remove" | "merge" | "send" | "prune" | "completion" | null;
+type RootCommand = "serve" | "init" | "service" | "update" | "add" | "list" | "open" | "close" | "archive" | "unarchive" | "remove" | "merge" | "send" | "prune" | "completion" | "accounts" | "account" | null;
 
 interface ParsedRootArgs {
   port: number;
@@ -68,7 +70,9 @@ function isRootCommand(value: string): value is NonNullable<RootCommand> {
     || value === "merge"
     || value === "send"
     || value === "prune"
-    || value === "completion";
+    || value === "completion"
+    || value === "accounts"
+    || value === "account";
 }
 
 function isServeRootOption(value: string): boolean {
@@ -298,6 +302,17 @@ async function main(args: string[] = process.argv.slice(2)): Promise<void> {
   if (isWorktreeCommand(parsed.command)) {
     const { runWorktreeCommand } = await import("./worktree-commands.ts");
     const exitCode = await runWorktreeCommand({
+      command: parsed.command,
+      args: parsed.commandArgs,
+      projectDir: process.cwd(),
+      port: parsed.port,
+    });
+    process.exit(exitCode);
+  }
+
+  if (parsed.command === "accounts" || parsed.command === "account") {
+    const { runAccountCommand } = await import("./account-commands.ts");
+    const exitCode = await runAccountCommand({
       command: parsed.command,
       args: parsed.commandArgs,
       projectDir: process.cwd(),
