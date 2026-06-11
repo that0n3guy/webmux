@@ -39,6 +39,8 @@ import {
   CreateProjectRequestSchema,
   CreateProjectResponseSchema,
   RemoveProjectRequestSchema,
+  UpdateProjectRequestSchema,
+  UpdateProjectResponseSchema,
   OpenWorktreeRequestSchema,
   UpdateWorktreeRequestSchema,
   UpdateUserPreferencesRequestSchema,
@@ -56,6 +58,7 @@ export const apiPaths = {
   fetchProjects: "/api/projects",
   createProject: "/api/projects",
   removeProject: "/api/projects/:projectId",
+  updateProject: "/api/projects/:projectId",
   fetchAvailableBranches: "/api/projects/:projectId/branches",
   fetchBaseBranches: "/api/projects/:projectId/base-branches",
   fetchProject: "/api/projects/:projectId/project",
@@ -169,6 +172,16 @@ export const apiContract = c.router({
     body: RemoveProjectRequestSchema,
     responses: {
       200: OkResponseSchema,
+      ...commonErrorResponses,
+    },
+  },
+  updateProject: {
+    method: "PATCH",
+    path: apiPaths.updateProject,
+    pathParams: ProjectIdParamsSchema,
+    body: UpdateProjectRequestSchema,
+    responses: {
+      200: UpdateProjectResponseSchema,
       ...commonErrorResponses,
     },
   },

@@ -545,6 +545,7 @@ export const ProjectInfoSchema = z.object({
   addedAt: z.string().datetime(),
   mainBranch: z.string(),
   defaultAgent: z.string(),
+  account: z.string().optional(),
 });
 
 export const ProjectListResponseSchema = z.object({
@@ -557,6 +558,14 @@ export const CreateProjectRequestSchema = z.object({
 });
 
 export const CreateProjectResponseSchema = z.object({
+  project: ProjectInfoSchema,
+});
+
+export const UpdateProjectRequestSchema = z.object({
+  account: z.string().nullable(),
+});
+
+export const UpdateProjectResponseSchema = z.object({
   project: ProjectInfoSchema,
 });
 
@@ -606,6 +615,10 @@ export const UserPreferencesSidebarSchema = z.object({
   itemOrder: z.array(z.string()).optional(),
 });
 
+export const UserPreferencesAccountSchema = z.object({
+  configDir: z.string().min(1),
+});
+
 export const UserPreferencesSchema = z.object({
   schemaVersion: z.number(),
   defaultAgent: AgentIdSchema.optional(),
@@ -615,6 +628,7 @@ export const UserPreferencesSchema = z.object({
     startCommand: z.string(),
     resumeCommand: z.string().optional(),
   })).optional(),
+  accounts: z.record(z.string(), UserPreferencesAccountSchema).optional(),
   autoName: UserPreferencesAutoNameSchema.optional(),
   sidebar: UserPreferencesSidebarSchema.optional(),
 });
@@ -702,12 +716,15 @@ export type ProjectInfo = z.infer<typeof ProjectInfoSchema>;
 export type ProjectListResponse = z.infer<typeof ProjectListResponseSchema>;
 export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;
 export type CreateProjectResponse = z.infer<typeof CreateProjectResponseSchema>;
+export type UpdateProjectRequest = z.infer<typeof UpdateProjectRequestSchema>;
+export type UpdateProjectResponse = z.infer<typeof UpdateProjectResponseSchema>;
 export type RemoveProjectRequest = z.infer<typeof RemoveProjectRequestSchema>;
 export type OpenWorktreeRequest = z.infer<typeof OpenWorktreeRequestSchema>;
 export type UpdateWorktreeRequest = z.infer<typeof UpdateWorktreeRequestSchema>;
 export type ExternalSessionNameParams = z.infer<typeof ExternalSessionNameParamsSchema>;
 export type UserPreferencesAutoName = z.infer<typeof UserPreferencesAutoNameSchema>;
 export type UserPreferencesSidebar = z.infer<typeof UserPreferencesSidebarSchema>;
+export type UserPreferencesAccount = z.infer<typeof UserPreferencesAccountSchema>;
 export type UserPreferences = z.infer<typeof UserPreferencesSchema>;
 export type UpdateUserPreferencesRequest = z.infer<typeof UpdateUserPreferencesRequestSchema>;
 export type UserPreferencesResponse = z.infer<typeof UserPreferencesResponseSchema>;
