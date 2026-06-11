@@ -68,9 +68,21 @@ projects:
 - `load()` reads it into the in-memory `meta` map (alongside `name`).
 - `buildInfo()` surfaces `account` onto `ProjectInfo`.
 - New registry method `setAccount(projectId: string, account: string | null): void`
-  that updates `meta`, persists, and refreshes the scope's resolved config dir.
+  that updates `meta`, persists, and pushes the new account onto the scope.
 
-`ProjectInfo` in `@webmux/api-contract` gains `account?: string`.
+**Scope cannot currently reach the account.** `ProjectScopeDeps` holds a
+preferences snapshot but no account, and registry `meta` today stores only
+`addedAt`/`name` (project-scope.ts:23, project-registry.ts:62). So the registry
+must thread `account` into the scope at construction and update it on `setAccount`.
+Concretely: add a mutable `account` holder to the scope (mirroring how it already
+holds a refreshable preferences snapshot, project-scope.ts:58/:129), set it from
+`meta.account` when the scope is created/loaded, and have `setAccount` update both
+the registry `meta` and the live scope holder.
+
+`ProjectInfo` in `@webmux/api-contract` gains `account?: string`. The contract
+schemas also need updating: `UserPreferencesSchema` gains `accounts`,
+`ProjectInfoSchema` gains `account` (schemas.ts ~L541/:609), and a new
+project-account PATCH route is added (contract.ts ~L51) — none of these exist yet.
 
 ## Resolution + injection
 
@@ -89,10 +101,12 @@ resolveAccountConfigDir(
   absolute path**.
 
 **Why absolute-path expansion is required:** `renderEnvFile` runs every value
-through `quoteEnvValue` (`backend/src/adapters/fs.ts:28`), which wraps anything
-containing `~`/`/` in single quotes. The pane sources the file via
+through `quoteEnvValue` (`backend/src/adapters/fs.ts:28`). A leading `~` is **not**
+in `SAFE_ENV_VALUE_RE`, so `~/.claude-work` gets single-quoted (note: `/` *is* safe,
+so a fully-absolute path is written unquoted). The pane sources the file via
 `set -a; . runtime.env; set +a`, and a single-quoted `~` does **not** undergo tilde
-expansion. Resolving to an absolute path in the backend avoids this entirely.
+expansion. Resolving to an absolute path in the backend sidesteps the quoting, so
+the env file always holds a literal usable path.
 
 Lives in a shared lib module so both the resolver and any UI/CLI display logic can
 import it. Backend-only at runtime (CLI reaches it through the API).
@@ -100,7 +114,7 @@ import it. Backend-only at runtime (CLI reaches it through the API).
 ### Injection site
 
 `backend/src/services/lifecycle-service.ts` `refreshManagedArtifactsFromMeta`
-(~line 658) is the single place `runtime.env` is built:
+(~line 658) is the primary place `runtime.env` is built:
 
 ```ts
 const runtimeEnv = buildRuntimeEnvMap(input.meta, {
@@ -109,9 +123,21 @@ const runtimeEnv = buildRuntimeEnvMap(input.meta, {
 }, dotenvValues);
 ```
 
-`configDir` is obtained from a new lifecycle dep `getClaudeConfigDir(): string | undefined`,
-supplied by the project scope (the scope knows its `account` from the registry and
-holds the current preferences snapshot, so it resolves via `resolveAccountConfigDir`).
+`configDir` is obtained from a new lifecycle dep `getClaudeConfigDir(): string | undefined`.
+It cannot come "from the meta" — the scope resolves it from its **account** (threaded
+in from the registry, see Data model) plus its live preferences snapshot, via
+`resolveAccountConfigDir`. Because it's a getter (not a stored value), the
+`PUT /api/preferences` refresh loop that already re-pushes preferences to every scope
+(server.ts ~L1525-1534) makes a changed `configDir` take effect on the next launch
+with no extra wiring.
+
+**Cover every `runtime.env` write site, not just the managed one.** Adoption of an
+unmanaged worktree goes through `openWorktree` → `initializeUnmanagedWorktree` →
+`initializeManagedWorktree`, which writes runtime env with only `WEBMUX_WORKTREE_PATH`
+as the extra (lifecycle-service.ts ~L249/:623/:631). The second `buildRuntimeEnvMap`
+callsite (~L940) is likewise in scope. To avoid a missed path, fold the
+`CLAUDE_CONFIG_DIR` extra into a single helper that every `buildRuntimeEnvMap` caller
+in this service uses, rather than patching one callsite.
 
 The value lands in `runtime.env`, which is sourced by every pane in the worktree.
 This is intentional and is still "Claude only" in effect: only the `claude` binary
@@ -119,6 +145,35 @@ reads `CLAUDE_CONFIG_DIR` (codex reads `CODEX_HOME`; shells ignore it), so a `cl
 launched by hand in a shell pane also picks up the right account. Injection is
 therefore gated only on "project has an account assigned", not on
 `meta.agent === "claude"`.
+
+## Conversation history must be account-aware (required for the feature to work)
+
+Launching under a different `CLAUDE_CONFIG_DIR` is only half the feature. Claude
+writes its session `.jsonl` files under `<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/`,
+but webmux's session discovery hard-codes the **default** dir:
+
+- `backend/src/adapters/claude-cli.ts:177` — `readClaudeProjectsRoot()` returns
+  `join(home, ".claude", "projects")`, used by `findClaudeSessionPath` /
+  `listSessions` / `readSession` / `getSessionMtime`.
+- `backend/src/services/claude-conversation-service.ts:247` — `listSessions(cwd)` is
+  called with only the worktree cwd.
+
+If left as-is, a project using a non-default account would launch Claude correctly
+but show an **empty chat-history panel** (webmux reads `~/.claude/projects` while
+Claude wrote to `~/.claude-work/projects`). So the session-resolution path must also
+be account-aware:
+
+- `readClaudeProjectsRoot` (and the `ClaudeCliGateway` session methods that call it)
+  take an optional `configDir` and resolve `<configDir>/projects` when present, else
+  fall back to `$HOME/.claude/projects`.
+- `claude-conversation-service.ts` threads the same resolved `configDir` (obtained the
+  same way as the launch path — from the scope's account + preferences) into those
+  calls. This keeps the AGENTS.md "always pick newest session for the cwd" behavior;
+  it only changes **which root** is scanned.
+
+The resolved-configDir value is the same one used for injection, so it should be
+exposed once on the scope and consumed by both the lifecycle (launch) and the
+conversation service (history).
 
 ## API contract
 
@@ -170,7 +225,12 @@ project-scoped CLI commands do.
 - **Registry:** persist/load `account`; `setAccount` updates + persists;
   `PATCH /api/projects/:id` handler.
 - **Injection:** worktree whose project has an account → `CLAUDE_CONFIG_DIR` present
-  (and absolute) in the built runtime env map; no account → absent.
+  (and absolute) in the built runtime env map; no account → absent. Cover both the
+  managed-create path and the unmanaged-adoption path.
+- **Session discovery:** `readClaudeProjectsRoot(configDir)` returns
+  `<configDir>/projects` when given a dir, `$HOME/.claude/projects` when not; the
+  conversation service scans the account's projects root when the project has an
+  account.
 - **CLI:** parsing + handler for each new command (mock the API boundary with typed
   stubs).
 
@@ -191,3 +251,9 @@ project-scoped CLI commands do.
 - The `PUT /api/preferences` refresh loop re-resolves the config dir for all scopes.
 - No `TmuxGateway` interface method is added, so the FakeTmuxGateway stub fan-out
   does not apply.
+- **Session discovery is account-aware** — launching under a non-default
+  `CLAUDE_CONFIG_DIR` without updating `readClaudeProjectsRoot` would silently break
+  the chat-history panel. Both the launch path and the conversation service consume
+  the same resolved configDir.
+- The project **scope** doesn't currently know its account; the registry threads it in
+  and updates it on `setAccount` (it is not derivable from `WorktreeMeta`).
