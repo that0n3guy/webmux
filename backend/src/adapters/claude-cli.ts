@@ -67,9 +67,9 @@ export interface ClaudeCliRunHandle {
 }
 
 export interface ClaudeCliGateway {
-  listSessions(cwd: string): Promise<ClaudeCliSessionSummary[]>;
-  readSession(sessionId: string, cwd: string): Promise<ClaudeCliSession | null>;
-  getSessionMtime(sessionId: string, cwd: string): Promise<Date | null>;
+  listSessions(cwd: string, configDir?: string): Promise<ClaudeCliSessionSummary[]>;
+  readSession(sessionId: string, cwd: string, configDir?: string): Promise<ClaudeCliSession | null>;
+  getSessionMtime(sessionId: string, cwd: string, configDir?: string): Promise<Date | null>;
   sendMessage(
     params: {
       cwd: string;
@@ -168,12 +168,12 @@ export function encodeClaudeProjectDir(cwd: string): string {
   return cwd.replace(/[^A-Za-z0-9]/g, "-");
 }
 
-function readClaudeProjectsRoot(): string {
+export function resolveClaudeProjectsRoot(configDir?: string): string {
+  if (configDir) return join(configDir, "projects");
   const home = Bun.env.HOME;
   if (!home) {
     throw new Error("HOME is required to resolve Claude sessions");
   }
-
   return join(home, ".claude", "projects");
 }
 
@@ -188,8 +188,8 @@ async function listJsonlFiles(dir: string): Promise<string[]> {
   }
 }
 
-async function findClaudeSessionPath(sessionId: string, cwd: string): Promise<string | null> {
-  const projectsRoot = readClaudeProjectsRoot();
+async function findClaudeSessionPath(sessionId: string, cwd: string, configDir?: string): Promise<string | null> {
+  const projectsRoot = resolveClaudeProjectsRoot(configDir);
   const primaryPath = join(projectsRoot, encodeClaudeProjectDir(cwd), `${sessionId}.jsonl`);
   try {
     await stat(primaryPath);
@@ -497,8 +497,8 @@ export function buildClaudeSessionFromText(
 }
 
 export class ClaudeCliClient implements ClaudeCliGateway {
-  async listSessions(cwd: string): Promise<ClaudeCliSessionSummary[]> {
-    const projectsRoot = readClaudeProjectsRoot();
+  async listSessions(cwd: string, configDir?: string): Promise<ClaudeCliSessionSummary[]> {
+    const projectsRoot = resolveClaudeProjectsRoot(configDir);
     const primaryDir = join(projectsRoot, encodeClaudeProjectDir(cwd));
     const primaryFiles = await listJsonlFiles(primaryDir);
     if (primaryFiles.length > 0) {
@@ -521,14 +521,14 @@ export class ClaudeCliClient implements ClaudeCliGateway {
     return await this.summarizeSessionFiles(matchedFiles, cwd);
   }
 
-  async readSession(sessionId: string, cwd: string): Promise<ClaudeCliSession | null> {
-    const filePath = await findClaudeSessionPath(sessionId, cwd);
+  async readSession(sessionId: string, cwd: string, configDir?: string): Promise<ClaudeCliSession | null> {
+    const filePath = await findClaudeSessionPath(sessionId, cwd, configDir);
     if (!filePath) return null;
     return await this.readSessionFile(filePath);
   }
 
-  async getSessionMtime(sessionId: string, cwd: string): Promise<Date | null> {
-    const filePath = await findClaudeSessionPath(sessionId, cwd);
+  async getSessionMtime(sessionId: string, cwd: string, configDir?: string): Promise<Date | null> {
+    const filePath = await findClaudeSessionPath(sessionId, cwd, configDir);
     if (!filePath) return null;
     const info = await stat(filePath).catch(() => null);
     return info ? info.mtime : null;
