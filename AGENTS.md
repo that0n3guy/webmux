@@ -96,6 +96,10 @@ External (unmanaged) tmux sessions surfaced under "External tmux" are always she
 
 A Claude `.jsonl` session in `~/.claude/projects/<encoded-cwd>/` is **not stable for a given cwd**. After `/quit` + resume (or some other CLI events), Claude writes to a new `<sessionId>.jsonl` even though the cwd is the same. `claude-conversation-service.ts` always picks `listSessions(cwd)[0]` (newest by `lastSeenAt`) and updates `meta.conversation.sessionId` if it rotated. Don't trust a saved sessionId without checking it's still the most recent — or you'll diverge from xterm reality.
 
+### Claude accounts are per-project via CLAUDE_CONFIG_DIR
+
+Named accounts live in `preferences.yaml` (`accounts: { <name>: { configDir } }`); a project picks one via `account:` in `projects.yaml` (the registry). The resolved (tilde-expanded, absolute) dir is exposed by `scope.getClaudeConfigDir()` and is used in **two places**: injected as `CLAUDE_CONFIG_DIR` into the worktree `runtime.env` (via `withClaudeConfigDir` in `lifecycle-service.ts`), and to locate Claude session `.jsonl` files (`resolveClaudeProjectsRoot(configDir)` in `claude-cli.ts`). The conversation service is a global singleton, so the configDir is threaded **per call** from `server.ts` (where the project `scope` is known), not wired at construction. If you add a new place that launches Claude or reads Claude sessions, thread `scope.getClaudeConfigDir()` through it — otherwise that surface silently uses the default `~/.claude`.
+
 ### Ctrl-C interrupt doesn't fire Claude lifecycle hooks
 
 The agent CLI hooks only fire on `UserPromptSubmit`, `PostToolUse`, `Stop`, and `Notification`. A `Ctrl-C` interrupt cancels Claude's operation but doesn't trigger any of these — so `state.agent.lifecycle` stays at whatever it was (usually `"running"`) forever. The interrupt API handler in `server.ts` must manually emit `applyEvent({ type: "agent_status_changed", lifecycle: "stopped", ... })` after sending Ctrl-C so the snapshot reflects reality.
