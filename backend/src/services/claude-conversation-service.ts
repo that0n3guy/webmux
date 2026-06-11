@@ -35,7 +35,6 @@ export interface ClaudeConversationServiceDependencies {
   now?: () => Date;
   readMeta?: (gitDir: string) => Promise<WorktreeMeta | null>;
   writeMeta?: (gitDir: string, meta: WorktreeMeta) => Promise<void>;
-  getClaudeConfigDir?: () => string | undefined;
 }
 
 interface ResolvedClaudeConversation {
@@ -250,8 +249,7 @@ export class ClaudeConversationService {
     sessionCreatedAfter: string | undefined,
     configDir: string | undefined,
   ): Promise<ClaudeCliSession | null> {
-    const effectiveConfigDir = configDir ?? this.deps.getClaudeConfigDir?.();
-    const all = await this.deps.claude.listSessions(cwd, effectiveConfigDir);
+    const all = await this.deps.claude.listSessions(cwd, configDir);
     const sessions = sessionCreatedAfter
       ? all.filter((s) => s.lastSeenAt >= sessionCreatedAfter)
       : all;
@@ -263,7 +261,7 @@ export class ClaudeConversationService {
     }
 
     if (newest) {
-      return await this.deps.claude.readSession(newest.sessionId, cwd, effectiveConfigDir);
+      return await this.deps.claude.readSession(newest.sessionId, cwd, configDir);
     }
 
     if (savedSessionId) {
