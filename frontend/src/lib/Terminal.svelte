@@ -426,6 +426,29 @@
       return true;
     });
 
+    // Mouse wheel over a full-screen TUI (Claude Code) that has enabled mouse
+    // tracking: xterm would forward the wheel down the pipe, where tmux's own
+    // `mouse on` swallows it into copy-mode ([0/0]) instead of scrolling. The
+    // alternate screen has no xterm scrollback of its own, so translate the
+    // wheel into PageUp/PageDown key input — plain keys pass through tmux
+    // straight to the app, which scrolls its transcript. On the normal screen
+    // (e.g. shell panes), return true so xterm scrolls its local buffer.
+    let wheelRemainder = 0;
+    term.attachCustomWheelEventHandler((e: WheelEvent) => {
+      if (term.buffer.active.type !== "alternate") return true;
+      if (ws?.readyState !== WebSocket.OPEN) return false;
+      const lines =
+        e.deltaMode === WheelEvent.DOM_DELTA_PIXEL ? e.deltaY / 100 : e.deltaY;
+      wheelRemainder += lines;
+      const steps = Math.trunc(wheelRemainder);
+      if (steps !== 0) {
+        wheelRemainder -= steps;
+        const key = steps < 0 ? "\x1b[5~" : "\x1b[6~"; // PageUp : PageDown
+        ws.send(JSON.stringify({ type: "input", data: key.repeat(Math.min(Math.abs(steps), 10)) }));
+      }
+      return false;
+    });
+
     requestAnimationFrame(() => {
       fitAddon.fit();
       term.focus();
