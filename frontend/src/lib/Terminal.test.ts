@@ -20,10 +20,15 @@ const { MockFitAddon, MockTerminal } = vi.hoisted(() => {
     cols = 80;
     rows = 24;
     modes = { mouseTrackingMode: "none" };
+    buffer = { active: { type: "normal" as "normal" | "alternate" } };
+    wheelHandler: ((e: WheelEvent) => boolean) | null = null;
     parser = { registerOscHandler: vi.fn(() => true) };
     loadAddon = vi.fn();
     onSelectionChange = vi.fn();
     attachCustomKeyEventHandler = vi.fn();
+    attachCustomWheelEventHandler = vi.fn((handler: (e: WheelEvent) => boolean) => {
+      this.wheelHandler = handler;
+    });
     focus = vi.fn();
     writeln = vi.fn();
     write = vi.fn();
@@ -187,6 +192,32 @@ describe("Terminal reconnect", () => {
     document.dispatchEvent(new Event("visibilitychange"));
 
     expect(MockWebSocket.instances).toHaveLength(2);
+  });
+
+  it("translates wheel into PageUp/PageDown on the alternate screen, but not the normal screen", () => {
+    render(Terminal, { props: { selection: { kind: "worktree" as const, projectId: "test1234", branch: "feature/wheel" }, terminalTheme: getTheme("github-dark").terminal } });
+
+    const socket = MockWebSocket.instances[0]!;
+    socket.emitOpen();
+    socket.sent.length = 0;
+
+    const terminal = MockTerminal.instances[0]!;
+    const handler = terminal.wheelHandler!;
+    expect(handler).toBeTypeOf("function");
+
+    // Normal screen (shell): let xterm handle its own local scrollback.
+    terminal.buffer.active.type = "normal";
+    expect(handler(new WheelEvent("wheel", { deltaY: -100, deltaMode: WheelEvent.DOM_DELTA_PIXEL }))).toBe(true);
+    expect(socket.sent).toHaveLength(0);
+
+    // Alternate screen (full-screen TUI): forward as PageUp / PageDown keys.
+    terminal.buffer.active.type = "alternate";
+    expect(handler(new WheelEvent("wheel", { deltaY: -100, deltaMode: WheelEvent.DOM_DELTA_PIXEL }))).toBe(false);
+    expect(handler(new WheelEvent("wheel", { deltaY: 100, deltaMode: WheelEvent.DOM_DELTA_PIXEL }))).toBe(false);
+    expect(socket.sent).toEqual([
+      '{"type":"input","data":"\\u001b[5~"}',
+      '{"type":"input","data":"\\u001b[6~"}',
+    ]);
   });
 
   it("applies theme updates to the terminal instance", async () => {
