@@ -4,6 +4,7 @@ import {
   cleanupStaleSessions,
   detach,
   interruptPrompt,
+  resize,
   sendPrompt,
   setTerminalAdapterDependenciesForTests,
 } from "../adapters/terminal";
@@ -132,6 +133,50 @@ describe("terminal adapter", () => {
     expect(new Set(afterAttach).size).toBe(2);
     expect(afterFirstDetach).toHaveLength(1);
     expect(afterSecondDetach).toHaveLength(0);
+  });
+
+  it("re-attaches at the new size on resize so the client PTY is resized", async () => {
+    const spawnedCmds: string[] = [];
+    const managedSessions = new Set<string>();
+    let nextPid = 2000;
+
+    setTerminalAdapterDependenciesForTests({
+      spawnPtyProcess: (args) => {
+        spawnedCmds.push(args.join(" "));
+        const groupedSessionName = extractGroupedSessionName(args);
+        managedSessions.add(groupedSessionName);
+        return createFakePtyProcess(nextPid++, () => {
+          managedSessions.delete(groupedSessionName);
+        });
+      },
+      spawnSyncCommand: (args) => {
+        if (args[0] === "tmux" && args[1] === "list-sessions") {
+          return { exitCode: 0, stdout: encode([...managedSessions].join("\n")), stderr: encode("") };
+        }
+        if (args[0] === "tmux" && args[1] === "kill-session") {
+          const name = args[3];
+          if (name && managedSessions.delete(name)) {
+            return { exitCode: 0, stdout: encode(""), stderr: encode("") };
+          }
+          return { exitCode: 1, stdout: encode(""), stderr: encode("can't find session") };
+        }
+        return { exitCode: 0, stdout: encode(""), stderr: encode("") };
+      },
+    });
+
+    await attach("attach-a", { ownerSessionName: "owner", windowName: "wm-feature/search" }, 80, 24);
+    expect(spawnedCmds).toHaveLength(1);
+    expect(spawnedCmds[0]).toContain("stty rows 24 cols 80");
+
+    await resize("attach-a", 200, 50);
+
+    // A resize must spawn a fresh attach whose PTY is sized to the new dimensions,
+    // not merely call resize-window (which leaves the client PTY — and thus the
+    // browser's newly exposed area — unpainted).
+    expect(spawnedCmds).toHaveLength(2);
+    expect(spawnedCmds[1]).toContain("stty rows 50 cols 200");
+    // The stale grouped session from the first attach is torn down.
+    expect(managedSessions.size).toBe(1);
   });
 
   it("sends ctrl-c to the target pane when interrupting a prompt", async () => {

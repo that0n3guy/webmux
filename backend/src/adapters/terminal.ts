@@ -40,11 +40,20 @@ interface TerminalSession {
   proc: PtyProcess;
   groupedSessionName: string;
   windowName: string;
+  attachTarget: TerminalAttachTarget;
+  initialPane: number | undefined;
   scrollback: string[];
   scrollbackBytes: number;
   onData: ((data: string) => void) | null;
   onExit: ((exitCode: number) => void) | null;
   cancelled: boolean;
+}
+
+interface PreservedSessionState {
+  scrollback: string[];
+  scrollbackBytes: number;
+  onData: ((data: string) => void) | null;
+  onExit: ((exitCode: number) => void) | null;
 }
 
 interface AttachCmdOptions {
@@ -221,13 +230,28 @@ export async function attach(
   initialPane?: number
 ): Promise<void> {
   log.debug(`[term] attach(${attachId}) cols=${cols} rows=${rows} existing=${sessions.has(attachId)}`);
+  await launchAttachedSession(attachId, target, cols, rows, initialPane, null);
+}
+
+/** Spawn a fresh grouped tmux attach for `target` at the given size and wire up
+ *  its I/O. When `preserved` is supplied (a resize re-attach), the accumulated
+ *  scrollback and callbacks carry over so the browser keeps its history and
+ *  stream without a reconnect. */
+async function launchAttachedSession(
+  attachId: string,
+  target: TerminalAttachTarget,
+  cols: number,
+  rows: number,
+  initialPane: number | undefined,
+  preserved: PreservedSessionState | null,
+): Promise<void> {
   if (sessions.has(attachId)) {
     await detach(attachId);
   }
 
   const gName = groupedName();
   log.debug(
-    `[term] attach(${attachId}) ownerSession=${target.ownerSessionName} gName=${gName} window=${target.windowName}`,
+    `[term] launch(${attachId}) ownerSession=${target.ownerSessionName} gName=${gName} window=${target.windowName} cols=${cols} rows=${rows}`,
   );
 
   // Kill stale session with same name if it exists (leftover from previous server run)
@@ -248,15 +272,17 @@ export async function attach(
     proc,
     groupedSessionName: gName,
     windowName: target.windowName,
-    scrollback: [],
-    scrollbackBytes: 0,
-    onData: null,
-    onExit: null,
+    attachTarget: target,
+    initialPane,
+    scrollback: preserved?.scrollback ?? [],
+    scrollbackBytes: preserved?.scrollbackBytes ?? 0,
+    onData: preserved?.onData ?? null,
+    onExit: preserved?.onExit ?? null,
     cancelled: false,
   };
 
   sessions.set(attachId, session);
-  log.debug(`[term] attach(${attachId}) spawned pid=${proc.pid}`);
+  log.debug(`[term] launch(${attachId}) spawned pid=${proc.pid}`);
 
   // Read stdout → push to scrollback + callback
   (async () => {
@@ -350,9 +376,17 @@ export async function sendKeys(attachId: string, hexBytes: string[]): Promise<vo
 export async function resize(attachId: string, cols: number, rows: number): Promise<void> {
   const session = sessions.get(attachId);
   if (!session) return;
-  const windowTarget = `${session.groupedSessionName}:${session.windowName}`;
-  const result = await tmuxExec(["tmux", "resize-window", "-t", windowTarget, "-x", String(cols), "-y", String(rows)]);
-  if (result.exitCode !== 0) log.warn(`[term] resize failed: ${result.stderr}`);
+  // Re-attach at the new size rather than `resize-window`. webmux does not own the
+  // client's PTY (it's created by the `script`/python wrapper), so it cannot resize
+  // the tmux client directly. `resize-window` grows the window but the client keeps
+  // painting at its original PTY size, leaving the browser's newly exposed area blank.
+  // A fresh attach re-runs `stty` at the new size, re-syncing the client PTY.
+  await launchAttachedSession(attachId, session.attachTarget, cols, rows, session.initialPane, {
+    scrollback: session.scrollback,
+    scrollbackBytes: session.scrollbackBytes,
+    onData: session.onData,
+    onExit: session.onExit,
+  });
 }
 
 export function getScrollback(attachId: string): string {
