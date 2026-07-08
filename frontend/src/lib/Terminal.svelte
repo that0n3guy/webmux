@@ -315,11 +315,15 @@
       nextWs.send(buildResizeMessage());
     };
 
-    nextWs.onclose = () => {
+    nextWs.onclose = (event: CloseEvent) => {
       if (ws !== nextWs) return;
       ws = null;
       if (destroyed) return;
       term.writeln(DISCONNECTED_NOTICE);
+      // 1011 = server rejected the session deliberately (e.g. worktree removed).
+      // The server accepts the upgrade before failing, so onopen resets the
+      // retry guard every cycle — retrying would loop forever.
+      if (event.code === 1011) return;
       if (!document.hidden && canRetryVisibleClose) {
         canRetryVisibleClose = false;
         connect(true);

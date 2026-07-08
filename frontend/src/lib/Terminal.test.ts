@@ -177,6 +177,16 @@ describe("Terminal reconnect", () => {
     expect(MockWebSocket.instances).toHaveLength(2);
   });
 
+  it("does not auto-reconnect after a server error close (1011)", () => {
+    render(Terminal, { props: { selection: { kind: "worktree" as const, projectId: "test1234", branch: "issues/crews-files" }, terminalTheme: getTheme("github-dark").terminal } });
+
+    const firstSocket = MockWebSocket.instances[0]!;
+    firstSocket.emitOpen();
+    firstSocket.emitClose(1011, "Worktree not found: issues/crews-files");
+
+    expect(MockWebSocket.instances).toHaveLength(1);
+  });
+
   it("waits for the tab to become visible before reconnecting hidden closes", () => {
     render(Terminal, { props: { selection: { kind: "worktree" as const, projectId: "test1234", branch: "feature/visible" }, terminalTheme: getTheme("github-dark").terminal } });
 
