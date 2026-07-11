@@ -204,30 +204,19 @@ describe("Terminal reconnect", () => {
     expect(MockWebSocket.instances).toHaveLength(2);
   });
 
-  it("translates wheel into PageUp/PageDown on the alternate screen, but not the normal screen", () => {
+  it("leaves mouse wheel to xterm so tmux receives real mouse events", () => {
     render(Terminal, { props: { selection: { kind: "worktree" as const, projectId: "test1234", branch: "feature/wheel" }, terminalTheme: getTheme("github-dark").terminal } });
 
     const socket = MockWebSocket.instances[0]!;
     socket.emitOpen();
     socket.sent.length = 0;
 
+    // No custom wheel handler: tmux enables mouse tracking on the outer
+    // terminal, so xterm forwards wheel as mouse events and tmux routes them
+    // per-pane (forward to mouse-aware apps, copy-mode for inline apps).
     const terminal = MockTerminal.instances[0]!;
-    const handler = terminal.wheelHandler!;
-    expect(handler).toBeTypeOf("function");
-
-    // Normal screen (shell): let xterm handle its own local scrollback.
-    terminal.buffer.active.type = "normal";
-    expect(handler(new WheelEvent("wheel", { deltaY: -100, deltaMode: WheelEvent.DOM_DELTA_PIXEL }))).toBe(true);
+    expect(terminal.wheelHandler).toBeNull();
     expect(socket.sent).toHaveLength(0);
-
-    // Alternate screen (full-screen TUI): forward as PageUp / PageDown keys.
-    terminal.buffer.active.type = "alternate";
-    expect(handler(new WheelEvent("wheel", { deltaY: -100, deltaMode: WheelEvent.DOM_DELTA_PIXEL }))).toBe(false);
-    expect(handler(new WheelEvent("wheel", { deltaY: 100, deltaMode: WheelEvent.DOM_DELTA_PIXEL }))).toBe(false);
-    expect(socket.sent).toEqual([
-      '{"type":"input","data":"\\u001b[5~"}',
-      '{"type":"input","data":"\\u001b[6~"}',
-    ]);
   });
 
   it("applies theme updates to the terminal instance", async () => {
