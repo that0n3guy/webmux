@@ -58,6 +58,41 @@ export interface ProjectRegistry {
 
 const DEFAULT_REGISTRY_PATH = join(Bun.env.HOME ?? "/tmp", ".config", "webmux", "projects.yaml");
 
+/**
+ * Lightweight synchronous lookup of a registered project's `account` from projects.yaml,
+ * without constructing a full ProjectRegistry. Used by CLI entry points that need the
+ * account before they have a running registry (e.g. worktree commands).
+ */
+export function readRegisteredAccount(projectId: string, registryPath: string = DEFAULT_REGISTRY_PATH): string | undefined {
+  if (!existsSync(registryPath)) return undefined;
+  let raw: string;
+  try {
+    raw = readFileSync(registryPath, "utf-8");
+  } catch {
+    return undefined;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(raw);
+  } catch {
+    return undefined;
+  }
+
+  if (!parsed || typeof parsed !== "object") return undefined;
+  const maybeProjects = (parsed as { projects?: unknown }).projects;
+  if (!Array.isArray(maybeProjects)) return undefined;
+
+  for (const entry of maybeProjects) {
+    if (!entry || typeof entry !== "object") continue;
+    const { id, account } = entry as { id?: unknown; account?: unknown };
+    if (id === projectId) {
+      return typeof account === "string" ? account : undefined;
+    }
+  }
+  return undefined;
+}
+
 export function createProjectRegistry(deps: ProjectRegistryDeps): ProjectRegistry {
   const registryPath = deps.registryPath ?? DEFAULT_REGISTRY_PATH;
   const scopes = new Map<string, ProjectScope>();

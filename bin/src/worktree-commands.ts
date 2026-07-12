@@ -11,6 +11,8 @@ import { buildArchivedWorktreePathSet } from "../../backend/src/services/archive
 import { createWebmuxAdapters } from "../../backend/src/runtime";
 import { createProjectScope } from "../../backend/src/services/project-scope";
 import { projectRoot } from "../../backend/src/adapters/config";
+import { createUserPreferencesGateway } from "../../backend/src/adapters/preferences";
+import { readRegisteredAccount } from "../../backend/src/services/project-registry";
 import type { CreateLifecycleWorktreeInput, CreateLifecycleWorktreesInput, CreateLifecycleWorktreesResult, CreateWorktreeProgress, PruneWorktreesResult } from "../../backend/src/services/lifecycle-service";
 
 const PHASE_LABELS: Record<WorktreeCreationPhase, string> = {
@@ -65,7 +67,7 @@ interface WorktreeCommandDependencies {
     projectDir: string;
     port: number;
     onCreateProgress?: (progress: CreateWorktreeProgress) => void;
-  }) => WorktreeRuntimeLike;
+  }) => WorktreeRuntimeLike | Promise<WorktreeRuntimeLike>;
   stdout?: (message: string) => void;
   stderr?: (message: string) => void;
   switchToTmuxWindow?: (projectDir: string, branch: string) => void;
@@ -620,12 +622,19 @@ export async function runWorktreeCommand(
   context: WorktreeCommandContext,
   deps: WorktreeCommandDependencies = {},
 ): Promise<number> {
-  const createRuntime = deps.createRuntime ?? ((options: { projectDir: string; port: number; onCreateProgress?: (progress: CreateWorktreeProgress) => void }) => createProjectScope({
-    projectDir: projectRoot(options.projectDir),
-    port: options.port,
-    ...createWebmuxAdapters(),
-    onCreateProgress: options.onCreateProgress,
-  }));
+  const createRuntime = deps.createRuntime ?? (async (options: { projectDir: string; port: number; onCreateProgress?: (progress: CreateWorktreeProgress) => void }) => {
+    const resolvedProjectDir = projectRoot(options.projectDir);
+    const preferences = await createUserPreferencesGateway().load();
+    const account = readRegisteredAccount(computeProjectId(resolvedProjectDir));
+    return createProjectScope({
+      projectDir: resolvedProjectDir,
+      port: options.port,
+      ...createWebmuxAdapters(),
+      preferences,
+      account,
+      onCreateProgress: options.onCreateProgress,
+    });
+  });
   const stdout = deps.stdout ?? ((message: string) => console.log(message));
   const stderr = deps.stderr ?? ((message: string) => console.error(message));
   const switchToTmuxWindow = deps.switchToTmuxWindow ?? defaultSwitchToTmuxWindow;
@@ -639,7 +648,7 @@ export async function runWorktreeCommand(
         return 0;
       }
 
-      const runtime = createRuntime({
+      const runtime = await createRuntime({
         projectDir: context.projectDir,
         port: context.port,
         onCreateProgress: (progress) => {
@@ -667,7 +676,7 @@ export async function runWorktreeCommand(
         return 0;
       }
 
-      const runtime = createRuntime({
+      const runtime = await createRuntime({
         projectDir: context.projectDir,
         port: context.port,
       });
@@ -681,7 +690,7 @@ export async function runWorktreeCommand(
         return 0;
       }
 
-      const runtime = createRuntime({
+      const runtime = await createRuntime({
         projectDir: context.projectDir,
         port: context.port,
       });
@@ -745,7 +754,7 @@ export async function runWorktreeCommand(
         return 0;
       }
 
-      const runtime = createRuntime({
+      const runtime = await createRuntime({
         projectDir: context.projectDir,
         port: context.port,
       });
@@ -769,7 +778,7 @@ export async function runWorktreeCommand(
       return 0;
     }
 
-    const runtime = createRuntime({
+    const runtime = await createRuntime({
       projectDir: context.projectDir,
       port: context.port,
     });

@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync, mkdirSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { execSync } from "node:child_process";
-import { createProjectRegistry, type ProjectRegistry } from "../services/project-registry";
+import { createProjectRegistry, readRegisteredAccount, type ProjectRegistry } from "../services/project-registry";
 import { computeProjectId } from "../adapters/tmux";
 
 let workdir: string;
@@ -224,5 +224,31 @@ describe("ProjectRegistry", () => {
     const cleared = reg.setAccount(info.id, null);
     expect(cleared.account).toBeUndefined();
     expect(readFileSync(registryPath, "utf-8")).not.toContain("account:");
+  });
+});
+
+describe("readRegisteredAccount", () => {
+  test("returns the account for a registered project id", () => {
+    const dir = makeProjectDir("alpha");
+    const id = computeProjectId(dir);
+    writeFileSync(
+      registryPath,
+      `schemaVersion: 1\nprojects:\n  - id: ${id}\n    path: ${dir}\n    addedAt: "2026-04-27T17:00:00Z"\n    account: work\n`
+    );
+    expect(readRegisteredAccount(id, registryPath)).toBe("work");
+  });
+
+  test("returns undefined when the registry file does not exist", () => {
+    expect(readRegisteredAccount("nonexistent", join(workdir, "missing.yaml"))).toBeUndefined();
+  });
+
+  test("returns undefined when the project id is not found", () => {
+    const dir = makeProjectDir("beta");
+    const id = computeProjectId(dir);
+    writeFileSync(
+      registryPath,
+      `schemaVersion: 1\nprojects:\n  - id: ${id}\n    path: ${dir}\n    addedAt: "2026-04-27T17:00:00Z"\n`
+    );
+    expect(readRegisteredAccount("no-such-id", registryPath)).toBeUndefined();
   });
 });
