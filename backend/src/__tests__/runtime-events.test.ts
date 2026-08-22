@@ -16,6 +16,35 @@ describe("parseRuntimeEvent", () => {
     });
   });
 
+  it("passes through the permission_prompt reason and drops unknown reasons", () => {
+    expect(parseRuntimeEvent({
+      worktreeId: "wt_search",
+      branch: "feature/search",
+      type: "agent_status_changed",
+      lifecycle: "idle",
+      reason: "permission_prompt",
+    })).toEqual({
+      worktreeId: "wt_search",
+      branch: "feature/search",
+      type: "agent_status_changed",
+      lifecycle: "idle",
+      reason: "permission_prompt",
+    });
+
+    expect(parseRuntimeEvent({
+      worktreeId: "wt_search",
+      branch: "feature/search",
+      type: "agent_status_changed",
+      lifecycle: "idle",
+      reason: "coffee_break",
+    })).toEqual({
+      worktreeId: "wt_search",
+      branch: "feature/search",
+      type: "agent_status_changed",
+      lifecycle: "idle",
+    });
+  });
+
   it("rejects malformed runtime events", () => {
     expect(parseRuntimeEvent(null)).toBeNull();
     expect(parseRuntimeEvent({

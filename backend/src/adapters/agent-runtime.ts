@@ -63,6 +63,7 @@ def build_parser():
 
     status_changed = subparsers.add_parser("status-changed")
     status_changed.add_argument("--lifecycle", choices=["starting", "running", "idle", "stopped"], required=True)
+    status_changed.add_argument("--reason", choices=["permission_prompt"])
 
     pr_opened = subparsers.add_parser("pr-opened")
     pr_opened.add_argument("--url")
@@ -103,6 +104,8 @@ def build_payload(command, args, control_env):
     if command == "status-changed":
         payload["type"] = "agent_status_changed"
         payload["lifecycle"] = args.lifecycle
+        if getattr(args, "reason", None):
+            payload["reason"] = args.reason
         return payload
     if command == "pr-opened":
         payload["type"] = "pr_opened"
@@ -251,7 +254,7 @@ function buildClaudeHookSettings(input: AgentRuntimeArtifacts): Record<string, u
           hooks: [
             {
               type: "command",
-              command: `${shellQuote(input.agentCtlPath)} status-changed --lifecycle idle`,
+              command: `${shellQuote(input.agentCtlPath)} status-changed --lifecycle idle --reason permission_prompt`,
               async: true,
             },
           ],

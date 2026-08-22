@@ -17,6 +17,8 @@ export interface AgentStoppedEvent extends RuntimeEventBase {
 export interface AgentStatusChangedEvent extends RuntimeEventBase {
   type: "agent_status_changed";
   lifecycle: "starting" | "running" | "idle" | "stopped";
+  /** Why the agent went idle — set only by the permission_prompt/elicitation_dialog hook path. */
+  reason?: "permission_prompt";
 }
 
 export interface PrOpenedEvent extends RuntimeEventBase {
@@ -71,6 +73,7 @@ export function parseRuntimeEvent(raw: unknown): RuntimeEvent | null {
             branch: event.branch,
             type: event.type,
             lifecycle: event.lifecycle,
+            ...(event.reason === "permission_prompt" ? { reason: event.reason } : {}),
           }
         : null;
     case "pr_opened":

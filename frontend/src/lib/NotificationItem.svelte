@@ -17,6 +17,8 @@
 <span class="shrink-0 {large ? 'text-base' : 'text-sm'}">
   {#if notification.type === "agent_stopped" || notification.type === "worktree_auto_removed"}
     <span class="text-success">&#10003;</span>
+  {:else if notification.type === "agent_needs_attention"}
+    <span class="text-danger">&#9888;</span>
   {:else}
     <span class="text-accent">&#9741;</span>
   {/if}

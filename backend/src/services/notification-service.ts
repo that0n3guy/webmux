@@ -7,7 +7,7 @@ export interface ProjectNotifier {
 export interface RuntimeNotification {
   id: number;
   branch: string;
-  type: "agent_stopped" | "pr_opened" | "runtime_error" | "worktree_auto_removed";
+  type: "agent_stopped" | "pr_opened" | "runtime_error" | "worktree_auto_removed" | "agent_needs_attention";
   message: string;
   url?: string;
   projectId?: string | null;
@@ -18,6 +18,10 @@ function eventToNotificationInput(event: RuntimeEvent): { branch: string; type: 
   switch (event.type) {
     case "agent_stopped":
       return { branch: event.branch, type: "agent_stopped", message: `Agent stopped on ${event.branch}` };
+    case "agent_status_changed":
+      return event.lifecycle === "idle" && event.reason === "permission_prompt"
+        ? { branch: event.branch, type: "agent_needs_attention", message: `Agent needs attention on ${event.branch} (permission prompt)` }
+        : null;
     case "pr_opened":
       return { branch: event.branch, type: "pr_opened", message: `PR opened on ${event.branch}`, url: event.url };
     case "runtime_error":
@@ -30,11 +34,13 @@ function eventToNotificationInput(event: RuntimeEvent): { branch: string; type: 
 export class NotificationService {
   private readonly notifications: RuntimeNotification[] = [];
   private readonly sseClients = new Set<ReadableStreamDefaultController<Uint8Array>>();
+  private readonly needsAttentionLastAt = new Map<string, number>();
   private nextId = 1;
 
   constructor(
     private readonly maxItems = 50,
     private readonly keepaliveIntervalMs = 30_000,
+    private readonly needsAttentionDebounceMs = 60_000,
   ) {}
 
   list(): RuntimeNotification[] {
@@ -71,6 +77,13 @@ export class NotificationService {
   recordEvent(event: RuntimeEvent, projectId?: string | null): RuntimeNotification | null {
     const input = eventToNotificationInput(event);
     if (!input) return null;
+    if (input.type === "agent_needs_attention") {
+      const key = `${projectId ?? ""}:${input.branch}`;
+      const lastAt = this.needsAttentionLastAt.get(key);
+      const now = Date.now();
+      if (lastAt !== undefined && now - lastAt < this.needsAttentionDebounceMs) return null;
+      this.needsAttentionLastAt.set(key, now);
+    }
     return this.notify({ ...input, projectId });
   }
 

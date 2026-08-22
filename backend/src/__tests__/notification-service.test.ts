@@ -23,6 +23,44 @@ describe("NotificationService", () => {
     expect(notifications.list()).toHaveLength(1);
   });
 
+  it("emits agent_needs_attention for idle via permission_prompt but not for ordinary idles", () => {
+    const notifications = new NotificationService();
+
+    const wedged = notifications.recordEvent(
+      { worktreeId: "wt_search", branch: "feature/search", type: "agent_status_changed", lifecycle: "idle", reason: "permission_prompt" },
+    );
+    const ordinaryIdle = notifications.recordEvent(
+      { worktreeId: "wt_other", branch: "feature/other", type: "agent_status_changed", lifecycle: "idle" },
+    );
+
+    expect(wedged?.type).toBe("agent_needs_attention");
+    expect(wedged?.message).toContain("feature/search");
+    expect(wedged?.message).toContain("permission prompt");
+    expect(ordinaryIdle).toBeNull();
+    expect(notifications.list()).toHaveLength(1);
+  });
+
+  it("debounces repeated agent_needs_attention per branch until the window expires", async () => {
+    const notifications = new NotificationService(50, 30_000, 20);
+    const event = {
+      worktreeId: "wt_search",
+      branch: "feature/search",
+      type: "agent_status_changed",
+      lifecycle: "idle",
+      reason: "permission_prompt",
+    } as const;
+
+    expect(notifications.recordEvent(event, "proj_a")?.type).toBe("agent_needs_attention");
+    expect(notifications.recordEvent(event, "proj_a")).toBeNull();
+    expect(notifications.recordEvent(
+      { ...event, worktreeId: "wt_other", branch: "feature/other" },
+      "proj_a",
+    )?.type).toBe("agent_needs_attention");
+
+    await Bun.sleep(25);
+    expect(notifications.recordEvent(event, "proj_a")?.type).toBe("agent_needs_attention");
+  });
+
   it("stores pr_opened and runtime_error notifications with details", () => {
     const notifications = new NotificationService();
 

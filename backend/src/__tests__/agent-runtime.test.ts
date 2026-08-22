@@ -39,7 +39,7 @@ describe("ensureAgentRuntimeArtifacts", () => {
     expect(settings.hooks?.UserPromptSubmit?.[0]?.hooks?.[0]?.command).toContain("webmux-agentctl");
     expect(settings.hooks?.UserPromptSubmit?.[0]?.hooks?.[0]?.command).toContain("claude-user-prompt-submit");
     expect(settings.hooks?.Notification?.[0]?.matcher).toBe("permission_prompt|elicitation_dialog");
-    expect(settings.hooks?.Notification?.[0]?.hooks?.[0]?.command).toContain("status-changed --lifecycle idle");
+    expect(settings.hooks?.Notification?.[0]?.hooks?.[0]?.command).toContain("status-changed --lifecycle idle --reason permission_prompt");
     expect(settings.hooks?.Stop?.[0]?.hooks?.[0]?.command).toContain("agent-stopped");
     expect(settings.hooks?.PostToolUse?.[0]?.hooks?.[0]?.command).toContain("status-changed --lifecycle running");
     expect(settings.hooks?.PostToolUse?.[1]?.hooks?.[0]?.command).toContain("claude-post-tool-use");
@@ -97,6 +97,54 @@ describe("ensureAgentRuntimeArtifacts", () => {
         type: "agent_stopped",
       });
       expect(received[0].authorization).toBe("Bearer test-token");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("includes the reason in status-changed payloads when given", async () => {
+    const gitDir = await mkdtemp(join(tmpdir(), "webmux-agent-runtime-gitdir-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "webmux-agent-runtime-worktree-"));
+    tempDirs.push(gitDir, worktreePath);
+
+    await ensureWorktreeStorageDirs(gitDir);
+    await ensureAgentRuntimeArtifacts({ gitDir, worktreePath });
+
+    const received: unknown[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (req) => {
+        received.push(await req.json());
+        return Response.json({ ok: true });
+      },
+    });
+
+    try {
+      await writeControlEnv(gitDir, buildControlEnvMap({
+        controlUrl: `http://127.0.0.1:${server.port}/api/runtime/events`,
+        controlToken: "test-token",
+        worktreeId: "wt-1",
+        branch: "feature/wedged",
+      }));
+
+      const proc = Bun.spawn([
+        "python3",
+        resolveAgentCtlPath(gitDir),
+        "status-changed",
+        "--lifecycle",
+        "idle",
+        "--reason",
+        "permission_prompt",
+      ], { stdout: "pipe", stderr: "pipe" });
+      expect(await proc.exited).toBe(0);
+
+      expect(received).toEqual([{
+        worktreeId: "wt-1",
+        branch: "feature/wedged",
+        type: "agent_status_changed",
+        lifecycle: "idle",
+        reason: "permission_prompt",
+      }]);
     } finally {
       server.stop(true);
     }

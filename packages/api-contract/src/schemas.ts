@@ -238,7 +238,7 @@ export const WorktreeCreationStateSchema = z.object({
 export const AppNotificationSchema = z.object({
   id: z.number(),
   branch: z.string(),
-  type: z.enum(["agent_stopped", "pr_opened", "runtime_error", "worktree_auto_removed"]),
+  type: z.enum(["agent_stopped", "pr_opened", "runtime_error", "worktree_auto_removed", "agent_needs_attention"]),
   message: z.string(),
   url: z.string().optional(),
   projectId: z.string().nullable().optional(),
