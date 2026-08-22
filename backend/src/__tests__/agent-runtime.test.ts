@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ensureAgentRuntimeArtifacts } from "../adapters/agent-runtime";
-import { ensureWorktreeStorageDirs } from "../adapters/fs";
+import { ensureAgentRuntimeArtifacts, resolveAgentCtlPath } from "../adapters/agent-runtime";
+import { buildControlEnvMap, ensureWorktreeStorageDirs, writeControlEnv } from "../adapters/fs";
 
 describe("ensureAgentRuntimeArtifacts", () => {
   const tempDirs: string[] = [];
@@ -43,5 +43,62 @@ describe("ensureAgentRuntimeArtifacts", () => {
     expect(settings.hooks?.Stop?.[0]?.hooks?.[0]?.command).toContain("agent-stopped");
     expect(settings.hooks?.PostToolUse?.[0]?.hooks?.[0]?.command).toContain("status-changed --lifecycle running");
     expect(settings.hooks?.PostToolUse?.[1]?.hooks?.[0]?.command).toContain("claude-post-tool-use");
+  });
+
+  it("maps codex agent-turn-complete notifications to agent_stopped runtime events", async () => {
+    const gitDir = await mkdtemp(join(tmpdir(), "webmux-agent-runtime-gitdir-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "webmux-agent-runtime-worktree-"));
+    tempDirs.push(gitDir, worktreePath);
+
+    await ensureWorktreeStorageDirs(gitDir);
+    await ensureAgentRuntimeArtifacts({ gitDir, worktreePath });
+
+    const received: Array<{ body: unknown; authorization: string | null }> = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (req) => {
+        received.push({ body: await req.json(), authorization: req.headers.get("Authorization") });
+        return Response.json({ ok: true });
+      },
+    });
+
+    try {
+      await writeControlEnv(gitDir, buildControlEnvMap({
+        controlUrl: `http://127.0.0.1:${server.port}/api/runtime/events`,
+        controlToken: "test-token",
+        worktreeId: "wt-1",
+        branch: "feature/codex",
+      }));
+
+      const agentCtlPath = resolveAgentCtlPath(gitDir);
+      const turnComplete = Bun.spawn([
+        "python3",
+        agentCtlPath,
+        "codex-notify",
+        JSON.stringify({ "type": "agent-turn-complete", "turn-id": "t1", "last-assistant-message": "done" }),
+      ], { stdout: "pipe", stderr: "pipe" });
+      expect(await turnComplete.exited).toBe(0);
+
+      const otherType = Bun.spawn([
+        "python3",
+        agentCtlPath,
+        "codex-notify",
+        JSON.stringify({ "type": "something-else" }),
+      ], { stdout: "pipe", stderr: "pipe" });
+      expect(await otherType.exited).toBe(0);
+
+      const noPayload = Bun.spawn(["python3", agentCtlPath, "codex-notify"], { stdout: "pipe", stderr: "pipe" });
+      expect(await noPayload.exited).toBe(0);
+
+      expect(received).toHaveLength(1);
+      expect(received[0].body).toEqual({
+        worktreeId: "wt-1",
+        branch: "feature/codex",
+        type: "agent_stopped",
+      });
+      expect(received[0].authorization).toBe("Bearer test-token");
+    } finally {
+      server.stop(true);
+    }
   });
 });

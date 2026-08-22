@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { ensureAgentRuntimeArtifacts } from "../adapters/agent-runtime";
+import { ensureAgentRuntimeArtifacts, resolveAgentCtlPath } from "../adapters/agent-runtime";
 import type { CreateWorktreeMode, GitGateway, GitWorktreeEntry } from "../adapters/git";
 import type { LifecycleHookRunner, RunLifecycleHookInput } from "../adapters/hooks";
 import {
@@ -766,6 +766,7 @@ export class LifecycleService {
       : undefined;
     const containerName = input.containerName;
     const yolo = input.yolo ?? input.profile.yolo === true;
+    const agentCtlPath = resolveAgentCtlPath(input.initialized.paths.gitDir);
 
     let panes = input.profile.panes;
     if (input.shellOnly === true) {
@@ -798,6 +799,7 @@ export class LifecycleService {
                 systemPrompt,
                 prompt: input.launchMode === "fresh" ? input.prompt : undefined,
                 launchMode: input.launchMode,
+                agentCtlPath,
               }),
               shell: buildDockerShellCommand(
                 containerName,
@@ -817,6 +819,7 @@ export class LifecycleService {
                 systemPrompt,
                 prompt: input.launchMode === "fresh" ? input.prompt : undefined,
                 launchMode: input.launchMode,
+                agentCtlPath,
               }),
               shell: buildManagedShellCommand(input.initialized.paths.runtimeEnvPath),
         },

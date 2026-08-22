@@ -25,23 +25,30 @@ function buildDockerRuntimeBootstrap(runtimeEnvPath: string): string {
   return `${buildRuntimeBootstrap(runtimeEnvPath)}; export PATH="$PATH:${DOCKER_PATH_FALLBACK}"`;
 }
 
+function buildCodexNotifyFlag(agentCtlPath: string | undefined): string {
+  if (!agentCtlPath) return "";
+  return ` -c ${quoteShell(`notify=[${JSON.stringify(agentCtlPath)},"codex-notify"]`)}`;
+}
+
 function buildBuiltInAgentInvocation(input: {
   agent: "claude" | "codex";
   yolo?: boolean;
   systemPrompt?: string;
   prompt?: string;
   launchMode?: AgentLaunchMode;
+  agentCtlPath?: string;
 }): string {
   if (input.agent === "codex") {
     const yoloFlag = input.yolo ? " --yolo" : "";
+    const notifyFlag = buildCodexNotifyFlag(input.agentCtlPath);
     if (input.launchMode === "resume") {
-      return `codex${yoloFlag} resume --last`;
+      return `codex${yoloFlag}${notifyFlag} resume --last`;
     }
     const promptSuffix = input.prompt ? ` -- ${quoteShell(input.prompt)}` : "";
     if (input.systemPrompt) {
-      return `codex${yoloFlag} -c ${quoteShell(`developer_instructions=${input.systemPrompt}`)}${promptSuffix}`;
+      return `codex${yoloFlag}${notifyFlag} -c ${quoteShell(`developer_instructions=${input.systemPrompt}`)}${promptSuffix}`;
     }
-    return `codex${yoloFlag}${promptSuffix}`;
+    return `codex${yoloFlag}${notifyFlag}${promptSuffix}`;
   }
 
   const yoloFlag = input.yolo ? " --dangerously-skip-permissions" : "";
@@ -115,6 +122,7 @@ function buildAgentInvocation(input: {
   repoRoot: string;
   branch: string;
   profileName: string;
+  agentCtlPath?: string;
 }): string {
   if (input.agent.kind === "builtin") {
     return buildBuiltInAgentInvocation({
@@ -123,6 +131,7 @@ function buildAgentInvocation(input: {
       systemPrompt: input.systemPrompt,
       prompt: input.prompt,
       launchMode: input.launchMode,
+      ...(input.agentCtlPath ? { agentCtlPath: input.agentCtlPath } : {}),
     });
   }
 
@@ -149,6 +158,7 @@ function buildAgentCommand(input: {
   systemPrompt?: string;
   prompt?: string;
   launchMode?: AgentLaunchMode;
+  agentCtlPath?: string;
 }, bootstrap = buildRuntimeBootstrap): string {
   return `${bootstrap(input.runtimeEnvPath)}; ${buildAgentInvocation(input)}`;
 }
@@ -188,6 +198,7 @@ export function buildAgentPaneCommand(input: {
   systemPrompt?: string;
   prompt?: string;
   launchMode?: AgentLaunchMode;
+  agentCtlPath?: string;
 }): string {
   return buildAgentCommand(input);
 }
@@ -216,6 +227,7 @@ export function buildDockerAgentPaneCommand(input: {
   systemPrompt?: string;
   prompt?: string;
   launchMode?: AgentLaunchMode;
+  agentCtlPath?: string;
 }): string {
   return buildAgentCommand(input, buildDockerRuntimeBootstrap);
 }

@@ -61,7 +61,22 @@ def build_parser():
     subparsers.add_parser("claude-user-prompt-submit")
     subparsers.add_parser("claude-post-tool-use")
 
+    codex_notify = subparsers.add_parser("codex-notify")
+    codex_notify.add_argument("payload", nargs="?")
+
     return parser
+
+
+def parse_codex_notification(raw):
+    if not raw:
+        return {}
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def build_payload(command, args, control_env):
@@ -148,6 +163,14 @@ def main():
         print(f"missing control env keys: {', '.join(missing)}", file=sys.stderr)
         return 1
 
+    if parsed.command == "codex-notify":
+        notification = parse_codex_notification(parsed.payload)
+        if notification.get("type") != "agent-turn-complete":
+            return 0
+        if not send_payload(build_payload("agent-stopped", parsed, control_env), control_env):
+            return 1
+        return 0
+
     if parsed.command == "claude-user-prompt-submit":
         if not send_payload(build_payload("status-changed", argparse.Namespace(lifecycle="running"), control_env), control_env):
             return 1
@@ -188,6 +211,10 @@ if __name__ == "__main__":
 export interface AgentRuntimeArtifacts {
   agentCtlPath: string;
   claudeSettingsPath: string;
+}
+
+export function resolveAgentCtlPath(gitDir: string): string {
+  return join(getWorktreeStoragePaths(gitDir).webmuxDir, "webmux-agentctl");
 }
 
 function buildClaudeHookSettings(input: AgentRuntimeArtifacts): Record<string, unknown> {
@@ -282,9 +309,8 @@ export async function ensureAgentRuntimeArtifacts(input: {
   gitDir: string;
   worktreePath: string;
 }): Promise<AgentRuntimeArtifacts> {
-  const storagePaths = getWorktreeStoragePaths(input.gitDir);
   const artifacts: AgentRuntimeArtifacts = {
-    agentCtlPath: join(storagePaths.webmuxDir, "webmux-agentctl"),
+    agentCtlPath: resolveAgentCtlPath(input.gitDir),
     claudeSettingsPath: join(input.worktreePath, ".claude", "settings.local.json"),
   };
 

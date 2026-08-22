@@ -175,6 +175,74 @@ describe("agent-service command builders", () => {
     expect(command).not.toContain("stay focused");
   });
 
+  it("wires the codex notify override to the agentctl codex-notify command", () => {
+    const fresh = buildAgentPaneCommand({
+      agent: builtInAgent("codex"),
+      runtimeEnvPath: "/tmp/gitdir/webmux/runtime.env",
+      repoRoot: "/repo",
+      worktreePath: "/repo/__worktrees/feature",
+      branch: "feature",
+      profileName: "default",
+      prompt: "ship the fix",
+      agentCtlPath: "/repo/.git/worktrees/feature/webmux/webmux-agentctl",
+    });
+
+    expect(fresh).toContain(`-c 'notify=["/repo/.git/worktrees/feature/webmux/webmux-agentctl","codex-notify"]'`);
+    expect(fresh).toContain("ship the fix");
+  });
+
+  it("keeps the codex notify override on resume and alongside developer instructions", () => {
+    const resume = buildAgentPaneCommand({
+      agent: builtInAgent("codex"),
+      runtimeEnvPath: "/tmp/gitdir/webmux/runtime.env",
+      repoRoot: "/repo",
+      worktreePath: "/repo/__worktrees/feature",
+      branch: "feature",
+      profileName: "default",
+      yolo: true,
+      launchMode: "resume",
+      agentCtlPath: "/gitdir/webmux/webmux-agentctl",
+    });
+    const withSystemPrompt = buildAgentPaneCommand({
+      agent: builtInAgent("codex"),
+      runtimeEnvPath: "/tmp/gitdir/webmux/runtime.env",
+      repoRoot: "/repo",
+      worktreePath: "/repo/__worktrees/feature",
+      branch: "feature",
+      profileName: "default",
+      systemPrompt: "stay focused",
+      agentCtlPath: "/gitdir/webmux/webmux-agentctl",
+    });
+
+    expect(resume).toContain(`codex --yolo -c 'notify=["/gitdir/webmux/webmux-agentctl","codex-notify"]' resume --last`);
+    expect(withSystemPrompt).toContain(`-c 'notify=["/gitdir/webmux/webmux-agentctl","codex-notify"]'`);
+    expect(withSystemPrompt).toContain("developer_instructions=stay focused");
+  });
+
+  it("omits the codex notify override without an agentctl path and never adds it for claude", () => {
+    const codex = buildAgentPaneCommand({
+      agent: builtInAgent("codex"),
+      runtimeEnvPath: "/tmp/gitdir/webmux/runtime.env",
+      repoRoot: "/repo",
+      worktreePath: "/repo/__worktrees/feature",
+      branch: "feature",
+      profileName: "default",
+    });
+    const claude = buildAgentPaneCommand({
+      agent: builtInAgent("claude"),
+      runtimeEnvPath: "/tmp/gitdir/webmux/runtime.env",
+      repoRoot: "/repo",
+      worktreePath: "/repo/__worktrees/feature",
+      branch: "feature",
+      profileName: "default",
+      agentCtlPath: "/gitdir/webmux/webmux-agentctl",
+    });
+
+    expect(codex).not.toContain("notify=");
+    expect(claude).not.toContain("notify=");
+    expect(claude).not.toContain("codex-notify");
+  });
+
   it("uses -- before the prompt so dash-prefixed prompts are not parsed as flags", () => {
     const claude = buildAgentPaneCommand({
       agent: builtInAgent("claude"),
