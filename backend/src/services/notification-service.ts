@@ -32,7 +32,10 @@ export class NotificationService {
   private readonly sseClients = new Set<ReadableStreamDefaultController<Uint8Array>>();
   private nextId = 1;
 
-  constructor(private readonly maxItems = 50) {}
+  constructor(
+    private readonly maxItems = 50,
+    private readonly keepaliveIntervalMs = 30_000,
+  ) {}
 
   list(): RuntimeNotification[] {
     return [...this.notifications];
@@ -73,6 +76,11 @@ export class NotificationService {
 
   stream(): Response {
     let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
+    let keepalive: ReturnType<typeof setInterval> | null = null;
+    const stopKeepalive = (): void => {
+      if (keepalive !== null) clearInterval(keepalive);
+      keepalive = null;
+    };
     const stream = new ReadableStream<Uint8Array>({
       start: (controller) => {
         controllerRef = controller;
@@ -80,8 +88,19 @@ export class NotificationService {
         for (const notification of this.notifications) {
           controller.enqueue(this.formatSse("initial", notification));
         }
+        // Comment frames reset the server's idleTimeout so long-lived
+        // consumers are not disconnected between notifications.
+        keepalive = setInterval(() => {
+          try {
+            controller.enqueue(new TextEncoder().encode(": keepalive\n\n"));
+          } catch {
+            stopKeepalive();
+            this.sseClients.delete(controller);
+          }
+        }, this.keepaliveIntervalMs);
       },
       cancel: () => {
+        stopKeepalive();
         if (controllerRef) this.sseClients.delete(controllerRef);
       },
     });

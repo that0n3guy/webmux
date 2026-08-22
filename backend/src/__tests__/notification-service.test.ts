@@ -108,4 +108,16 @@ describe("NotificationService", () => {
 
     await reader.cancel();
   });
+
+  it("emits SSE keepalive comments so idle connections stay open", async () => {
+    const notifications = new NotificationService(50, 10);
+
+    const response = notifications.stream();
+    const reader = response.body!.getReader();
+
+    const keepaliveChunk = await readChunk(reader);
+    expect(keepaliveChunk).toBe(": keepalive\n\n");
+
+    await reader.cancel();
+  });
 });

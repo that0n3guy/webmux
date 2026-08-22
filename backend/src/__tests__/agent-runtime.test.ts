@@ -101,4 +101,32 @@ describe("ensureAgentRuntimeArtifacts", () => {
       server.stop(true);
     }
   });
+
+  it("logs delivery failures to agentctl.log next to control.env", async () => {
+    const gitDir = await mkdtemp(join(tmpdir(), "webmux-agent-runtime-gitdir-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "webmux-agent-runtime-worktree-"));
+    tempDirs.push(gitDir, worktreePath);
+
+    await ensureWorktreeStorageDirs(gitDir);
+    await ensureAgentRuntimeArtifacts({ gitDir, worktreePath });
+
+    // Port 1 is never listening — delivery must fail and be logged.
+    await writeControlEnv(gitDir, buildControlEnvMap({
+      controlUrl: "http://127.0.0.1:1/api/runtime/events",
+      controlToken: "test-token",
+      worktreeId: "wt-1",
+      branch: "feature/codex",
+    }));
+
+    const proc = Bun.spawn([
+      "python3",
+      resolveAgentCtlPath(gitDir),
+      "agent-stopped",
+    ], { stdout: "pipe", stderr: "pipe" });
+    expect(await proc.exited).toBe(1);
+
+    const logText = await Bun.file(join(gitDir, "webmux", "agentctl.log")).text();
+    expect(logText).toContain("agent_stopped -> http://127.0.0.1:1/api/runtime/events");
+    expect(logText).toContain("failed to send runtime event");
+  });
 });

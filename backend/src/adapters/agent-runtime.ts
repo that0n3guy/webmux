@@ -18,10 +18,22 @@ import re
 import sys
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 
 CONTROL_ENV_PATH = Path(__file__).resolve().with_name("control.env")
+FAILURE_LOG_PATH = Path(__file__).resolve().with_name("agentctl.log")
+
+
+def log_failure(message):
+    print(message, file=sys.stderr)
+    try:
+        timestamp = datetime.now(timezone.utc).isoformat()
+        with FAILURE_LOG_PATH.open("a") as handle:
+            handle.write(f"[{timestamp}] {message}\\n")
+    except OSError:
+        pass
 
 
 def read_control_env():
@@ -118,8 +130,10 @@ def read_hook_payload():
 
 
 def send_payload(payload, control_env):
+    url = control_env["WEBMUX_CONTROL_URL"]
+    event_type = payload.get("type", "unknown")
     request = urllib.request.Request(
-        control_env["WEBMUX_CONTROL_URL"],
+        url,
         data=json.dumps(payload).encode(),
         headers={
             "Authorization": f"Bearer {control_env['WEBMUX_CONTROL_TOKEN']}",
@@ -131,13 +145,13 @@ def send_payload(payload, control_env):
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
             if response.status < 200 or response.status >= 300:
-                print(f"control endpoint returned HTTP {response.status}", file=sys.stderr)
+                log_failure(f"{event_type} -> {url}: control endpoint returned HTTP {response.status}")
                 return False
     except urllib.error.HTTPError as error:
-        print(f"control endpoint returned HTTP {error.code}", file=sys.stderr)
+        log_failure(f"{event_type} -> {url}: control endpoint returned HTTP {error.code}")
         return False
     except Exception as error:
-        print(f"failed to send runtime event: {error}", file=sys.stderr)
+        log_failure(f"{event_type} -> {url}: failed to send runtime event: {error}")
         return False
 
     return True
@@ -149,7 +163,7 @@ def main():
     try:
         control_env = read_control_env()
     except RuntimeError as error:
-        print(str(error), file=sys.stderr)
+        log_failure(str(error))
         return 1
 
     required_keys = [
@@ -160,7 +174,7 @@ def main():
     ]
     missing = [key for key in required_keys if not control_env.get(key)]
     if missing:
-        print(f"missing control env keys: {', '.join(missing)}", file=sys.stderr)
+        log_failure(f"missing control env keys: {', '.join(missing)}")
         return 1
 
     if parsed.command == "codex-notify":
