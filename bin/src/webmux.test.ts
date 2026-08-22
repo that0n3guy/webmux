@@ -65,6 +65,7 @@ describe("webmux entrypoint", () => {
 
     expect(parseRootArgs(["serve", "--port", "8080", "--debug"])).toEqual({
       port: 8080,
+      portExplicit: true,
       debug: true,
       app: false,
       command: "serve",
@@ -77,6 +78,7 @@ describe("webmux entrypoint", () => {
 
     expect(parseRootArgs(["serve", "--app"])).toEqual({
       port: 5111,
+      portExplicit: false,
       debug: false,
       app: true,
       command: "serve",
@@ -89,6 +91,7 @@ describe("webmux entrypoint", () => {
 
     expect(parseRootArgs(["service", "install", "--port", "8080"])).toEqual({
       port: 5111,
+      portExplicit: false,
       debug: false,
       app: false,
       command: "service",
@@ -101,6 +104,7 @@ describe("webmux entrypoint", () => {
 
     expect(parseRootArgs(["prune"])).toEqual({
       port: 5111,
+      portExplicit: false,
       debug: false,
       app: false,
       command: "prune",
@@ -113,11 +117,20 @@ describe("webmux entrypoint", () => {
 
     expect(parseRootArgs(["archive", "feature/search"])).toEqual({
       port: 5111,
+      portExplicit: false,
       debug: false,
       app: false,
       command: "archive",
       commandArgs: ["feature/search"],
     });
+  });
+
+  it("marks the port explicit only when the --port flag is given, not for the PORT env var", () => {
+    process.env.PORT = "3100";
+
+    expect(parseRootArgs(["add", "feature/x"]).port).toBe(3100);
+    expect(parseRootArgs(["add", "feature/x"]).portExplicit).toBe(false);
+    expect(parseRootArgs(["serve", "--port", "8080"]).portExplicit).toBe(true);
   });
 
   it("runs worktree commands from a project subdirectory", async () => {

@@ -49,6 +49,7 @@ type RootCommand = "serve" | "init" | "service" | "update" | "add" | "list" | "o
 
 interface ParsedRootArgs {
   port: number;
+  portExplicit: boolean;
   debug: boolean;
   app: boolean;
   command: RootCommand;
@@ -87,6 +88,7 @@ function isServeRootOption(value: string): boolean {
 
 export function parseRootArgs(args: string[]): ParsedRootArgs {
   let port = parseInt(process.env.PORT || "5111", 10);
+  let portExplicit = false;
   let debug = false;
   let app = false;
   let command: RootCommand = null;
@@ -111,6 +113,7 @@ export function parseRootArgs(args: string[]): ParsedRootArgs {
         if (Number.isNaN(port)) {
           throw new Error("Error: --port requires a numeric value");
         }
+        portExplicit = true;
         index += 1;
         break;
       }
@@ -139,6 +142,7 @@ export function parseRootArgs(args: string[]): ParsedRootArgs {
 
   return {
     port,
+    portExplicit,
     debug,
     app,
     command,
@@ -157,6 +161,15 @@ function isWorktreeCommand(command: RootCommand): command is "add" | "list" | "o
     || command === "merge"
     || command === "send"
     || command === "prune";
+}
+
+// The running daemon's port (from its state file) wins over the PORT env var and
+// the 5111 default — those describe how a *new* daemon would serve, not the one
+// that is actually running. An explicit --port flag still overrides everything.
+async function resolveDaemonPort(parsed: ParsedRootArgs): Promise<number> {
+  if (parsed.portExplicit) return parsed.port;
+  const { readLiveDaemonPort } = await import("../../backend/src/adapters/daemon-state");
+  return await readLiveDaemonPort() ?? parsed.port;
 }
 
 // ── Load env files from CWD (.env.local overrides .env) ─────────────────────
@@ -305,7 +318,7 @@ async function main(args: string[] = process.argv.slice(2)): Promise<void> {
       command: parsed.command,
       args: parsed.commandArgs,
       projectDir: process.cwd(),
-      port: parsed.port,
+      port: await resolveDaemonPort(parsed),
     });
     process.exit(exitCode);
   }
@@ -316,7 +329,7 @@ async function main(args: string[] = process.argv.slice(2)): Promise<void> {
       command: parsed.command,
       args: parsed.commandArgs,
       projectDir: process.cwd(),
-      port: parsed.port,
+      port: await resolveDaemonPort(parsed),
     });
     process.exit(exitCode);
   }

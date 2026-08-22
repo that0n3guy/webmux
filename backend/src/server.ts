@@ -42,6 +42,7 @@ import {
   type TerminalAttachTarget,
 } from "./adapters/terminal";
 import { loadControlToken } from "./adapters/control-token";
+import { writeDaemonState } from "./adapters/daemon-state";
 import { readWorktreeMeta, writeWorktreeMeta } from "./adapters/fs";
 import { ClaudeCliClient } from "./adapters/claude-cli";
 import { CodexAppServerClient } from "./adapters/codex-app-server";
@@ -2492,6 +2493,8 @@ for (const proj of runtime.projectRegistry.list()) {
     );
   }
 }
+
+await writeDaemonState({ port: PORT, pid: process.pid, startedAt: new Date().toISOString() });
 
 log.info(`Dev Dashboard API running at http://localhost:${PORT}`);
 const nets = networkInterfaces();
