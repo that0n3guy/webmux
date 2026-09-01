@@ -14,7 +14,7 @@ import {
 } from "../adapters/fs";
 import { expandTemplate, getDefaultProfileName, isDockerProfile, type DockerProfileConfig } from "../adapters/config";
 import { type DockerGateway } from "../adapters/docker";
-import { buildProjectSessionName, buildWorktreeWindowName, WEBMUX_WORKTREE_ID_OPTION, type TmuxGateway } from "../adapters/tmux";
+import { buildProjectSessionName, buildWorktreeWindowName, computeProjectId, WEBMUX_WORKTREE_ID_OPTION, type TmuxGateway } from "../adapters/tmux";
 import type { AgentId, PaneTemplate, ProfileConfig, ProjectConfig, RuntimeKind } from "../domain/config";
 import type { WorktreeCreationPhase, WorktreeMeta } from "../domain/model";
 import { allocateServicePorts, isValidBranchName, isValidEnvKey } from "../domain/policies";
@@ -640,6 +640,7 @@ export class LifecycleService {
       dotenvValues,
       controlUrl: this.controlUrl(profile.runtime),
       controlToken: await this.deps.getControlToken(),
+      projectId: this.projectId(),
     });
   }
 
@@ -673,6 +674,7 @@ export class LifecycleService {
       controlToken: await this.deps.getControlToken(),
       worktreeId: input.meta.worktreeId,
       branch: input.meta.branch,
+      projectId: this.projectId(),
     });
     await writeControlEnv(input.gitDir, controlEnv);
 
@@ -890,6 +892,10 @@ export class LifecycleService {
     return `${buildRuntimeControlBaseUrl(this.deps.controlBaseUrl, runtime)}/api/runtime/events`;
   }
 
+  private projectId(): string {
+    return computeProjectId(this.deps.projectRoot);
+  }
+
   private async removeResolvedWorktree(
     resolved: ResolvedLifecycleWorktree,
   ): Promise<void> {
@@ -1032,6 +1038,7 @@ export class LifecycleService {
           runtimeEnvExtras: { WEBMUX_WORKTREE_PATH: worktreePath },
           controlUrl: this.controlUrl(profile.runtime),
           controlToken: await this.deps.getControlToken(),
+          projectId: this.projectId(),
           deleteBranchOnRollback,
           ...(input.yolo === undefined ? {} : { yolo: input.yolo }),
         },

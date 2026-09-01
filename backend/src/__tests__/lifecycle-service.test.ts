@@ -6,7 +6,7 @@ import type { ProjectConfig } from "../domain/config";
 import { BunGitGateway, type GitGateway } from "../adapters/git";
 import type { LifecycleHookRunner, RunLifecycleHookInput } from "../adapters/hooks";
 import type { PortProbe } from "../adapters/port-probe";
-import { buildProjectSessionName, buildWorktreeWindowName, type TmuxGateway, type TmuxWindowSummary } from "../adapters/tmux";
+import { buildProjectSessionName, buildWorktreeWindowName, computeProjectId, type TmuxGateway, type TmuxWindowSummary } from "../adapters/tmux";
 import { getWorktreeStoragePaths, readWorktreeArchiveState, readWorktreeMeta } from "../adapters/fs";
 import type { DockerGateway, LaunchContainerOpts } from "../adapters/docker";
 import type { AutoNameConfig } from "../domain/config";
@@ -364,6 +364,7 @@ describe("LifecycleService", () => {
     expect(runtimeEnvText).toContain("WEBMUX_WORKTREE_PATH=");
     expect(runtimeEnvText).toContain("CUSTOM_TOKEN=abc123");
     expect(controlEnvText).toContain("WEBMUX_CONTROL_URL=http://127.0.0.1:5111/api/runtime/events");
+    expect(controlEnvText).toContain(`WEBMUX_PROJECT_ID=${computeProjectId(repoRoot)}`);
     expect(hooks.calls).toEqual([
       expect.objectContaining({
         name: "postCreate",

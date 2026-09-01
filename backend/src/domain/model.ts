@@ -75,6 +75,7 @@ export interface ControlEnvMap extends Record<string, string> {
   WEBMUX_CONTROL_TOKEN: string;
   WEBMUX_WORKTREE_ID: string;
   WEBMUX_BRANCH: string;
+  WEBMUX_PROJECT_ID: string;
 }
 
 export type AgentLifecycle = "closed" | "starting" | "running" | "idle" | "stopped" | "error";

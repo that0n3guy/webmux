@@ -97,6 +97,10 @@ def build_payload(command, args, control_env):
         "worktreeId": control_env["WEBMUX_WORKTREE_ID"],
         "branch": control_env["WEBMUX_BRANCH"],
     }
+    # Older control.env files predate WEBMUX_PROJECT_ID; the daemon then routes
+    # by worktreeId instead.
+    if control_env.get("WEBMUX_PROJECT_ID"):
+        payload["projectId"] = control_env["WEBMUX_PROJECT_ID"]
 
     if command == "agent-stopped":
         payload["type"] = "agent_stopped"

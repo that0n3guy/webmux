@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureAgentRuntimeArtifacts, resolveAgentCtlPath } from "../adapters/agent-runtime";
-import { buildControlEnvMap, ensureWorktreeStorageDirs, writeControlEnv } from "../adapters/fs";
+import { buildControlEnvMap, ensureWorktreeStorageDirs, renderEnvFile, writeControlEnv } from "../adapters/fs";
 
 describe("ensureAgentRuntimeArtifacts", () => {
   const tempDirs: string[] = [];
@@ -68,6 +68,7 @@ describe("ensureAgentRuntimeArtifacts", () => {
         controlToken: "test-token",
         worktreeId: "wt-1",
         branch: "feature/codex",
+        projectId: "6b68da92",
       }));
 
       const agentCtlPath = resolveAgentCtlPath(gitDir);
@@ -94,6 +95,7 @@ describe("ensureAgentRuntimeArtifacts", () => {
       expect(received[0].body).toEqual({
         worktreeId: "wt-1",
         branch: "feature/codex",
+        projectId: "6b68da92",
         type: "agent_stopped",
       });
       expect(received[0].authorization).toBe("Bearer test-token");
@@ -125,6 +127,7 @@ describe("ensureAgentRuntimeArtifacts", () => {
         controlToken: "test-token",
         worktreeId: "wt-1",
         branch: "feature/wedged",
+        projectId: "82973fcd",
       }));
 
       const proc = Bun.spawn([
@@ -141,9 +144,52 @@ describe("ensureAgentRuntimeArtifacts", () => {
       expect(received).toEqual([{
         worktreeId: "wt-1",
         branch: "feature/wedged",
+        projectId: "82973fcd",
         type: "agent_status_changed",
         lifecycle: "idle",
         reason: "permission_prompt",
+      }]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("omits projectId from payloads when control.env predates WEBMUX_PROJECT_ID", async () => {
+    const gitDir = await mkdtemp(join(tmpdir(), "webmux-agent-runtime-gitdir-"));
+    const worktreePath = await mkdtemp(join(tmpdir(), "webmux-agent-runtime-worktree-"));
+    tempDirs.push(gitDir, worktreePath);
+
+    const paths = await ensureWorktreeStorageDirs(gitDir);
+    await ensureAgentRuntimeArtifacts({ gitDir, worktreePath });
+
+    const received: unknown[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (req) => {
+        received.push(await req.json());
+        return Response.json({ ok: true });
+      },
+    });
+
+    try {
+      await Bun.write(paths.controlEnvPath, renderEnvFile({
+        WEBMUX_CONTROL_URL: `http://127.0.0.1:${server.port}/api/runtime/events`,
+        WEBMUX_CONTROL_TOKEN: "test-token",
+        WEBMUX_WORKTREE_ID: "wt-legacy",
+        WEBMUX_BRANCH: "feature/legacy",
+      }));
+
+      const proc = Bun.spawn([
+        "python3",
+        resolveAgentCtlPath(gitDir),
+        "agent-stopped",
+      ], { stdout: "pipe", stderr: "pipe" });
+      expect(await proc.exited).toBe(0);
+
+      expect(received).toEqual([{
+        worktreeId: "wt-legacy",
+        branch: "feature/legacy",
+        type: "agent_stopped",
       }]);
     } finally {
       server.stop(true);
@@ -164,6 +210,7 @@ describe("ensureAgentRuntimeArtifacts", () => {
       controlToken: "test-token",
       worktreeId: "wt-1",
       branch: "feature/codex",
+      projectId: "6b68da92",
     }));
 
     const proc = Bun.spawn([

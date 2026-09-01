@@ -194,12 +194,14 @@ export function buildControlEnvMap(input: {
   controlToken: string;
   worktreeId: string;
   branch: string;
+  projectId: string;
 }): ControlEnvMap {
   return {
     WEBMUX_CONTROL_URL: input.controlUrl,
     WEBMUX_CONTROL_TOKEN: input.controlToken,
     WEBMUX_WORKTREE_ID: input.worktreeId,
     WEBMUX_BRANCH: input.branch,
+    WEBMUX_PROJECT_ID: input.projectId,
   };
 }
 

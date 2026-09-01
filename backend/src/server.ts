@@ -86,6 +86,7 @@ import { buildProjectSnapshot } from "./services/snapshot-service";
 import { ClaudeConversationService, type ClaudeConversationProbeContext } from "./services/claude-conversation-service";
 import { WorktreeConversationService, type WorktreeConversationProbeContext } from "./services/worktree-conversation-service";
 import { parseRuntimeEvent } from "./domain/events";
+import { resolveRuntimeEventScope } from "./services/runtime-event-routing";
 import type { AgentsUiConversationEvent, AgentsUiWorktreeConversationResponse } from "./domain/agents-ui";
 import type { ProjectSnapshot, WorktreeSnapshot } from "./domain/model";
 import { isValidBranchName, isValidWorktreeName } from "./domain/policies";
@@ -1155,23 +1156,21 @@ async function apiRuntimeEvent(req: Request): Promise<Response> {
     return errorResponse("Invalid JSON", 400);
   }
 
-  // Runtime events are project-scoped; look up project from the event body if present,
-  // otherwise fall back to the first project (single-project compat for lifecycle hooks).
-  const maybeProjectId = isRecord(raw) && typeof raw.projectId === "string" ? raw.projectId : null;
-  let targetScope: ProjectScope | null = null;
-  if (maybeProjectId) {
-    targetScope = runtime.projectRegistry.get(maybeProjectId);
-    if (!targetScope) return errorResponse(`Project not found: ${maybeProjectId}`, 404);
-  } else {
-    const first = runtime.projectRegistry.list()[0];
-    if (first) targetScope = runtime.projectRegistry.get(first.id);
-  }
-
-  if (!targetScope) return errorResponse("No project available", 404);
-  const scope = targetScope;
-
   const event = parseRuntimeEvent(raw);
   if (!event) return errorResponse("Invalid runtime event body", 400);
+
+  // Runtime events are project-scoped; route on the body's projectId when present,
+  // otherwise find the project whose runtime owns the event's worktree (agentctl
+  // scripts driven by pre-WEBMUX_PROJECT_ID control.env files omit projectId).
+  const maybeProjectId = isRecord(raw) && typeof raw.projectId === "string" ? raw.projectId : null;
+  const resolved = resolveRuntimeEventScope({
+    explicitProjectId: maybeProjectId,
+    worktreeId: event.worktreeId,
+    projectIds: runtime.projectRegistry.list().map((project) => project.id),
+    getScope: (id) => runtime.projectRegistry.get(id),
+  });
+  if (!resolved.ok) return errorResponse(resolved.message, 404);
+  const scope = resolved.scope;
 
   try {
     scope.projectRuntime.applyEvent(event);

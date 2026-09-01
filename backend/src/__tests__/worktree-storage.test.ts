@@ -361,6 +361,7 @@ describe("initializeManagedWorktree", () => {
       runtimeEnvExtras: { WEBMUX_WORKTREE_PATH: worktreePath },
       controlUrl: "http://127.0.0.1:5111",
       controlToken: "secret-token",
+      projectId: "proj1234",
       worktreeId: "wt_test",
       now: () => new Date("2026-03-06T00:00:00.000Z"),
     });
@@ -382,6 +383,7 @@ describe("initializeManagedWorktree", () => {
 
     expect(controlEnvText).toContain("WEBMUX_CONTROL_TOKEN=secret-token");
     expect(controlEnvText).toContain("WEBMUX_CONTROL_URL=http://127.0.0.1:5111");
+    expect(controlEnvText).toContain("WEBMUX_PROJECT_ID=proj1234");
     expect(paths.prsPath).toBe(`${paths.webmuxDir}/prs.json`);
   });
 
@@ -480,6 +482,7 @@ describe("initializeManagedWorktree", () => {
         allocatedPorts: { FRONTEND_PORT: 3010 },
         controlUrl: "http://127.0.0.1:5111",
         controlToken: "secret-token",
+        projectId: "proj1234",
         worktreeId: "wt_test",
         now: () => new Date("2026-03-06T00:00:00.000Z"),
         sessionLayoutPlan: {

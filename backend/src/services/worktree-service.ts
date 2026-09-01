@@ -32,6 +32,7 @@ export interface InitializeManagedWorktreeOptions {
   dotenvValues?: Record<string, string>;
   controlUrl?: string;
   controlToken?: string;
+  projectId?: string;
   now?: () => Date;
   worktreeId?: string;
   yolo?: boolean;
@@ -59,6 +60,7 @@ export interface CreateManagedWorktreeOptions {
   runtimeEnvExtras?: Record<string, string>;
   controlUrl?: string;
   controlToken?: string;
+  projectId?: string;
   now?: () => Date;
   worktreeId?: string;
   yolo?: boolean;
@@ -147,6 +149,9 @@ export async function initializeManagedWorktree(
   if ((opts.controlUrl && !opts.controlToken) || (!opts.controlUrl && opts.controlToken)) {
     throw new Error("controlUrl and controlToken must be provided together");
   }
+  if (opts.controlUrl && opts.controlToken && !opts.projectId) {
+    throw new Error("projectId must be provided with control credentials");
+  }
 
   const createdAt = (opts.now ?? (() => new Date()))().toISOString();
   const meta: WorktreeMeta = {
@@ -170,12 +175,13 @@ export async function initializeManagedWorktree(
   await writeRuntimeEnv(opts.gitDir, runtimeEnv);
 
   let controlEnv: ControlEnvMap | null = null;
-  if (opts.controlUrl && opts.controlToken) {
+  if (opts.controlUrl && opts.controlToken && opts.projectId) {
     controlEnv = buildControlEnvMap({
       controlUrl: opts.controlUrl,
       controlToken: opts.controlToken,
       worktreeId: meta.worktreeId,
       branch: meta.branch,
+      projectId: opts.projectId,
     });
     await writeControlEnv(opts.gitDir, controlEnv);
   }
@@ -222,6 +228,7 @@ export async function createManagedWorktree(
       dotenvValues,
       controlUrl: opts.controlUrl,
       controlToken: opts.controlToken,
+      projectId: opts.projectId,
       now: opts.now,
       worktreeId: opts.worktreeId,
       yolo: opts.yolo,
